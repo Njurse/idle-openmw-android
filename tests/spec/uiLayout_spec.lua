@@ -111,4 +111,110 @@ describe('idle.uiLayout', function()
     assert.is_true(l.width > 0 and l.height > 0 and l.scale >= 1)
     assert.is_true(l.status.width > 0)
   end)
+
+  describe('console panel', function()
+    local tabs = require('scripts.idle.uiModel').TABS
+
+    local function rectOverlaps(a, b)
+      if not a or not b then return false end
+      return a.x < b.x + b.width and b.x < a.x + a.width
+        and a.y < b.y + b.height and b.y < a.y + a.height
+    end
+
+    it('reserves more screen for the game in manual mode', function()
+      local manual = layout.split(layout.compute(PHONE, cfg), 'manual')
+      local auto = layout.split(layout.compute(PHONE, cfg), 'auto')
+      assert.is_true(manual.panel.height < auto.panel.height)
+      assert.is_true(manual.viewport.height > auto.viewport.height)
+      assert.equals(layout.viewportBottom({ viewport = manual.viewport }), manual.panel.y)
+    end)
+
+    it('never lets the panel reach into the notch', function()
+      for _, screen in ipairs({ PHONE, SMALL, BIG }) do
+        for _, mode in ipairs(layout.MODES) do
+          local base = layout.compute(screen, cfg)
+          local parts = layout.split(base, mode)
+          assert.is_true(parts.panel.y >= base.safeTop - 1)
+          assert.equals(parts.viewport.y + parts.viewport.height, parts.panel.y)
+          assert.equals(parts.panel.y + parts.panel.height, screen.y)
+        end
+      end
+    end)
+
+    it('lays the tabs across the full panel width without gaps', function()
+      local parts = layout.split(layout.compute(PHONE, cfg), 'auto')
+      local rects = layout.tabRects(parts.panel, tabs, 1.95)
+      assert.equals(#rects, #tabs)
+      assert.equals(rects[1].x, parts.panel.x)
+      local expectedEnd = parts.panel.x + parts.panel.width
+      assert.equals(rects[#rects].x + rects[#rects].width, expectedEnd)
+      for i = 2, #rects do
+        assert.equals(rects[i].x, rects[i - 1].x + rects[i - 1].width)
+      end
+    end)
+
+    it('models the basic shapes', function()
+      -- smoke: the console builds with real inputs
+      local l = layout.compute(PHONE, cfg)
+      assert.is_true(l.height > 0)
+    end)
+
+    it('fits list rows between the tabs and the footer', function()
+      local parts = layout.split(layout.compute(PHONE, cfg), 'auto')
+      local rects = layout.tabRects(parts.panel, tabs, 1.95)
+      local list = layout.listRects(parts.panel, rects[1].height, 1.95, { footerRows = 2 })
+      assert.is_true(list.pageSize >= 1)
+      assert.equals(list.rows[1].y, rects[1].y + rects[1].height)
+      local last = list.rows[#list.rows]
+      assert.is_true(last.y + last.height <= parts.panel.y + parts.panel.height)
+      assert.is_true(list.up.y >= parts.panel.y)
+      assert.is_true(list.down.y + list.down.height <= parts.panel.y + parts.panel.height)
+      assert.equals(list.up.x, list.x + list.width)
+    end)
+
+    it('builds a whole console with regions that never overlap', function()
+      local console = layout.console(PHONE, cfg, {
+        mode = 'auto', tabs = tabs,
+        footer = { { id = 'a' }, { id = 'b' }, { id = 'c' } },
+        footerRows = 2,
+      })
+      assert.is_true(console.pageSize >= 1)
+      assert.equals(console.footerIds[1], 'a')
+      assert.equals(#console.footer, 3)
+
+      local regions = layout.regions(console)
+      assert.is_true(#regions >= #tabs + console.pageSize + 2 + 3)
+      for i = 1, #regions do
+        for j = i + 1, #regions do
+          assert.is_false(rectOverlaps(regions[i], regions[j]),
+            ('regions overlap: %s and %s'):format(regions[i].name, regions[j].name))
+        end
+      end
+    end)
+
+    it('hit-tests tabs, rows and footer buttons', function()
+      local console = layout.console(PHONE, cfg, {
+        mode = 'auto', tabs = tabs, footer = { { id = 'equip' }, { id = 'sell' } },
+      })
+      local regions = layout.regions(console)
+
+      local firstTab = console.tabs[1]
+      assert.equals(layout.hitTest(regions, { x = firstTab.x + 2, y = firstTab.y + 2 }), 'tab:info')
+
+      local row = console.list.rows[1]
+      assert.equals(layout.hitTest(regions, { x = row.x + 2, y = row.y + 2 }), 'row:1')
+
+      local footer = console.footer[1]
+      assert.equals(layout.hitTest(regions, { x = footer.x + 2, y = footer.y + 2 }), 'footer:equip')
+
+      assert.is_nil(layout.hitTest(regions, nil))
+      assert.is_nil(layout.hitTest(regions, { x = -5, y = -5 }))
+    end)
+
+    it('queues more rows on a tall screen than a short one', function()
+      local tall = layout.console(BIG, cfg, { mode = 'auto', tabs = tabs, footer = {} })
+      local short = layout.console({ x = 720, y = 1100 }, cfg, { mode = 'manual', tabs = tabs, footer = {} })
+      assert.is_true(tall.pageSize >= short.pageSize)
+    end)
+  end)
 end)

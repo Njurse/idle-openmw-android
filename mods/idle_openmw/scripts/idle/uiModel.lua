@@ -1,0 +1,408 @@
+-- scripts/idle/uiModel.lua
+-- The console's brain: what tabs exist, what rows each tab shows, what the
+-- footer actions do, how scrolling and selection behave, and how modes cycle.
+--
+-- PURE. No engine, no ui.*, no I/O -- so the entire interaction model is
+-- unit-testable even though the widgets that draw it are not. portraitUI.lua is
+-- just a renderer over this.
+--
+-- PANEL SNAPSHOT (built by runtime/observer.lua:readPanel)
+--   {
+--     status     = <director:status()>,
+--     player     = { gold, level, encumbrance = {current,max} },
+--     inventory  = { { id, count, value, weight, equipped, junk, valuePerWeight }, ... },
+--     dialogue   = { { actor, kind, recordId, time }, ... },   -- newest last
+--     topics     = { { topic, count }, ... },
+--     journal    = { { text, questId }, ... },                 -- newest last
+--     quests     = { { id, stage, started, finished }, ... },
+--     log        = { { message, level, time }, ... },           -- oldest first
+--     mode       = 'manual'|'directive'|'auto',
+--     directive  = <id or nil>,
+--     config     = <config table>,
+--   }
+
+local util = require('scripts.idle.util')
+local activityLog = require('scripts.idle.activityLog')
+local economy = require('scripts.idle.economy')
+
+local M = {}
+
+-- ---------------------------------------------------------------------------
+-- vocabulary
+-- ---------------------------------------------------------------------------
+
+M.TABS = {
+  { id = 'info', label = 'Info' },
+  { id = 'orders', label = 'Order' },
+  { id = 'pack', label = 'Pack' },
+  { id = 'talk', label = 'Talk' },
+  { id = 'log', label = 'Log' },
+  { id = 'open', label = 'Open' },
+}
+
+M.MODES = { 'manual', 'directive', 'auto' }
+M.MODE_LABEL = { manual = 'MANUAL', directive = 'ORDERS', auto = 'AUTO' }
+
+M.MODE_HINT = {
+  manual = 'you drive — game controls active',
+  directive = 'auto-play, obeying your orders',
+  auto = 'auto-play',
+}
+
+--- Player orders (mapped to directive ids the director understands).
+M.ORDERS = {
+  { id = 'shop', label = 'Find a shop' },
+  { id = 'sell_junk', label = 'Sell junk' },
+  { id = 'rest', label = 'Rest' },
+  { id = 'train', label = 'Train' },
+  { id = 'heal', label = 'Heal up' },
+  { id = 'talk', label = 'Talk to someone' },
+  { id = 'quest', label = 'Do a quest' },
+  { id = 'explore', label = 'Explore' },
+}
+
+--- Launchers: open Morrowind's OWN windows. This is what keeps the whole game
+--- reachable from the console (modes verified in mwlua/uibindings.cpp).
+M.LAUNCHERS = {
+  { id = 'open_inventory', label = 'Inventory', detail = 'equip, drop, use', mode = 'Interface' },
+  { id = 'open_journal', label = 'Journal', detail = 'quests and entries', mode = 'Journal' },
+  { id = 'open_barter', label = 'Barter', detail = 'trade with a merchant', mode = 'Barter' },
+  { id = 'open_training', label = 'Training', detail = 'spend gold on skills', mode = 'Training' },
+  { id = 'open_dialogue', label = 'Dialogue', detail = 'talk to the nearest NPC', mode = 'Dialogue' },
+  { id = 'open_rest', label = 'Rest', detail = 'the rest window', mode = 'Rest' },
+  { id = 'open_spellbuying', label = 'Spells', detail = 'buy spells', mode = 'SpellBuying' },
+  { id = 'open_map', label = 'Map', detail = 'the world map', mode = 'Interface', window = 'Map' },
+}
+
+--- Contextual footer per tab. `label` is the text on the button.
+function M.footerFor(tabId)
+  if tabId == 'info' then
+    return { { id = 'cycle_mode', label = 'Mode' }, { id = 'pause', label = 'Pause' } }
+  elseif tabId == 'orders' then
+    return { { id = 'queue', label = 'Queue' }, { id = 'cancel', label = 'Cancel' } }
+  elseif tabId == 'pack' then
+    return { { id = 'equip', label = 'Equip' }, { id = 'sell', label = 'Sell' },
+             { id = 'drop', label = 'Drop' }, { id = 'refresh', label = 'Refresh' } }
+  elseif tabId == 'talk' then
+    return { { id = 'talk_nearest', label = 'Talk' }, { id = 'open_dialogue', label = 'Window' },
+             { id = 'open_journal', label = 'Journal' } }
+  elseif tabId == 'log' then
+    return { { id = 'clear_log', label = 'Clear' }, { id = 'open_journal', label = 'Journal' } }
+  end
+  return {}
+end
+
+--- Footer actions that need a selected row to make sense.
+M.REQUIRES_SELECTION = { equip = true, sell = true, drop = true }
+
+function M.isKnownTab(id)
+  for _, tab in ipairs(M.TABS) do if tab.id == id then return true end end
+  return false
+end
+
+function M.tabIds() return util.map(M.TABS, function(tab) return tab.id end) end
+
+-- ---------------------------------------------------------------------------
+-- modes and tabs
+-- ---------------------------------------------------------------------------
+
+--- Cycle manual -> directive -> auto -> manual.
+function M.nextMode(mode)
+  for i, candidate in ipairs(M.MODES) do
+    if candidate == mode then return M.MODES[i % #M.MODES + 1] end
+  end
+  return M.MODES[1]
+end
+
+function M.modeLabel(mode) return M.MODE_LABEL[mode] or 'AUTO' end
+
+--- Next tab id from `id`, stepping by `dir` (+1/-1) and wrapping.
+function M.nextTab(id, dir)
+  local ids = M.tabIds()
+  if #ids == 0 then return nil end
+  dir = dir or 1
+  for i, candidate in ipairs(ids) do
+    if candidate == id then
+      local nextIndex = ((i - 1 + dir) % #ids) + 1
+      return ids[nextIndex]
+    end
+  end
+  return ids[1]
+end
+
+-- ---------------------------------------------------------------------------
+-- scrolling and selection
+-- ---------------------------------------------------------------------------
+
+--- Clamp a scroll offset so the visible window stays inside the rows.
+function M.scroll(offset, delta, total, pageSize)
+  offset = (offset or 0) + (delta or 0)
+  local maxOffset = math.max(0, (total or 0) - (pageSize or 1))
+  return util.clamp(offset, 0, maxOffset)
+end
+
+--- The visible slice plus whether we can scroll further either way.
+function M.visible(rows, offset, pageSize)
+  rows = rows or {}
+  pageSize = math.max(1, pageSize or 1)
+  offset = M.scroll(offset or 0, 0, #rows, pageSize)
+  local slice = {}
+  for i = offset + 1, math.min(#rows, offset + pageSize) do
+    slice[#slice + 1] = rows[i]
+  end
+  return {
+    rows = slice,
+    offset = offset,
+    total = #rows,
+    canUp = offset > 0,
+    canDown = offset + pageSize < #rows,
+    pageSize = pageSize,
+  }
+end
+
+--- Keep a row selection inside bounds (nil when there is nothing to select).
+function M.clampSelection(index, rows, offset, pageSize)
+  local visible = M.visible(rows, offset, pageSize)
+  if #visible.rows == 0 then return nil end
+  index = index or 1
+  if index < 1 then index = 1 end
+  if index > #visible.rows then index = #visible.rows end
+  return index
+end
+
+--- The selected row table, or nil.
+function M.selectedRow(rows, offset, pageSize, index)
+  local visible = M.visible(rows, offset, pageSize)
+  local clamped = M.clampSelection(index, rows, offset, pageSize)
+  if not clamped then return nil end
+  return visible.rows[clamped]
+end
+
+-- ---------------------------------------------------------------------------
+-- row building
+-- ---------------------------------------------------------------------------
+
+local function pct(fraction)
+  return math.floor((fraction or 0) * 100 + 0.5) .. '%'
+end
+
+local function row(spec)
+  return spec
+end
+
+--- Format a row into the single line the renderer draws.
+function M.formatRow(row_)
+  if type(row_) ~= 'table' then return '' end
+  if row_.detail and row_.detail ~= '' then
+    return tostring(row_.label or '') .. '  ' .. tostring(row_.detail)
+  end
+  return tostring(row_.label or '')
+end
+
+local function infoRows(panel)
+  local rows = {}
+  local status = panel.status or {}
+  local player = panel.player or {}
+
+  rows[#rows + 1] = row({ id = 'mode', kind = 'info', label = 'Mode',
+    detail = ('%s — %s'):format(M.modeLabel(panel.mode), M.MODE_HINT[panel.mode] or '') })
+  rows[#rows + 1] = row({ id = 'goal', kind = 'info', label = 'Goal',
+    detail = ('%s%s'):format(tostring(status.goal or 'idle'),
+      status.reason and ('  (' .. status.reason .. ')') or '') })
+  if panel.directive then
+    rows[#rows + 1] = row({ id = 'directive', kind = 'info', label = 'Order', detail = panel.directive })
+  end
+
+  rows[#rows + 1] = row({ id = 'pools', kind = 'info', label = 'Pools',
+    detail = ('HP %s  MP %s  FT %s  LOAD %s'):format(
+      pct(status.healthFraction), pct(status.magickaFraction),
+      pct(status.fatigueFraction), pct(status.encumbranceFraction)) })
+
+  local load = player.encumbrance
+  rows[#rows + 1] = row({ id = 'gold', kind = 'info', label = 'Gold',
+    detail = ('%s   level %s%s'):format(
+      util.formatNumber(player.gold or status.gold or 0),
+      tostring(player.level or status.level or '?'),
+      load and ('   load %d/%d'):format(load.current or 0, load.max or 0) or '') })
+
+  if status.topGoals and #status.topGoals > 0 then
+    rows[#rows + 1] = row({ id = 'rank-header', kind = 'heading', label = 'Considering' })
+    for _, entry in ipairs(status.topGoals) do
+      rows[#rows + 1] = row({ id = 'rank-' .. entry.id, kind = 'info',
+        label = '  ' .. entry.id, detail = tostring(entry.score) })
+    end
+  end
+
+  if status.counters then
+    rows[#rows + 1] = row({ id = 'counters', kind = 'info', label = 'Decisions',
+      detail = ('%d (goals changed %d)'):format(
+        status.counters.ticks or 0, status.counters.goalChanges or 0) })
+  end
+  return rows
+end
+
+local function orderRows(panel)
+  local rows = {}
+  for _, order in ipairs(M.ORDERS) do
+    rows[#rows + 1] = row({
+      id = 'order:' .. order.id,
+      kind = 'action',
+      label = order.label,
+      detail = panel.directive == order.id and 'ACTIVE' or nil,
+      action = 'order',
+      payload = { id = order.id },
+      selectable = false,
+    })
+  end
+  rows[#rows + 1] = row({ id = 'orders-note', kind = 'heading',
+    label = 'Queueing an order overrides auto-play for a while' })
+  return rows
+end
+
+local function packRows(panel)
+  local rows = {}
+  local inventory = panel.inventory or {}
+  local cfg = panel.config
+
+  for index, item in ipairs(inventory) do
+    local flags = {}
+    if item.equipped then flags[#flags + 1] = 'WORN' end
+    if item.junk then flags[#flags + 1] = 'junk' end
+    -- weightless items have an infinite value/weight ratio: cap it for display
+    local ratio = item.valuePerWeight
+    local ratioText = ratio and ('%.1f'):format(math.min(ratio, 9999)) or '--'
+    local detail = ('x%d  %sg  %sg/w%s'):format(
+      item.count or 1, tostring(item.value or 0), ratioText,
+      #flags > 0 and ('  [' .. table.concat(flags, ' ') .. ']') or '')
+    rows[#rows + 1] = row({
+      id = 'item:' .. tostring(item.id),
+      kind = 'item',
+      label = tostring(item.id),
+      detail = detail,
+      action = 'select',
+      payload = { index = index, id = item.id, count = item.count },
+    })
+  end
+  if #rows == 0 then
+    rows[#rows + 1] = row({ id = 'pack-empty', kind = 'heading', label = '(nothing carried)' })
+  elseif cfg then
+    local summary = economy.summarize(inventory, cfg)
+    rows[#rows + 1] = row({ id = 'pack-total', kind = 'heading',
+      label = ('%d items   junk worth %sg in %d stacks'):format(
+        summary.itemCount, util.formatNumber(summary.junkValue), summary.junkCount) })
+  end
+  return rows
+end
+
+local function talkRows(panel)
+  local rows = {}
+  local dialogue = panel.dialogue or {}
+  rows[#rows + 1] = row({ id = 'talk-header', kind = 'heading', label = 'Recent conversations' })
+  if #dialogue == 0 then
+    rows[#rows + 1] = row({ id = 'talk-empty', kind = 'info', label = '(nobody has spoken to you yet)' })
+  else
+    for i = #dialogue, math.max(1, #dialogue - 7), -1 do
+      local event = dialogue[i]
+      rows[#rows + 1] = row({ id = 'talk:' .. i, kind = 'info',
+        label = activityLog.formatTime(event.time or 0),
+        detail = ('%s  %s%s'):format(tostring(event.actor or '?'), tostring(event.kind or ''),
+          event.recordId and ('  "' .. tostring(event.recordId) .. '"') or '') })
+    end
+  end
+
+  local topics = panel.topics or {}
+  if #topics > 0 then
+    rows[#rows + 1] = row({ id = 'topics-header', kind = 'heading', label = 'Topics heard' })
+    for i = 1, math.min(6, #topics) do
+      rows[#rows + 1] = row({ id = 'topic:' .. tostring(topics[i].topic), kind = 'info',
+        label = tostring(topics[i].topic), detail = ('x%d'):format(topics[i].count or 1) })
+    end
+  end
+
+  local quests = panel.quests or {}
+  if #quests > 0 then
+    rows[#rows + 1] = row({ id = 'quests-header', kind = 'heading', label = 'Quests' })
+    for i = 1, math.min(8, #quests) do
+      local quest = quests[i]
+      rows[#rows + 1] = row({ id = 'quest:' .. tostring(quest.id), kind = 'info',
+        label = tostring(quest.id),
+        detail = ('stage %s%s'):format(tostring(quest.stage or 0),
+          quest.finished and '  DONE' or '') })
+    end
+  end
+  return rows
+end
+
+local function logRows(panel)
+  local rows = {}
+  local entries = panel.log or {}
+  if #entries == 0 then
+    rows[1] = row({ id = 'log-empty', kind = 'info', label = '(no activity yet)' })
+    return rows
+  end
+  for i = #entries, 1, -1 do
+    local entry = entries[i]
+    rows[#rows + 1] = row({ id = 'log:' .. i, kind = 'log', level = entry.level,
+      label = activityLog.formatTime(entry.time or 0), detail = tostring(entry.message or '') })
+  end
+  return rows
+end
+
+local function openRows()
+  local rows = {}
+  rows[#rows + 1] = row({ id = 'open-header', kind = 'heading',
+    label = 'Open a Morrowind window' })
+  for _, launcher in ipairs(M.LAUNCHERS) do
+    rows[#rows + 1] = row({
+      id = launcher.id,
+      kind = 'action',
+      label = launcher.label,
+      detail = launcher.detail,
+      action = 'launch',
+      payload = { mode = launcher.mode, window = launcher.window, id = launcher.id },
+    })
+  end
+  return rows
+end
+
+--- Build the rows for a tab from the panel snapshot.
+function M.buildRows(tabId, panel)
+  panel = panel or {}
+  if tabId == 'info' then return infoRows(panel) end
+  if tabId == 'orders' then return orderRows(panel) end
+  if tabId == 'pack' then return packRows(panel) end
+  if tabId == 'talk' then return talkRows(panel) end
+  if tabId == 'log' then return logRows(panel) end
+  if tabId == 'open' then return openRows() end
+  return {}
+end
+
+--- Build the whole view model the renderer needs in one pass.
+function M.view(state, panel, layout)
+  state = state or {}
+  local tabId = M.isKnownTab(state.tab) and state.tab or M.TABS[1].id
+  local rows = M.buildRows(tabId, panel)
+  local pageSize = (layout and layout.pageSize) or 10
+  local offset = M.scroll(state.offset or 0, 0, #rows, pageSize)
+  local visible = M.visible(rows, offset, pageSize)
+
+  local selection = nil
+  if visible.rows and #visible.rows > 0 then
+    selection = M.clampSelection(state.selection or 1, rows, offset, pageSize)
+  end
+
+  return {
+    tab = tabId,
+    tabs = M.TABS,
+    rows = rows,
+    visible = visible,
+    offset = offset,
+    selection = selection,
+    selected = M.selectedRow(rows, offset, pageSize, state.selection or 1),
+    footer = M.footerFor(tabId),
+    mode = panel and panel.mode or 'auto',
+    directive = panel and panel.directive or nil,
+  }
+end
+
+return M

@@ -153,4 +153,200 @@ function M.stackTop(buttons, bar, scale)
   return top
 end
 
+-- ===========================================================================
+-- Panel layout: the bottom-half console (tabs + list + footer + launcher)
+-- ===========================================================================
+
+M.MODES = { 'manual', 'directive', 'auto' }
+
+--- Fraction of the screen height the console occupies, per mode.
+--- Manual play gives the game as much room as possible (the built-in touch
+--- controls live in the lower half), so the console shrinks there.
+M.PANEL_FRACTION = {
+  manual = 0.30,
+  directive = 0.46,
+  auto = 0.46,
+}
+
+M.TAB_HEIGHT = 34
+M.ROW_HEIGHT = 22
+M.FOOTER_ROWS = 2
+
+function M.panelFraction(mode)
+  return M.PANEL_FRACTION[mode] or M.PANEL_FRACTION.auto
+end
+
+--- Split the screen into the game viewport (top) and the console (bottom).
+function M.split(base, mode)
+  local fraction = M.panelFraction(mode)
+  local panelHeight = math.floor(base.height * fraction)
+  local minPanel, maxPanel = math.floor(base.height * 0.22), math.floor(base.height * 0.62)
+  panelHeight = util.clamp(panelHeight, minPanel, maxPanel)
+
+  local panelY = base.height - panelHeight
+  -- never let the console reach up into the notch area
+  if panelY < base.safeTop then
+    panelY = base.safeTop
+    panelHeight = base.height - panelY
+  end
+
+  return {
+    viewport = { x = 0, y = 0, width = base.width, height = panelY },
+    panel = { x = 0, y = panelY, width = base.width, height = panelHeight },
+  }
+end
+
+--- Rectangles for the tab strip along the top of the console.
+function M.tabRects(panel, tabs, scale)
+  tabs = tabs or {}
+  if #tabs == 0 then return {} end
+  local height = math.max(M.TAB_HEIGHT, math.floor(M.TAB_HEIGHT * scale * 0.8))
+  local width = math.floor(panel.width / #tabs)
+  local rects = {}
+  for i, tab in ipairs(tabs) do
+    rects[i] = {
+      id = tab.id or tab,
+      label = tab.label or tostring(tab.id or tab),
+      x = panel.x + (i - 1) * width,
+      y = panel.y,
+      width = (i == #tabs) and (panel.width - (i - 1) * width) or width,
+      height = height,
+    }
+  end
+  return rects
+end
+
+--- Rectangles for the scrollable list area and its up/down controls.
+function M.listRects(panel, tabsHeight, scale, opts)
+  opts = opts or {}
+  local rowHeight = math.max(M.ROW_HEIGHT, math.floor(M.ROW_HEIGHT * scale * 0.8))
+  local footerHeight = (opts.footerRows or M.FOOTER_ROWS) * rowHeight
+  local scrollWidth = math.max(30, math.floor(30 * scale * 0.9))
+
+  local top = panel.y + tabsHeight
+  local bottom = panel.y + panel.height - footerHeight
+  local height = math.max(rowHeight, bottom - top)
+  local pageSize = math.max(1, math.floor(height / rowHeight))
+
+  local list = {
+    x = panel.x,
+    y = top,
+    width = panel.width - scrollWidth,
+    height = height,
+    rowHeight = rowHeight,
+    pageSize = pageSize,
+    rows = {},
+  }
+  for i = 1, pageSize do
+    list.rows[i] = {
+      x = list.x,
+      y = top + (i - 1) * rowHeight,
+      width = list.width,
+      height = rowHeight,
+      index = i,
+    }
+  end
+  list.up = { x = list.x + list.width, y = top, width = scrollWidth, height = math.floor(height / 2) }
+  list.down = { x = list.x + list.width, y = top + math.floor(height / 2),
+                width = scrollWidth, height = height - math.floor(height / 2) }
+  return list
+end
+
+--- Rectangles for the footer action buttons (one row of `count` buttons,
+--- wrapped across `opts.footerRows` rows).
+function M.footerRects(panel, tabsHeight, scale, count, opts)
+  opts = opts or {}
+  count = math.max(1, count or 1)
+  local rowHeight = math.max(M.ROW_HEIGHT, math.floor(M.ROW_HEIGHT * scale * 0.8))
+  local rows = math.max(1, opts.footerRows or M.FOOTER_ROWS)
+  local perRow = math.ceil(count / rows)
+  local gap = 4
+  local rects = {}
+  for i = 1, count do
+    local row = math.floor((i - 1) / perRow)
+    local column = (i - 1) % perRow
+    local width = math.floor((panel.width - gap * (perRow - 1)) / perRow)
+    rects[i] = {
+      x = panel.x + column * (width + gap),
+      y = panel.y + panel.height - (rows - row) * rowHeight,
+      width = width,
+      height = rowHeight,
+    }
+  end
+  return rects
+end
+
+--- The complete console layout for a screen, tabs, footer actions and row count.
+--- Everything the renderer needs, in one place, so it is all unit-testable.
+--- @param screen { x, y }
+--- @param cfg    config table
+--- @param model  { mode, tabs = {...}, footer = {...}, rowCount = n, footerRows? }
+function M.console(screen, cfg, model)
+  model = model or {}
+  local base = M.compute(screen, cfg)
+  local split = M.split(base, model.mode)
+
+  local tabs = M.tabRects(split.panel, model.tabs or {}, base.scale)
+  local tabsHeight = tabs[1] and tabs[1].height or 0
+  local list = M.listRects(split.panel, tabsHeight, base.scale, { footerRows = model.footerRows })
+  local footer = M.footerRects(split.panel, tabsHeight, base.scale,
+    #(model.footer or {}), { footerRows = model.footerRows })
+
+  return {
+    base = base,
+    mode = model.mode or 'auto',
+    screen = { width = base.width, height = base.height },
+    viewport = split.viewport,
+    panel = split.panel,
+    tabs = tabs,
+    tabsHeight = tabsHeight,
+    list = list,
+    footer = footer,
+    footerIds = util.map(model.footer or {}, function(action) return action.id end),
+    pageSize = list.pageSize,
+  }
+end
+
+--- Named touch regions for a console layout. Used for hit-testing and for the
+--- spec that asserts nothing overlaps.
+function M.regions(layout)
+  local regions = {}
+  local function add(name, rect)
+    if rect and rect.width and rect.width > 0 and rect.height and rect.height > 0 then
+      regions[#regions + 1] = {
+        name = name, x = rect.x, y = rect.y, width = rect.width, height = rect.height,
+      }
+    end
+  end
+
+  for _, tab in ipairs(layout.tabs or {}) do add('tab:' .. tab.id, tab) end
+  if layout.list then
+    for _, row in ipairs(layout.list.rows or {}) do add('row:' .. row.index, row) end
+    add('scroll:up', layout.list.up)
+    add('scroll:down', layout.list.down)
+  end
+  for index, rect in ipairs(layout.footer or {}) do
+    add('footer:' .. (layout.footerIds[index] or index), rect)
+  end
+  return regions
+end
+
+--- Which named region contains `point` (topmost / first match wins)?
+function M.hitTest(regions, point)
+  if not point then return nil end
+  local x, y = point.x or 0, point.y or 0
+  for _, region in ipairs(regions or {}) do
+    if x >= region.x and x < region.x + region.width
+      and y >= region.y and y < region.y + region.height then
+      return region.name
+    end
+  end
+  return nil
+end
+
+--- Screen y below which the game renders unobstructed (the console's top edge).
+function M.viewportBottom(layout)
+  return layout.viewport and (layout.viewport.y + layout.viewport.height) or 0
+end
+
 return M
