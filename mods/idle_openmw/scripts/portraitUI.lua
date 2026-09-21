@@ -1,24 +1,39 @@
 -- scripts/portraitUI.lua
--- PLAYER script: the portrait status HUD + touch command bar.
+-- PLAYER script: the phone console.
 --
 --   .omwscripts declares:  PLAYER: scripts/portraitUI.lua
 --
--- Built for a phone in portrait (Galaxy S23+, 1080x2340):
---   * all geometry comes from scripts/idle/uiLayout.lua, which is pure and
---     unit-tested -- the notch and gesture bar never cover the game HUD,
---   * the bottom command bar uses real touch targets (>=56 UI units) and its
---     buttons carry `mouseClick` handlers on interactive HUD-layer widgets,
---   * extra button rows stack UPWARD so nothing is pushed off-screen,
---   * Morrowind-native look via the MWUI templates when that interface exists.
+-- A bottom-half console over the game, built for a phone in portrait:
 --
--- ⚠️  The widget creation itself (ui.create / Element:update) is engine-side and
--- CANNOT be verified headlessly. Everything is pcall-guarded and latches off
--- after one failure, so a UI problem can never take the director down. Expect to
--- nudge the cosmetic offsets on-device; the geometry is already tested.
+--   ┌──────────────────────────────┐
+--   │ [AUTO]  tap to change        │  top strip: mode, goal, pools, gold, log
+--   │ fight  (2 hostiles)          │
+--   │ HP 84%  MP 60%  FT 71%  L 12%│
+--   │ Gold 1,240   lvl 5  load 35/…│
+--   │ 5h 03m  Sold junk for 32 g   │
+--   ├──────────────────────────────┤
+--   │ Info Order Pack Talk Log Open│  tab strip
+--   │ > heavy cuirass  x1 300g …   │  scrollable rows
+--   │   chitin dagger  x5  8g …  ▲ │
+--   │   longsword      x1 90g …  ▼ │
+--   ├──────────────────────────────┤
+--   │ [Equip] [Sell] [Drop] [Refr] │  contextual footer
+--   └──────────────────────────────┘
+--
+-- All geometry comes from scripts/idle/uiLayout.lua and all row/action logic
+-- from scripts/idle/uiModel.lua -- both pure and unit-tested. This file is only
+-- a renderer, because ui.create() cannot be verified headlessly.
+--
+-- Rendering strategy: elements are created ONCE per resolution and then have
+-- their `layout.props.text` updated in place. OpenMW's Element:update() refreshes
+-- the element's own props but not its children's layouts, so every node here is
+-- a root element rather than a nested child tree.
+--
+-- ⚠️  Cosmetics (exact offsets, template fit) still need an on-device pass.
 
 local engine = require('scripts.runtime.engine')
 local uiLayout = require('scripts.idle.uiLayout')
-local activityLog = require('scripts.idle.activityLog')
+local uiModel = require('scripts.idle.uiModel')
 local util = require('scripts.idle.util')
 
 local ui = engine.ui()
@@ -34,15 +49,17 @@ local state = {
   warned = false,
   sinceRefresh = 0,
   layout = nil,
-  status = {},
-  buttons = {},
-  backgrounds = {},
-  buttonList = nil,
-  cfg = nil,
+  view = nil,
+  tab = 'info',
+  offset = 0,
+  selection = 1,
+  elements = {},
+  rowCount = 0,
+  footerCount = 0,
 }
 
 -- ---------------------------------------------------------------------------
--- small helpers (all defensive)
+-- defensive engine helpers
 -- ---------------------------------------------------------------------------
 
 local function idle() return interfaces and interfaces.IdleOpenMW end
@@ -62,77 +79,132 @@ local function vec2(x, y) return engines.vector2(x, y) end
 
 local function usable()
   if state.disabled then return false end
-  if not (ui and ui.create and ui.TYPE and engines and engines.vector2) then return false end
-  return true
+  return ui ~= nil and ui.create ~= nil and ui.TYPE ~= nil
+    and engines ~= nil and engines.vector2 ~= nil
 end
 
---- Create a text element. Uses an MWUI template when available, else a bare Text.
-local function createText(x, y, text, size, colour, templateName, extra)
+--- Create a root element. `rect` gives both the position and the tap area.
+local function createElement(opts)
   local props = {
-    position = vec2(math.floor(x), math.floor(y)),
-    text = text,
-    textSize = math.max(8, math.floor(size)),
-    textColor = colour,
+    position = vec2(math.floor(opts.x or 0), math.floor(opts.y or 0)),
+    text = opts.text or '',
+    textSize = math.max(8, math.floor(opts.size or 12)),
+    textColor = opts.color,
   }
-  for key, value in pairs(extra or {}) do props[key] = value end
-
-  local t = templateName and template(templateName)
-  if t then
-    return ui.create { layer = 'HUD', template = t, props = props }
+  if opts.width and opts.height then
+    props.size = vec2(math.floor(opts.width), math.floor(opts.height))
   end
-  return ui.create { layer = 'HUD', type = ui.TYPE.Text, props = props }
+  if opts.anchor then props.anchor = opts.anchor end
+  if opts.ignorePointerEvents then props.ignorePointerEvents = true end
+
+  local layout = { layer = 'HUD', props = props }
+  local t = opts.template and template(opts.template)
+  if t then layout.template = t else layout.type = opts.type or ui.TYPE.Text end
+  if opts.onTap and async and type(async.callback) == 'function' then
+    layout.events = { mouseClick = async.callback(opts.onTap) }
+  end
+  -- our rect props deliberately override template defaults; silence the warnings
+  return ui.create(layout, { noWarnUnused = true })
 end
 
---- Create a tappable background rectangle carrying the click handler.
-local function createButtonFace(rect, callback)
-  local props = {
-    position = vec2(rect.x, rect.y),
-    size = vec2(rect.width, rect.height),
-  }
-  local events = nil
-  if callback and async and type(async.callback) == 'function' then
-    events = { mouseClick = async.callback(callback) }
-  end
-
-  local t = template('boxTransparentThick')
-  if t then
-    return ui.create { layer = 'HUD', template = t, props = props, events = events }
-  end
-  return ui.create { layer = 'HUD', type = ui.TYPE.Window, props = props, events = events }
+local function setText(element, text)
+  if not element then return end
+  element.layout.props.text = text or ''
+  element:update()
 end
 
 -- ---------------------------------------------------------------------------
--- commands
+-- taps
 -- ---------------------------------------------------------------------------
 
-local function onButton(id)
+local function refreshNow() state.sinceRefresh = REFRESH_SECONDS end
+
+local function onTabTap(tabId)
+  state.tab = tabId
+  state.offset = 0
+  state.selection = 1
+  refreshNow()
+end
+
+local function onScroll(delta)
+  local view = state.view
+  if not view then return end
+  state.offset = uiModel.scroll(state.offset, delta, #view.rows, state.layout.pageSize)
+  refreshNow()
+end
+
+local function onRowTap(index)
+  local view = state.view
+  if not view then return end
+  local row = view.visible.rows[index]
+  if not row then return end
+
+  local absolute = view.offset + index
+  state.selection = absolute
+
   local api = idle()
   if not api then return end
 
-  if id == 'toggle' then
-    if type(api.toggleAutoPlay) == 'function' then pcall(api.toggleAutoPlay) end
-  elseif id == 'cancel' then
-    if type(api.clearDirectives) == 'function' then pcall(api.clearDirectives) end
-    if type(api.log) == 'function' then pcall(api.log, 'Directive cancelled', 'warn') end
-  else
-    if type(api.pushDirective) == 'function' then
-      local ok, entry = pcall(api.pushDirective, id)
-      if ok and not entry and type(api.log) == 'function' then
-        pcall(api.log, ('No such directive: %s'):format(id), 'warn')
-      end
+  if row.action == 'order' and row.payload then
+    -- one tap = order it, the whole point of the console
+    local ok, entry = pcall(api.act, 'order', row.payload)
+    if ok and not entry and api.log then
+      pcall(api.log, ('Cannot order %s'):format(tostring(row.payload.id)), 'warn')
     end
+  elseif row.action == 'launch' and row.payload then
+    pcall(api.act, 'launch', row.payload)
   end
-  state.sinceRefresh = REFRESH_SECONDS -- refresh immediately after a tap
+  -- 'select' rows just move the selection; the footer acts on it
+  refreshNow()
+end
+
+local function onFooterTap(index)
+  local view = state.view
+  if not view then return end
+  local button = view.footer[index]
+  if not button then return end
+  local api = idle()
+  if not api then return end
+
+  local payload = nil
+  if uiModel.REQUIRES_SELECTION[button.id] then
+    local selected = view.selected
+    if not selected or not selected.payload or not selected.payload.id then
+      if api.log then pcall(api.log, 'Select an item in the Pack tab first', 'warn') end
+      return
+    end
+    payload = { id = selected.payload.id, count = selected.payload.count }
+  end
+
+  pcall(api.act, button.id, payload)
+  refreshNow()
+end
+
+local function onModeTap()
+  local api = idle()
+  if api then pcall(api.act, 'cycle_mode') end
+  refreshNow()
 end
 
 -- ---------------------------------------------------------------------------
--- build
+-- build (once per resolution)
 -- ---------------------------------------------------------------------------
 
 local function build()
   local api = idle()
-  local cfg = (api and type(api.getConfig) == 'function') and (select(1, pcall(api.getConfig))) or nil
-  state.cfg = cfg
+
+  -- NB: `select(1, pcall(f))` yields BOTH the pcall status and the value, so an
+  -- `and` chain around it silently produces `true`. Unpack explicitly instead.
+  local cfg = nil
+  if api and type(api.getConfig) == 'function' then
+    local ok, value = pcall(api.getConfig)
+    if ok then cfg = value end
+  end
+  local startMode = 'auto'
+  if api and type(api.mode) == 'function' then
+    local ok, value = pcall(api.mode)
+    if ok and value then startMode = value end
+  end
 
   local screen = nil
   if ui.screenSize then
@@ -140,42 +212,95 @@ local function build()
     if ok then screen = size end
   end
 
-  local layout = uiLayout.compute(screen, cfg)
+  local tabs = uiModel.TABS
+  local footer = uiModel.footerFor(state.tab)
+  local layout = uiLayout.console(screen, cfg, {
+    mode = startMode,
+    tabs = tabs,
+    footer = footer,
+    footerRows = 2,
+  })
   state.layout = layout
+  state.elements = {}
 
-  -- status panel: one text row per line, stacked under the notch
-  local rowHeight = math.floor(20 * layout.scale)
-  local y = layout.status.y
-  local definitions = {
-    { key = 'header', size = 18 * layout.textScale, colour = rgb(1.0, 0.85, 0.40), template = 'textHeader' },
-    { key = 'goal', size = 15 * layout.textScale, colour = rgb(0.92, 0.92, 0.92), template = 'textNormal' },
-    { key = 'pools', size = 13 * layout.textScale, colour = rgb(0.80, 0.92, 0.80), template = 'textNormal' },
-    { key = 'gold', size = 13 * layout.textScale, colour = rgb(0.92, 0.86, 0.52), template = 'textNormal' },
-    { key = 'log1', size = 11 * layout.textScale, colour = rgb(0.70, 0.70, 0.70), template = 'textNormal' },
-    { key = 'log2', size = 11 * layout.textScale, colour = rgb(0.70, 0.70, 0.70), template = 'textNormal' },
+  local scale = layout.base.scale
+  local textScale = layout.base.textScale
+
+  -- --- top strip (four text rows + a mode button) ---
+  local stripHeight = math.floor(20 * scale)
+  local strip = {
+    { key = 'mode', size = 15 * textScale, colour = rgb(1.0, 0.85, 0.40), template = 'textHeader' },
+    { key = 'goal', size = 13 * textScale, colour = rgb(0.95, 0.95, 0.95), template = 'textNormal' },
+    { key = 'pools', size = 12 * textScale, colour = rgb(0.80, 0.92, 0.80), template = 'textNormal' },
+    { key = 'gold', size = 12 * textScale, colour = rgb(0.92, 0.86, 0.52), template = 'textNormal' },
+    { key = 'log', size = 11 * textScale, colour = rgb(0.72, 0.72, 0.72), template = 'textNormal' },
   }
-  for _, definition in ipairs(definitions) do
-    state.status[definition.key] = createText(
-      layout.status.x, y, '', definition.size, definition.colour, definition.template)
-    y = y + rowHeight
+  state.elements.top = {}
+  for index, row in ipairs(strip) do
+    state.elements.top[row.key] = createElement({
+      x = layout.base.margin, y = layout.base.safeTop + (index - 1) * stripHeight,
+      width = layout.screen.width - layout.base.margin * 2, height = stripHeight,
+      size = row.size, color = row.colour, template = row.template,
+      onTap = row.key == 'mode' and onModeTap or nil,
+    })
   end
 
-  -- command bar: buttons, wrapped into rows that stack upward
-  state.buttonList = uiLayout.defaultButtons()
-  local rows = uiLayout.buttonRows(state.buttonList, layout.bar, layout.scale)
+  -- --- panel background ---
+  state.elements.panel = createElement({
+    x = layout.panel.x, y = layout.panel.y,
+    width = layout.panel.width, height = layout.panel.height,
+    size = 10, type = ui.TYPE.Window, template = 'boxTransparentThick',
+    onTap = function() end, -- swallow taps so they do not reach the game
+  })
 
-  for _, row in ipairs(rows) do
-    for _, button in ipairs(row) do
-      state.backgrounds[button.id] = createButtonFace(button, function() onButton(button.id) end)
-      state.buttons[button.id] = createText(
-        button.x + button.width / 2,
-        button.y + button.height / 2,
-        button.label,
-        14 * layout.textScale,
-        rgb(1, 1, 1),
-        'textHeader',
-        { anchor = vec2(0.5, 0.5), ignorePointerEvents = true })
-    end
+  -- --- tabs ---
+  state.elements.tabs = {}
+  for _, tab in ipairs(layout.tabs) do
+    local tabId = tab.id
+    state.elements.tabs[tabId] = createElement({
+      x = tab.x, y = tab.y, width = tab.width, height = tab.height,
+      text = tab.label, size = 12 * textScale, color = rgb(0.9, 0.9, 0.9),
+      template = 'textNormal',
+      onTap = function() onTabTap(tabId) end,
+    })
+  end
+
+  -- --- list rows (page size fixed by the geometry) ---
+  state.rowCount = layout.pageSize
+  state.elements.rows = {}
+  for index = 1, layout.pageSize do
+    local rect = layout.list.rows[index]
+    state.elements.rows[index] = createElement({
+      x = rect.x + math.floor(4 * scale), y = rect.y,
+      width = rect.width - math.floor(8 * scale), height = rect.height,
+      size = 11 * textScale, template = 'textNormal',
+      onTap = function() onRowTap(index) end,
+    })
+  end
+
+  -- --- scroll buttons ---
+  state.elements.scrollUp = createElement({
+    x = layout.list.up.x, y = layout.list.up.y,
+    width = layout.list.up.width, height = layout.list.up.height,
+    text = '^', size = 14 * textScale, color = rgb(0.9, 0.9, 0.6), template = 'textNormal',
+    onTap = function() onScroll(-3) end,
+  })
+  state.elements.scrollDown = createElement({
+    x = layout.list.down.x, y = layout.list.down.y,
+    width = layout.list.down.width, height = layout.list.down.height,
+    text = 'v', size = 14 * textScale, color = rgb(0.9, 0.9, 0.6), template = 'textNormal',
+    onTap = function() onScroll(3) end,
+  })
+
+  -- --- footer buttons ---
+  state.footerCount = #layout.footer
+  state.elements.footer = {}
+  for index, rect in ipairs(layout.footer) do
+    state.elements.footer[index] = createElement({
+      x = rect.x + 2, y = rect.y, width = rect.width - 4, height = rect.height,
+      text = '', size = 12 * textScale, color = rgb(1, 1, 1), template = 'textHeader',
+      onTap = function() onFooterTap(index) end,
+    })
   end
 
   state.built = true
@@ -185,67 +310,74 @@ end
 -- render
 -- ---------------------------------------------------------------------------
 
-local function setText(key, value)
-  local element = state.status[key]
-  if not element then return end
-  element.layout.props.text = value
-  element:update()
-end
-
-local function setButtonLabel(id, value)
-  local element = state.buttons[id]
-  if not element then return end
-  element.layout.props.text = value
-  element:update()
-end
-
 local function render()
   local api = idle()
+  local panelData = nil
+  if api and type(api.panel) == 'function' then
+    local ok, value = pcall(api.panel)
+    if ok then panelData = value end
+  end
+
+  local view = uiModel.view(state, panelData, state.layout)
+  state.view = view
+
   local percent = function(fraction) return math.floor((fraction or 0) * 100 + 0.5) .. '%' end
+  local status = (panelData and panelData.status) or {}
 
-  local playing = true
-  local status = nil
-  if api then
-    if type(api.isAutoPlaying) == 'function' then
-      local ok, value = pcall(api.isAutoPlaying)
-      if ok then playing = value end
-    end
-    if type(api.status) == 'function' then
-      local ok, value = pcall(api.status)
-      if ok then status = value end
-    end
+  -- top strip
+  setText(state.elements.top.mode,
+    ('[%s]  %s   (tap to change)'):format(uiModel.modeLabel(view.mode),
+      uiModel.MODE_HINT[view.mode] or ''))
+  setText(state.elements.top.goal, ('%s%s%s'):format(
+    tostring(status.goal or 'idle'),
+    status.reason and ('  (' .. status.reason .. ')') or '',
+    view.directive and ('   ORDER: ' .. view.directive) or ''))
+  setText(state.elements.top.pools, ('HP %s  MP %s  FT %s  LOAD %s'):format(
+    percent(status.healthFraction), percent(status.magickaFraction),
+    percent(status.fatigueFraction), percent(status.encumbranceFraction)))
+  local player = (panelData and panelData.player) or {}
+  local load = player.encumbrance
+  setText(state.elements.top.gold, ('Gold %s   lvl %s%s'):format(
+    util.formatNumber(player.gold or status.gold or 0),
+    tostring(player.level or status.level or '?'),
+    load and ('   load %d/%d'):format(load.current or 0, load.max or 0) or ''))
+
+  local log = (panelData and panelData.log) or {}
+  local lastLog = log[#log]
+  setText(state.elements.top.log, lastLog
+    and (('%s  %s'):format(require('scripts.idle.activityLog').formatTime(lastLog.time or 0),
+      tostring(lastLog.message)))
+    or 'starting up…')
+
+  -- tabs (highlight the active one)
+  for _, tab in ipairs(view.tabs) do
+    local element = state.elements.tabs[tab.id]
+    setText(element, (tab.id == view.tab and '[' .. tab.label .. ']' or tab.label))
   end
 
-  local directive = status and status.directive or nil
-  setText('header', ('Idle OpenMW  ·  lvl %s  ·  %s%s'):format(
-    tostring(status and status.level or '?'),
-    uiLayout.toggleLabel(playing),
-    directive and ('  ·  ' .. directive) or ''))
-
-  if not status then
-    setText('goal', 'waiting for the director…')
-    setText('pools', '')
-    setText('gold', '')
-  else
-    setText('goal', ('%s%s'):format(tostring(status.goal or 'idle'),
-      status.reason and ('  (' .. status.reason .. ')') or ''))
-    setText('pools', ('HP %s  MP %s  FT %s  LOAD %s'):format(
-      percent(status.healthFraction), percent(status.magickaFraction),
-      percent(status.fatigueFraction), percent(status.encumbranceFraction)))
-    setText('gold', 'Gold ' .. util.formatNumber(status.gold or 0))
-  end
-
-  local lines = (status and status.log) or {}
-  for i = 1, 2 do
-    local entry = lines[#lines - (2 - i)]
-    if entry then
-      setText('log' .. i, ('%s  %s'):format(activityLog.formatTime(entry.time), entry.message))
+  -- rows
+  for index = 1, state.rowCount do
+    local element = state.elements.rows[index]
+    local row = view.visible.rows[index]
+    if not row then
+      setText(element, '')
     else
-      setText('log' .. i, '')
+      local absolute = view.offset + index
+      local marker = (absolute == view.selection) and '>' or ' '
+      setText(element, marker .. ' ' .. uiModel.formatRow(row))
     end
   end
 
-  setButtonLabel('toggle', uiLayout.toggleLabel(playing))
+  -- scroll affordances: the glyphs stay put (they are the tap targets); the
+  -- clamped scroll position is what actually limits them
+  setText(state.elements.scrollUp, '^')
+  setText(state.elements.scrollDown, 'v')
+
+  -- footer
+  for index = 1, state.footerCount do
+    local button = view.footer[index]
+    setText(state.elements.footer[index], button and button.label or '')
+  end
 end
 
 -- ---------------------------------------------------------------------------
@@ -269,20 +401,30 @@ local function update(dt)
     state.disabled = true
     if not state.warned then
       state.warned = true
-      print('[IdleOpenMW] HUD disabled: ' .. tostring(err))
+      print('[IdleOpenMW] console disabled: ' .. tostring(err))
     end
   end
 end
 
---- Rebuild on resize/rotation (the layout is resolution-derived).
+--- Rebuild on resize/rotation: the layout is resolution-derived.
 local function onResolutionChanged()
   if state.disabled then return end
   pcall(function()
-    for _, element in pairs(state.status) do if element.destroy then element:destroy() end end
-    for _, element in pairs(state.buttons) do if element.destroy then element:destroy() end end
-    for _, element in pairs(state.backgrounds) do if element.destroy then element:destroy() end end
+    local function destroyAll(list)
+      for _, element in pairs(list or {}) do
+        if element and element.destroy then element:destroy() end
+      end
+    end
+    destroyAll(state.elements.top)
+    destroyAll(state.elements.tabs)
+    destroyAll(state.elements.rows)
+    destroyAll(state.elements.footer)
+    if state.elements.scrollUp then state.elements.scrollUp:destroy() end
+    if state.elements.scrollDown then state.elements.scrollDown:destroy() end
+    if state.elements.panel then state.elements.panel:destroy() end
   end)
-  state.status, state.buttons, state.backgrounds, state.built = {}, {}, {}, false
+  state.elements = {}
+  state.built = false
 end
 
 return {
