@@ -1,0 +1,47 @@
+describe('idle.config', function()
+  local config = require('scripts.idle.config')
+
+  it('provides a fresh copy of the defaults each time', function()
+    local a = config.new()
+    a.tick.interval = 99
+    assert.equals(config.defaults.tick.interval, 2.0)
+    assert.equals(config.new().tick.interval, 2.0)
+  end)
+
+  it('deep-merges overrides without dropping sibling defaults', function()
+    local cfg = config.new({ tick = { interval = 3.5 } })
+    assert.equals(cfg.tick.interval, 3.5)
+    assert.equals(cfg.tick.logLimit, config.defaults.tick.logLimit)
+    assert.is_not_nil(cfg.offline)
+    assert.equals(cfg.offline.maxRealHours, config.defaults.offline.maxRealHours)
+  end)
+
+  it('passes a clean default config with no problems', function()
+    local _, problems = config.validate(config.new())
+    assert.equals(#problems, 0)
+  end)
+
+  it('clamps out-of-range values and reports them', function()
+    local cfg = config.new({ tick = { interval = 1e9 }, offline = { maxRealHours = 9999 } })
+    cfg.thresholds.criticalHealth = 5
+    local _, problems = config.validate(cfg)
+    assert.equals(cfg.tick.interval, 60)
+    assert.equals(cfg.offline.maxRealHours, 24 * 7)
+    assert.equals(cfg.thresholds.criticalHealth, 1)
+    assert.is_true(#problems >= 3)
+  end)
+
+  it('rejects non-numeric weight overrides', function()
+    local cfg = config.new({ weightOverrides = { combat = 'lots' } })
+    local _, problems = config.validate(cfg)
+    assert.is_true(#problems >= 1)
+    assert.equals(cfg.weightOverrides.combat, 1.0)
+  end)
+
+  it('survives a non-table config', function()
+    local cfg, problems = config.validate('nonsense')
+    assert.is_table(cfg)
+    assert.equals(#problems, 1)
+    assert.equals(cfg.tick.interval, 2.0)
+  end)
+end)
