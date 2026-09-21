@@ -113,7 +113,40 @@ storage:set('config', {
 | `behaviour.barterRatio` | `0.8` | Merchant pays this fraction of book value |
 | `behaviour.directiveTtl` | `120` | How long a user directive stays in force |
 | `ui.topInset` / `bottomInset` | `24` | Extra safe-area padding, in UI units |
-| `ui.textScale` | `1.0` | HUD text multiplier |
+| `ui.textScale` | `1.0` | Console text multiplier |
+| `ui.startMode` | `'auto'` | Which mode to begin in: `manual`, `directive` or `auto` |
+
+---
+
+## Using the console
+
+Tap the top-left `[AUTO]` line (or press **L**) to cycle modes:
+
+| Mode | What it does |
+|---|---|
+| **MANUAL** | You drive. The mod stops issuing commands and hands movement back to OpenMW's touch controls. The console shrinks to leave the game more room. |
+| **ORDERS** | Auto-play, but your orders take precedence. |
+| **AUTO** | Fully self-playing. |
+
+Tabs along the top of the console:
+
+- **Info** — why the director chose what it chose: mode, current goal with reason,
+  HP/MP/FT/load, gold, the top-scoring goals, and decision counters.
+- **Order** — one tap to send the character shopping, selling junk, resting,
+  training, healing, talking, questing or exploring. Orders also work in AUTO.
+- **Pack** — your inventory with `[junk]` / `[WORN]` flags and gold-per-weight.
+  Tap a row to select it, then use **[Equip] [Sell] [Drop]**. Equip handles
+  armour, clothing, weapons, ammo and light sources; tools and anything whose slot
+  cannot be derived will tell you to use the inventory window (see
+  [limitations.md](limitations.md) §1.6).
+- **Talk** — recent conversations, topics you have heard, and started quests.
+- **Log** — the activity feed, newest first.
+- **Open** — launches Morrowind's own windows: Inventory, Journal, Barter,
+  Training, Dialogue, Spells, Map. This is what keeps the *whole* game reachable
+  from the console.
+
+`[AUTO]`/`[PAUSED]` in the top strip reflects the mode; `[Sell junk]`-style
+buttons are contextual to the active tab.
 
 ---
 

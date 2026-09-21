@@ -104,10 +104,12 @@ def lua_str(value: str) -> str:
     return f'"{escaped}"'
 
 
-def run_suite(flavour: str, color: bool, verbose: bool, upstream_stdout=None) -> bool:
+def run_suite(flavour: str, color: bool, verbose: bool, upstream_stdout=None, only: str | None = None) -> bool:
     specs = discover_specs()
+    if only:
+        specs = [name for name in specs if only in name]
     if not specs:
-        print("no spec modules found under tests/spec/", file=sys.stderr)
+        print("no spec modules matched under tests/spec/", file=sys.stderr)
         return False
 
     try:
@@ -191,6 +193,8 @@ def main(argv=None) -> int:
     parser.add_argument("--hours", type=float, default=1000.0, help="simulated game-hours (with --sim)")
     parser.add_argument("--seed", type=int, default=1337, help="RNG seed (with --sim)")
     parser.add_argument("--list", action="store_true", help="list discovered spec modules and exit")
+    parser.add_argument("--only", default=None,
+                        help="only run spec modules whose name contains this (e.g. --only director)")
     parser.add_argument("-v", "--verbose", action="store_true")
     parser.add_argument("--no-color", action="store_true")
     args = parser.parse_args(argv)
@@ -214,7 +218,7 @@ def main(argv=None) -> int:
     flavours = PORTABILITY_FLAVOURS if args.all else [args.flavour]
     results = {}
     for flavour in flavours:
-        results[flavour] = run_suite(flavour, color, args.verbose)
+        results[flavour] = run_suite(flavour, color, args.verbose, only=args.only)
 
     print("\n" + "=" * 46)
     for flavour, ok in results.items():

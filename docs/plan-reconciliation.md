@@ -27,7 +27,9 @@ Plus, beyond the plan:
 |---|---|
 | ✅ `docs/openmw-lua-api.md` | Citation-backed API reference — the plan's errors needed a permanent fix |
 | ✅ `tests/sim/headless_sim.lua` | The plan's "headless simulation harness" (1000 game-hours) |
-| ✅ Phone-first `uiLayout.lua` + touch command bar | The plan asked for a portrait command panel; this makes the geometry testable |
+| ✅ Play modes: manual / orders / auto | The plan's Full Auto / Directive Auto / Manual, and MANUAL hands the game's own controls back so it stays playable |
+| ✅ Phone-first `uiLayout.lua` + `uiModel.lua` | The plan asked for a portrait command panel; this makes the geometry *and* the interaction model testable |
+| ✅ The full console overhaul | The plan described a status panel; what shipped is a six-tab console (Info/Order/Pack/Talk/Log/Open) with tap-to-equip, an inventory browser and launchers for every real Morrowind window |
 | ✅ `directive.lua` ("Directive Auto") | The plan's Full Auto / Directive Auto / Manual modes |
 
 ---

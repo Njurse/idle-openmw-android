@@ -145,9 +145,69 @@ RNG state, counts, dialogue memory, visited cells, and `lastSeen` from
 
 ## Why the HUD geometry is separate
 
-`idle/uiLayout.lua` is pure and unit-tested; `portraitUI.lua` only turns its
-rectangles into widgets. The widget calls cannot be verified headlessly, so all
-the arithmetic that could be wrong was moved somewhere it *can* be verified.
+`idle/uiLayout.lua` (geometry) and `idle/uiModel.lua` (tabs, rows, footers,
+scrolling, mode cycling) are pure and unit-tested; `portraitUI.lua` only turns
+their output into widgets. The widget calls cannot be verified headlessly, so all
+the arithmetic and all the interaction logic that *could* be wrong was moved
+somewhere it *can* be verified. The layout spec even asserts that **no two touch
+regions overlap**.
+
+## The console (phone UI)
+
+```
+runtime/observer.readPanel(env)  --- engine-derived --->  player, inventory,
+                                                         journal, quests
+director:panelData()             --- brain-derived  --->  status, mode,
+                                                         directive, dialogue
+                                                         transcript, log
+                    |
+                    v
+        uiModel.buildRows(tab, panel)   --> rows
+        uiModel.view(state, panel, layout) --> tab, visible slice, selection, footer
+                    |
+                    v
+        portraitUI.lua  --> ui.create(...) widgets with mouseClick handlers
+```
+
+- **Rendering strategy.** Elements are created once per resolution and then have
+  `layout.props.text` updated in place. OpenMW's `Element:update()` refreshes an
+  element's own props but *not* its children's layouts, so every node is a root
+  element rather than a nested child tree.
+- **Interaction.** Tapping a row/​tab/​footer button calls the `IdleOpenMW`
+  interface: `act(action, payload)`. The action table lives in `idleDirector.lua`
+  (`cycle_mode`, `pause`, `order`, `cancel`, `equip`, `sell`, `drop`,
+  `talk_nearest`, `clear_log`, `launch`). Because `uiModel` builds the rows and
+  `uiLayout` builds the rects, the *whole* console is exercised headlessly —
+  including simulated taps, which the specs do by calling the stored
+  `events.mouseClick` handler directly.
+- **Manual mode.** `act('pause')`/`setMode('manual')` calls
+  `interfaces.Controls.overrideMovementControls(false)`, which hands the player
+  back to OpenMW's own input script. The director then emits **zero** commands,
+  so the game is genuinely playable.
+- **Launchers.** `act('launch', { mode = 'Journal' })` calls
+  `interfaces.UI.setMode(mode, opts)`. Modes are the real engine names from
+  `mwlua/uibindings.cpp`: `Interface`, `Journal`, `Barter`, `Training`,
+  `Dialogue`, `Rest`, `SpellBuying`, … Dialogue is given a `target` taken from
+  the last snapshot's nearest talkable actor.
+
+## Tap-to-equip without guessing
+
+`equipment.lua` exists because Morrowind's item `type` numbers do **not** line up
+with equipment slot numbers (armor type 2 is `LPauldron`; equipment slot 2 is
+`Greaves`). So the mapping is done in named steps, each pure:
+
+```
+record.type (number)
+  -> type NAME   (invert types.<Kind>.TYPE)
+  -> slot NAME   (the KIND_SLOT tables: Cuirass->Cuirass, Shield->CarriedLeft, Ring->LeftRing, …)
+  -> slot NUMBER (types.Actor.EQUIPMENT_SLOT)
+```
+
+If any step cannot be resolved — tools like lockpicks and probes, which the game
+*selects* rather than wears — the mapping returns `nil` and the executor refuses
+with "use the inventory window" instead of guessing a slot. That refusal is
+itself a test.
+
 
 ## Test architecture
 

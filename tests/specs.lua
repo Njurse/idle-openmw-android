@@ -12,8 +12,10 @@ return {
   'tests.spec.directive_spec',
   'tests.spec.director_spec',
   'tests.spec.economy_spec',
+  'tests.spec.equipment_spec',
   'tests.spec.goalScoring_spec',
   'tests.spec.harness_spec',
+  'tests.spec.idleDirector_spec',
   'tests.spec.offlineProgress_spec',
   'tests.spec.pathfinder_spec',
   'tests.spec.portraitUI_spec',
@@ -21,5 +23,6 @@ return {
   'tests.spec.runtime_spec',
   'tests.spec.statCrunch_spec',
   'tests.spec.uiLayout_spec',
+  'tests.spec.uiModel_spec',
   'tests.spec.util_spec',
 }

@@ -94,6 +94,28 @@ valuable next piece of work (§4).
   `core.UI_MODE`.
 - `.omwscripts` comments are `#`; there is no `LOCAL:` flag; the path must end
   in `.lua`.
+- **An item's `type` number is not its equipment slot number.** Armor type 2 is
+  `LPauldron` while equipment slot 2 is `Greaves`. `scripts/idle/equipment.lua`
+  exists solely to bridge that via names.
+
+### 1.6 Tap-to-equip is best-effort by design
+
+`types.Actor.setEquipment(actor, { [slot] = item })` works, but only for items
+whose slot we can *derive*. Tools (lockpicks, probes, repair hammers), potions,
+books and ingredients are **selectable, not wearable**, and an unknown armor type
+gives us no slot at all. In those cases the mod refuses and tells you to use the
+inventory window rather than guessing a slot — a wrong slot silently equips the
+wrong thing, which is worse than a refusal. Armor, clothing, weapons, ammo and
+light sources all resolve correctly.
+
+### 1.7 The console's pixels are unverified
+
+`uiLayout.lua` (geometry) and `uiModel.lua` (tabs, rows, footers, scrolling,
+modes) are unit-tested, including a check that no two touch regions overlap. What
+is **not** tested is how it *looks*: text may not sit vertically centred in a
+row, exact offsets and the fit of Morrowind's MWUI templates need an on-device
+pass. Every `ui.create` is pcall-guarded and the console latches off after one
+failure, so a cosmetic problem can never break the director.
 
 ---
 
@@ -124,6 +146,10 @@ wrap.
   closed single-player world. The mod awards a bounded, deterministic catch-up
   (`offline.maxRealHours`, default 8) so idling offline is not a strict loss.
   It is deliberately capped to make that explicit.
+- **The console covers the lower half of the screen** (~46%; ~30% in MANUAL). That
+  is a deliberate trade so the game stays visible above it, and it is
+  configurable via the mode, but it *does* mean the lower half of the world is
+  hidden while the panel is open. There is no auto-hide or swipe-to-dismiss yet.
 - **No occlusion handling.** An isometric/third-person view can be blocked by
   scenery. There is no "fade nearby obstructing objects" shader.
 - **Threat model is heuristic.** `combat.assess` uses enemy level counts against
@@ -142,8 +168,9 @@ wrap.
   piece unlocks most of the economy and training behaviour.
 2. **Hostility resolver** — the same shape, for `isHostile`. Currently a hook
    with a mock default.
-3. **On-device HUD pass** — verify `ignorePointerEvents`, MWUI template usage
-  and the tap targets on real hardware.
+3. **On-device console pass** — verify `ignorePointerEvents`, MWUI template fit,
+   tap targets and row text centring on real hardware. The console's geometry and
+   interaction model are already tested; only the pixels are unverified.
 4. **Android build track** — the NDK superbuild, portrait un-gating, and the
    thermal/FPS policy from the original plan (all still valid, all still
   unimplemented here).
