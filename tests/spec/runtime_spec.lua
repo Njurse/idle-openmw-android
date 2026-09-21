@@ -1,0 +1,320 @@
+describe('runtime.openmw adapter', function()
+  local mocks = require('tests.mocks.openmw')
+  local observer = require('scripts.runtime.observer')
+  local executorMod = require('scripts.runtime.executor')
+  local configMod = require('scripts.idle.config')
+  local statCrunch = require('scripts.idle.statCrunch')
+  local directorMod = require('scripts.idle.director')
+
+  local cfg = configMod.new()
+
+  local function withEnv(spec, fn)
+    local env = mocks.install(spec)
+    local ok, err = pcall(fn, env)
+    mocks.uninstall()
+    if not ok then error(err, 0) end
+  end
+
+  local WARRIOR_SPEC = {
+    classId = 'warrior',
+    recordId = 'player',
+    level = 5,
+    position = { x = 0, y = 0, z = 0 },
+    rotation = 0,
+    cell = { name = 'Balmora', isExterior = true },
+    gold = 300,
+    capacity = 400,
+    health = { current = 120, base = 120 },
+    magicka = { current = 40, base = 40 },
+    fatigue = { current = 140, base = 140 },
+    skills = { longblade = 64, heavyarmor = 58, block = 52, armorer = 41, athletics = 46 },
+    attributes = { strength = 62, endurance = 58, agility = 42 },
+    inventory = {
+      { id = 'longsword', count = 1, value = 100, weight = 15, equipped = true },
+      { id = 'chitin dagger', count = 5, value = 8, weight = 4 },
+    },
+  }
+
+  describe('engine facade', function()
+    it('resolves mocked engine modules', function()
+      withEnv({}, function(env)
+        local engine = require('scripts.runtime.engine')
+        assert.equals(engine.types(), env.types)
+        assert.equals(engine.self(), env.self)
+        assert.equals(engine.nearby(), env.nearby)
+        assert.is_not_nil(engine.playerStorage('IdleOpenMW'))
+        assert.is_not_nil(engine.wallClock()) -- os.time exists in the host Lua
+      end)
+    end)
+  end)
+
+  describe('observer.readPlayer', function()
+    it('reads the documented stat surface', function()
+      withEnv(WARRIOR_SPEC, function(env)
+        local player = observer.readPlayer(env, {})
+        assert.equals(player.level, 5)
+        assert.equals(player.health.current, 120)
+        assert.equals(player.health.base, 120)
+        assert.equals(player.magicka.base, 40)
+        assert.equals(player.fatigue.current, 140)
+        assert.equals(player.gold, 300)
+        assert.equals(player.position.x, 0)
+        assert.equals(player.yaw, 0)
+        assert.equals(player.cell.name, 'Balmora')
+        assert.equals(player.skills.longblade.modified, 64)
+        assert.equals(player.attributes.strength.base, 62)
+        assert.equals(player.encumbrance.max, 400)
+      end)
+    end)
+
+    it('sorts inventory deterministically and marks equipment', function()
+      withEnv(WARRIOR_SPEC, function(env)
+        local player = observer.readPlayer(env, {})
+        assert.equals(player.inventory[1].id, 'chitin dagger')
+        assert.equals(player.inventory[2].id, 'longsword')
+        assert.is_true(player.inventory[2].equipped)
+        assert.is_false(player.inventory[1].equipped)
+        -- carried weight = 5*4 + 1*15
+        assert.equals(player.encumbrance.current, 35)
+      end)
+    end)
+
+    it('resolves the class from the NPC record', function()
+      withEnv(WARRIOR_SPEC, function(env)
+        local class = observer.readClass(env, env.self.object)
+        assert.equals(class.id, 'warrior')
+        assert.equals(class.specialization, 'combat')
+        assert.is_true(#class.majorSkills > 0)
+      end)
+    end)
+
+    it('defaults missing stats instead of throwing', function()
+      withEnv({}, function(env)
+        local player = observer.readPlayer(env, {})
+        assert.equals(player.level, 1)
+        assert.is_true(player.health.current >= 0)
+        assert.equals(player.gold, 0)
+      end)
+    end)
+  end)
+
+  describe('observer.scanWorld', function()
+    it('turns service hooks into opportunities and nearest targets', function()
+      withEnv({
+        position = { x = 0, y = 0, z = 0 },
+        cell = { name = 'Balmora', isExterior = true },
+        actors = {
+          { recordId = 'arrille', position = { x = 100, y = 0, z = 0 }, services = { shop = true, talk = true } },
+          { recordId = 'trainer', position = { x = 2000, y = 0, z = 0 }, services = { trainer = true } },
+        },
+      }, function(env)
+        local player = observer.readPlayer(env, {})
+        local world = observer.scanWorld(env, { cfg = cfg, capability = {} }, player)
+        assert.is_true(world.opportunities.shop > 0.9)        -- 100/4096 away
+        assert.is_true(world.opportunities.trainer > 0)
+        assert.is_true(world.opportunities.shop > world.opportunities.trainer)
+        assert.equals(world.nearest.shop.name, 'arrille')
+        assert.equals(world.opportunities.talk > 0, true)
+      end)
+    end)
+
+    it('counts hostiles and assesses danger', function()
+      withEnv({
+        position = { x = 0, y = 0, z = 0 },
+        actors = {
+          { recordId = 'rat', position = { x = 50, y = 0, z = 0 }, level = 2, hostile = true },
+          { recordId = 'dremora', position = { x = 60, y = 0, z = 0 }, level = 40, hostile = true },
+        },
+      }, function(env)
+        local player = observer.readPlayer(env, {})
+        local weak = { combat = 0.5, magic = 0.1 }
+        local world = observer.scanWorld(env, { cfg = cfg, capability = weak }, player)
+        assert.equals(world.enemies, 2)
+        assert.equals(world.nearest.enemy.name, 'rat')
+        assert.is_true(world.danger > 0)
+      end)
+    end)
+
+    it('only rests indoors', function()
+      withEnv({ cell = { name = 'Balmora', isExterior = true } }, function(env)
+        local player = observer.readPlayer(env, {})
+        local outside = observer.scanWorld(env, { cfg = cfg }, player)
+        assert.is_true(outside.opportunities.rest <= 0.2)
+
+        env.self.cell.isExterior = false
+        local inside = observer.scanWorld(env, { cfg = cfg }, observer.readPlayer(env, {}))
+        assert.is_true(inside.opportunities.rest > outside.opportunities.rest)
+      end)
+    end)
+
+    it('uses visited-cell memory for exploration', function()
+      withEnv({ cell = { name = 'Balmora', isExterior = false } }, function(env)
+        local player = observer.readPlayer(env, {})
+        local fresh = observer.scanWorld(env, { cfg = cfg, visitedCells = { Balmora = true } }, player)
+        local unknown = observer.scanWorld(env, { cfg = cfg, visitedCells = {} }, player)
+        assert.is_true(unknown.opportunities.unexplored > fresh.opportunities.unexplored)
+      end)
+    end)
+  end)
+
+  describe('observer.build', function()
+    it('produces a snapshot the director can consume', function()
+      withEnv(WARRIOR_SPEC, function(env)
+        local snapshot = observer.build(env, { cfg = cfg })
+        assert.is_not_nil(snapshot.player)
+        assert.is_not_nil(snapshot.world)
+        assert.equals(snapshot.player.gold, 300)
+        local director = directorMod.new({ classDef = observer.readClass(env, env.self.object), config = cfg })
+        local result = director:tick(0.1, snapshot)
+        assert.is_not_nil(result.goal)
+        assert.is_table(result.commands)
+      end)
+    end)
+  end)
+
+  describe('executor', function()
+    local function newExecutor(env, opts)
+      return executorMod.new(env, cfg, opts or {})
+    end
+
+    it('moves toward a blocking move command and steers controls', function()
+      withEnv({ position = { x = 0, y = 0, z = 0 }, rotation = 0 }, function(env)
+        local ex = newExecutor(env, { nav = mocks.nav(50) })
+        ex:submit({ { type = 'move', dest = { x = 0, y = 300, z = 0 }, run = true } })
+        ex:update(0.1, 0)
+        assert.is_true(ex:isMoving())
+        assert.equals(env.self.controls.movement, 1) -- already facing north
+        assert.is_true(env.self.controls.run)
+      end)
+    end)
+
+    it('stops steering once it arrives', function()
+      withEnv({ position = { x = 0, y = 0, z = 0 } }, function(env)
+        local ex = newExecutor(env, { nav = mocks.nav(50) })
+        ex:submit({ { type = 'move', dest = { x = 0, y = 100, z = 0 } } })
+        ex:update(0.1, 0)
+        env.self.position.y = 100
+        ex:update(0.1, 0.2)
+        assert.is_false(ex:isMoving())
+        assert.equals(ex:pending(), 0)
+        assert.equals(env.self.controls.movement, 0)
+      end)
+    end)
+
+    it('reports a failure when there is no route', function()
+      withEnv({ position = { x = 0, y = 0, z = 0 } }, function(env)
+        local ex = newExecutor(env, { nav = mocks.nav(50, true) })
+        ex:submit({ { type = 'move', dest = { x = 0, y = 300, z = 0 } } })
+        ex:update(0.1, 0)
+        assert.is_false(ex:isMoving())
+        assert.is_true(#ex.actions > 0)
+      end)
+    end)
+
+    it('activates a target object', function()
+      withEnv(WARRIOR_SPEC, function(env)
+        local ex = newExecutor(env)
+        -- note: `npc` must be declared before the closure, or the inner
+        -- reference would resolve to a (nil) global and pcall would hide it
+        local npc = {}
+        npc.activateBy = function() npc.activated = true end
+        ex:submit({ { type = 'activate', kind = 'shop', target = { object = npc } } })
+        ex:update(0, 0)
+        assert.is_true(npc.activated)
+      end)
+    end)
+
+    it('sells junk and banks the gold', function()
+      withEnv(WARRIOR_SPEC, function(env)
+        local ex = newExecutor(env)
+        local before = env.types.Actor.inventory(env.self.object):countOf('gold_001')
+        ex:submit({ { type = 'sell', plan = { { id = 'chitin dagger', count = 5, unitValue = 8 } } } })
+        ex:update(0, 0)
+        local after = env.types.Actor.inventory(env.self.object):countOf('gold_001')
+        -- 5 * 8 * 0.8 barter ratio
+        assert.equals(after - before, 32)
+        assert.equals(env.types.Actor.inventory(env.self.object):countOf('chitin dagger'), 0)
+        assert.equals(ex.applied.sales, 1)
+      end)
+    end)
+
+    it('buys supplies with gold', function()
+      withEnv(WARRIOR_SPEC, function(env)
+        local ex = newExecutor(env)
+        local inventory = env.types.Actor.inventory(env.self.object)
+        local before = inventory:countOf('gold_001')
+        ex:submit({ { type = 'buy', plan = { { id = 'cure potion', count = 2, unitValue = 50 } } } })
+        ex:update(0, 0)
+        assert.equals(inventory:countOf('gold_001'), before - 100)
+        assert.equals(inventory:countOf('cure potion'), 2)
+      end)
+    end)
+
+    it('restores pools when resting', function()
+      withEnv({ health = { current = 10, base = 100 }, fatigue = { current = 5, base = 100 } }, function(env)
+        local ex = newExecutor(env)
+        ex:submit({ { type = 'rest', hours = 8 } })
+        ex:update(0, 0)
+        assert.equals(env.types.Actor.stats.dynamic.health(env.self.object).current, 100)
+        assert.equals(env.types.Actor.stats.dynamic.fatigue(env.self.object).current, 100)
+        assert.equals(ex.applied.rests, 1)
+      end)
+    end)
+
+    it('advances a trained skill', function()
+      withEnv(WARRIOR_SPEC, function(env)
+        local ex = newExecutor(env)
+        ex:submit({ { type = 'train', skill = 'armorer' } })
+        ex:update(0, 0)
+        assert.is_true(env.types.NPC.stats.skills.armorer(env.self.object).progress > 0)
+        assert.equals(ex.applied.trains, 1)
+      end)
+    end)
+
+    it('queues a move for wander', function()
+      withEnv({ position = { x = 0, y = 0, z = 0 } }, function(env)
+        local ex = newExecutor(env, { nav = mocks.nav(50) })
+        ex:submit({ { type = 'wander', radius = 1000 } })
+        ex:update(0.1, 0)
+        assert.is_true(ex:isMoving())
+      end)
+    end)
+
+    it('is purely advisory when simulated actions are disabled', function()
+      withEnv(WARRIOR_SPEC, function(env)
+        local advisory = configMod.new({ behaviour = { simulateActions = false } })
+        local ex = executorMod.new(env, advisory, {})
+        local inventory = env.types.Actor.inventory(env.self.object)
+        local before = inventory:countOf('gold_001')
+        ex:submit({ { type = 'sell', plan = { { id = 'chitin dagger', count = 5, unitValue = 8 } } } })
+        ex:update(0, 0)
+        assert.equals(inventory:countOf('gold_001'), before)
+        assert.is_true(ex.actions[#ex.actions].level == 'warn')
+      end)
+    end)
+
+    it('runs a full decision -> execution cycle', function()
+      withEnv({
+        classId = 'warrior', position = { x = 0, y = 0, z = 0 }, rotation = 0,
+        cell = { name = 'Balmora', isExterior = true }, gold = 300,
+        skills = { longblade = 64 },
+        actors = {
+          { recordId = 'arrille', position = { x = 200, y = 0, z = 0 }, services = { shop = true } },
+        },
+      }, function(env)
+        local classDef = observer.readClass(env, env.self.object)
+        local snapshot = observer.build(env, { cfg = cfg })
+        local capability = statCrunch.compute(snapshot.player, classDef).capability
+        local director = directorMod.new({ classDef = classDef, config = cfg })
+        local ex = newExecutor(env, { nav = mocks.nav(50) })
+
+        local result = director:tick(0.1, snapshot)
+        -- the director must emit at least one command for every goal
+        assert.is_true(#result.commands >= 1)
+        ex:submit(result.commands)
+        ex:update(0.1, 0)
+        assert.is_not_nil(capability.combat)
+      end)
+    end)
+  end)
+end)
