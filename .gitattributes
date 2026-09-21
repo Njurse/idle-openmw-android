@@ -1,0 +1,15 @@
+# Normalize everything to LF in the repository and the working tree, so a Lua
+# mod developed on Windows stays byte-identical to what the engine reads on
+# Linux/Android and CI.
+* text=auto eol=lf
+
+*.lua   text eol=lf
+*.py    text eol=lf
+*.md    text eol=lf
+*.rst   text eol=lf
+*.json  text eol=lf
+
+# Binary
+*.png   binary
+*.apk   binary
+*.whl   binary
