@@ -58,6 +58,7 @@ M.ORDERS = {
   { id = 'heal', label = 'Heal up' },
   { id = 'talk', label = 'Talk to someone' },
   { id = 'quest', label = 'Do a quest' },
+  { id = 'travel', label = 'Travel' },
   { id = 'explore', label = 'Explore' },
 }
 
@@ -254,6 +255,34 @@ local function orderRows(panel)
       selectable = false,
     })
   end
+
+  -- Where the nearest travel service can take you. Autonomous travel is off by
+  -- default, so this is how the player uses it: tap to walk there and open the
+  -- travel window, then pick the destination in the game's own UI.
+  local travel = panel.travel
+  if type(travel) == 'table' and #travel > 0 then
+    local cells = {}
+    for _, destination in ipairs(travel) do
+      if destination.cell then cells[#cells + 1] = tostring(destination.cell) end
+    end
+    rows[#rows + 1] = row({
+      id = 'travel-service', kind = 'heading',
+      label = ('%s can take you to:'):format(tostring(panel.travelService or 'Travel service')),
+    })
+    rows[#rows + 1] = row({
+      id = 'order:travel:go',
+      kind = 'action',
+      label = 'Go to the travel service',
+      detail = table.concat(cells, ', '),
+      action = 'order',
+      payload = { id = 'travel' },
+      -- contextual: this row only exists when a travel service is nearby, so it
+      -- is not one of the static M.ORDERS
+      contextual = true,
+      selectable = false,
+    })
+  end
+
   rows[#rows + 1] = row({ id = 'orders-note', kind = 'heading',
     label = 'Queueing an order overrides auto-play for a while' })
   return rows

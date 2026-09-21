@@ -23,7 +23,7 @@ describe('runtime.idleDirector', function()
     gold = 400,
     capacity = 400,
     skills = { longblade = 64 },
-    actors = { { recordId = 'arrille', position = { x = 300, y = 0, z = 0 }, services = { shop = true } } },
+    actors = { { recordId = 'arrille', position = { x = 300, y = 0, z = 0 }, servicesOffered = { Barter = true } } },
     inventory = { { id = 'chitin dagger', count = 5, value = 8, weight = 4, class = 'Weapon' } },
     journal = { { text = 'Arrille greets you.', questId = nil, day = 1 } },
     quests = { q1 = { id = 'q1', stage = 1, started = true, finished = false } },

@@ -147,6 +147,21 @@ M.GOALS = {
     reason = function() return 'quest objective nearby' end,
   },
   {
+    id = 'travel', categories = {}, riskWeight = 0.5,
+    -- OFF by default (behaviour.autoTravel). Travelling autonomously moves the
+    -- player somewhere they did not ask to go, and the 1000-hour simulation
+    -- showed that an unbounded travel goal loops degenerate: it outranks real
+    -- work (training, trading) and starves it. The console surfaces travel
+    -- destinations so the player can order a journey deliberately instead.
+    need = function(_, _, cfg)
+      if not (cfg and cfg.behaviour and cfg.behaviour.autoTravel) then return 0 end
+      return 0.2
+    end,
+    opportunity = function(_, world) return opp(world, 'travel') end,
+    risk = function(_, world) return danger(world) end,
+    reason = function() return 'travel service available' end,
+  },
+  {
     id = 'explore', categories = { 'stealth' }, riskWeight = 0.4,
     need = function() return 0.4 end,
     opportunity = function(_, world) return opp(world, 'unexplored') end,

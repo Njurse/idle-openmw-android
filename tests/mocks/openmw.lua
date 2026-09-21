@@ -148,6 +148,9 @@ local function makeActorObject(actor)  return {
     recordId = actor.recordId,
     count = actor.count or 1,
     type = TYPE_CLASSES.Miscellaneous,
+    -- mock-only: lets the per-actor types.Actor.stats.* / kind.record getters
+    -- find the spec that described this actor (a real GameObject is engine-side).
+    _spec = actor,
     moveInto = function(_, inventory)
       if inventory and inventory._insert then inventory:_insert(actor.recordId, actor.count or 1) end
     end,
@@ -173,6 +176,20 @@ function M.env(spec)
   local equipCalls = {}
 
   -- ---- types -------------------------------------------------------------
+  -- A real NpcRecord/CreatureRecord. Note servicesOffered and
+  -- travelDestinations: these are the fields scripts/idle/worldsense.lua reads.
+  local function actorRecord(entry)
+    entry = entry or {}
+    return {
+      id = entry.recordId,
+      name = entry.name or entry.recordId,
+      class = entry.classId or 'warrior',
+      servicesOffered = entry.servicesOffered,
+      travelDestinations = entry.travelDestinations,
+      isEssential = entry.isEssential,
+    }
+  end
+
   local types = {
     Armor = TYPE_CLASSES.Armor,
     Clothing = TYPE_CLASSES.Clothing,
@@ -189,6 +206,7 @@ function M.env(spec)
     Item = {},
     Player = {},
     NPC = {},
+    Creature = {},
   }
 
   local actor = { recordId = spec.recordId or 'player' }
@@ -232,6 +250,13 @@ function M.env(spec)
   inventory = newInventory(spec.inventory, spec.gold, types)
   attachRecords(types, inventory)
 
+  types.Creature = {
+    record = function(target)
+      local entry = type(target) == 'table' and target._spec or nil
+      return actorRecord(entry)
+    end,
+  }
+
   types.Actor = {
     EQUIPMENT_SLOT = EQUIPMENT_SLOT,
     stats = {
@@ -240,7 +265,20 @@ function M.env(spec)
         magicka = function() return pools.magicka end,
         fatigue = function() return pools.fatigue end,
       },
-      level = function() return levelStat end,
+      level = function(target)
+        local entry = type(target) == 'table' and target._spec or nil
+        if entry then return { current = entry.level or 1, progress = 0 } end
+        return levelStat
+      end,
+      -- AI dispositions, 0..100, exactly as types.Actor.stats.ai exposes them.
+      ai = {
+        fight = function(target)
+          local entry = type(target) == 'table' and target._spec or nil
+          local value = entry and entry.fight or spec.fight
+          if type(value) ~= 'number' then return nil end
+          return { base = value, modified = value }
+        end,
+      },
     },
     inventory = function() return inventory end,
     record = function() return { capacity = spec.capacity or 400 } end,
@@ -276,7 +314,10 @@ function M.env(spec)
   }
 
   types.NPC = {
-    record = function() return { class = spec.classId or 'warrior' } end,
+    record = function(target)
+      local entry = type(target) == 'table' and target._spec or nil
+      return actorRecord(entry or spec)
+    end,
     classes = {
       record = function(classId)
         local preset = classPriorities.presets[classId]
@@ -302,17 +343,15 @@ function M.env(spec)
   }
 
   -- ---- nearby ------------------------------------------------------------
+  -- `nearby.actors` is a list of GameObjects in the real API, so the mock hands
+  -- back real objects too -- not a convenience wrapper with fields like
+  -- `.services` or `.hostile` that the engine would never provide.
   local nearbyActors, nearbyContainers = {}, {}
   for _, entry in ipairs(spec.actors or {}) do
     local object = makeActorObject(entry)
-    nearbyActors[#nearbyActors + 1] = {
-      recordId = entry.recordId,
-      position = point(entry.position),
-      level = entry.level or 1,
-      hostile = entry.hostile or false,
-      services = entry.services,
-      object = object,
-    }
+    object.type = entry.creature and types.Creature or types.NPC
+    object.position = point(entry.position)
+    nearbyActors[#nearbyActors + 1] = object
   end
   for _, entry in ipairs(spec.containers or {}) do
     nearbyContainers[#nearbyContainers + 1] = {
@@ -447,9 +486,13 @@ function M.env(spec)
     },
     input = { KEY = { L = 38 } },
     ui = uiMock,
-    -- pluggable hooks
-    servicesOf = spec.servicesOf or function(candidate) return candidate.services end,
-    isHostile = spec.isHostile or function(candidate) return candidate.hostile == true end,
+    -- Optional escape hatches, mirroring what observer.scanWorld accepts as
+    -- opts.isHostile / opts.servicesOf. They are NOT real engine fields, so they
+    -- are absent by default: the default classification must go through the real
+    -- record + worldsense, or the mock would be hiding exactly the bugs the
+    -- headless suite exists to catch.
+    servicesOf = spec.servicesOf,
+    isHostile = spec.isHostile,
     -- test introspection
     _createdObjects = createdObjects,
     _createdElements = createdElements,

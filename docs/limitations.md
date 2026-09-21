@@ -71,16 +71,35 @@ gated behind `behaviour.simulateActions` (default `true`). Set it to `false` and
 the mod becomes purely advisory: it navigates and opens the relevant UI, then
 tells you in the log what to tap.
 
-### 1.4 "Who is a merchant?" is not answerable
+### 1.4 "Who is a merchant?" — RESOLVED (was an invented limitation)
 
-OpenMW's Lua API does not expose an NPC's service flags (barter / trainer /
-spellmaking / …). So `runtime/observer.lua` takes a pluggable `servicesOf` hook.
-Without one, the world scan reports only what it genuinely can detect: people to
-talk to, hostiles, containers, and whether the current cell has been visited.
+**This was wrong in an earlier revision of this document.** It claimed OpenMW's
+Lua API does not expose an NPC's service flags. It does:
+`NpcRecord.servicesOffered` and `CreatureRecord.servicesOffered` are a
+`map<string, boolean>` over exactly the 19 service names the engine binds
+(`files/lua_api/openmw/types.lua:1266`, `:964`;
+`apps/openmw/mwlua/types/servicesoffered.hpp:11`). `travelDestinations`
+(`types.lua:1267`) is how you tell a silt strider from a townsfolk.
 
-**Consequence.** `shop` / `trainer` / `healer` / `quest` opportunities are only
-populated when a service resolver is supplied. A good resolver is the most
-valuable next piece of work (§4).
+`scripts/idle/worldsense.lua` now reads those records directly, so
+`shop` / `trainer` / `healer` / `repairer` / `enchanter` / `travel` opportunities
+are derived from real data with no pluggable hook. The lesson is recorded here
+because it is the kind of error that repeats: an assumption about the API was
+written down as a *limitation* and then built around.
+
+### 1.4a Enemies are still a heuristic — and that is not fixable
+
+There is **no** "is at war with the player" query. Grepping the entire Lua API
+for `isInCombat` / `InCombat` / `inCombat` returns nothing. The nearest signal is
+the AI disposition `types.Actor.stats.ai.fight(actor)` → `AIStat { base, modified }`
+(`types.lua:544`), and it cannot distinguish a town guard (Fight 100) from a
+bandit (Fight 95) — both read identically.
+
+**Consequence, and the design response.** Auto-attacking a guard ruins a save
+irreversibly, so NPC hostility is **opt-in** (`sensing.npcFightHostility`, default
+`false`). By default only creatures are enemies, which is unambiguous. Even with
+it enabled, essential actors and anyone offering a service are never enemies, and
+`sensing.ignoreRecords` is an explicit never-hostile list.
 
 ### 1.5 Other shape traps already handled
 
@@ -154,8 +173,13 @@ wrap.
   scenery. There is no "fade nearby obstructing objects" shader.
 - **Threat model is heuristic.** `combat.assess` uses enemy level counts against
   the character's capability. It will misjudge unusual enemies.
-- **`servicesOf` and hostility are pluggable hooks**, so out of the box the mod
-  sees "people" and "monsters", not "merchants" and "trainers".
+- **NPC hostility is a heuristic, not a fact** — see §1.4a. Creatures are
+  enemies by default; NPCs only when you opt in, because the engine cannot tell a
+  guard from a bandit.
+- **Autonomous travel is OFF by default** (`behaviour.autoTravel`). The 1000-hour
+  simulation showed an unbounded travel goal looping degenerately and starving
+  training and trading. The console lists destinations so you can order a journey
+  deliberately; only the autonomous case is disabled.
 - **Directives have a TTL** (default 120 sim-seconds) because there is no
   completion callback from the engine to clear them precisely.
 
@@ -163,14 +187,12 @@ wrap.
 
 ## 4. The most valuable next steps
 
-1. **A service resolver** (`servicesOf`) — inspect `types.NPC.record` /
-  class / faction data to identify merchants, trainers and healers. This single
-  piece unlocks most of the economy and training behaviour.
-2. **Hostility resolver** — the same shape, for `isHostile`. Currently a hook
-   with a mock default.
-3. **On-device console pass** — verify `ignorePointerEvents`, MWUI template fit,
+1. **On-device console pass** — verify `ignorePointerEvents`, MWUI template fit,
    tap targets and row text centring on real hardware. The console's geometry and
    interaction model are already tested; only the pixels are unverified.
-4. **Android build track** — the NDK superbuild, portrait un-gating, and the
+2. **Faction relations** — `types.NPC.getFactions` / `primaryFaction` exist and
+   could sharpen the hostility heuristic beyond "creatures only". Untested
+   against real data.
+3. **Android build track** — the NDK superbuild, portrait un-gating, and the
    thermal/FPS policy from the original plan (all still valid, all still
-  unimplemented here).
+   unimplemented here).

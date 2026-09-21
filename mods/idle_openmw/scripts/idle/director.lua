@@ -53,6 +53,7 @@ local dialogue = require('scripts.idle.dialogue')
 local directive = require('scripts.idle.directive')
 local activityLog = require('scripts.idle.activityLog')
 local offlineProgress = require('scripts.idle.offlineProgress')
+local worldsense = require('scripts.idle.worldsense')
 
 local M = {}
 
@@ -174,6 +175,10 @@ function M.planCommands(goalId, statView, world, snapshot, cfg, ctx)
 
   elseif goalId == 'quest' then
     moveThenActivate('quest', 'quest', true)
+
+  elseif goalId == 'travel' then
+    -- walking up to a silt strider / boat / guild guide opens the travel window
+    moveThenActivate('travel', 'travel', false)
 
   elseif goalId == 'explore' then
     commands[#commands + 1] = { type = 'wander', radius = 1500 }
@@ -433,6 +438,7 @@ end
 --- are added by runtime/observer.lua:readPanel). See scripts/idle/uiModel.lua
 --- for the full panel-snapshot contract.
 function Director:panelData()
+  local nearest = self.snapshot and self.snapshot.world and self.snapshot.world.nearest
   return {
     status = self:status(),
     mode = self.mode,
@@ -440,6 +446,10 @@ function Director:panelData()
     dialogue = self.dialogueEvents,
     topics = self.memory:knownTopics(),
     log = self.log:recent(60),
+    -- Travel destinations offered by the nearest travel service, so the console
+    -- can list them even though autonomous travel is off by default.
+    travel = worldsense.destinationsOf(nearest and nearest.travel),
+    travelService = nearest and nearest.travel and nearest.travel.name or nil,
   }
 end
 

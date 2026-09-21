@@ -143,6 +143,38 @@ RNG state, counts, dialogue memory, visited cells, and `lastSeen` from
 `ensureInit` applies it on the first `onUpdate`. Catch-up maths is pure
 (`offlineProgress.lua`) and capped by `offline.maxRealHours`.
 
+## World sensing (`idle/worldsense.lua`)
+
+The runtime hands `worldsense` a flat descriptor per nearby actor and gets back a
+verdict: which roles it fills, whether it is an enemy, and why. Keeping the rules
+pure means the *rules* are tested even though the records they read are not.
+
+```
+runtime/observer.describeActor(env, object)
+    object.type.record(object)          -> NpcRecord / CreatureRecord
+    object.type == types.Creature       -> is this a creature?
+    types.Actor.stats.ai.fight(object)  -> AIStat { base, modified }
+    types.Actor.stats.level(object)     -> { current, progress }
+              |
+              v
+    worldsense.describe(spec, cfg)  ->  { roles, hostile, hostileReason, ... }
+              |
+              v
+    worldsense.scan(descriptors, { position, scanRadius })
+              ->  { opportunities, nearest, enemies }
+```
+
+Design rules that the specs enforce:
+
+- **Services suppress hostility.** A merchant must never be an enemy, however
+  belligerent its AI data looks. Tested directly.
+- **`Travel` is not a service key.** The field's own comment lists it, but it is
+  not one of the 19 bound `ServiceNames` — travel is detected from
+  `travelDestinations`. A spec pins this so nobody "simplifies" it back.
+- **Hostility says why.** Every verdict carries `hostileReason`, which reaches the
+  activity log, so a surprising enemy is diagnosable rather than mysterious.
+- **The default is the safe default.** Creatures only; NPC hostility opt-in.
+
 ## Why the HUD geometry is separate
 
 `idle/uiLayout.lua` (geometry) and `idle/uiModel.lua` (tabs, rows, footers,

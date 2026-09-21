@@ -51,7 +51,7 @@ Training, Dialogue, Spells, Map), so nothing in the game is out of reach.
 
 ```bash
 pip install lupa                     # embedded LuaJIT, one wheel, no compiler
-python tools/run_tests.py            # 278 specs under LuaJIT 2.1
+python tools/run_tests.py            # 288 specs under LuaJIT 2.1
 python tools/run_tests.py --all      # also verify Lua 5.1 and 5.4 portability
 python tools/run_tests.py --sim      # 1000-game-hour simulation with invariants
 python tools/run_tests.py --only director   # just the specs matching a substring
@@ -114,6 +114,7 @@ mods/idle_openmw/                 the mod you install
     │   ├── goalScoring.lua       transparent goal scoring
     │   ├── classPriorities.lua   class -> preference weights
     │   ├── statCrunch.lua        stats -> capability scores
+    │   ├── worldsense.lua        "what is that actor?" services, travel, enemies
     │   ├── economy.lua           junk valuation, buy/sell plans
     │   ├── equipment.lua         item type -> equipment slot (tap-to-equip)
     │   ├── pathfinder.lua        route cache + atan2 steering
@@ -136,7 +137,7 @@ tests/                            headless, no engine
 ├── harness.lua                   zero-dependency describe/it/expect/assert
 ├── run.lua                       suite entry point
 ├── specs.lua                     fallback manifest
-├── spec/                         278 specs
+├── spec/                         288 specs
 ├── mocks/openmw.lua              a full fake engine
 ├── fixtures/                     classes, states, worlds
 └── sim/headless_sim.lua          1000-game-hour invariant run
@@ -146,6 +147,32 @@ docs/                             verified API, architecture, deployment, limits
 ```
 
 ---
+
+## Seeing the world (and the two things that can't be seen)
+
+`scripts/idle/worldsense.lua` turns nearby actors into decisions using the real
+records: `servicesOffered` (a 19-key map the engine binds) gives shops, trainers,
+healers, repairers and enchanters, and `travelDestinations` identifies silt
+striders and boats. So the director knows *who a merchant is* from engine data,
+not a guess.
+
+Two things the engine genuinely does not expose, and what the mod does about them:
+
+- **There is no "is at war with the player" flag.** Grepping the whole Lua API for
+  `isInCombat` returns nothing. The nearest signal is the AI Fight disposition,
+  which cannot tell a town guard (Fight 100) from a bandit (Fight 95). Since
+  attacking a guard ruins a save irreversibly, **NPC hostility is opt-in**
+  (`sensing.npcFightHostility`, default off) — by default only creatures are
+  enemies. Essential actors and anyone offering a service are never enemies, and
+  `sensing.ignoreRecords` is an explicit never-hostile list. See
+  [docs/limitations.md §1.4a](docs/limitations.md).
+- **Autonomous travel is off by default** (`behaviour.autoTravel`). The 1000-hour
+  simulation caught an unbounded `travel` goal looping degenerately and starving
+  training and trading, so it ships disabled. The console still lists every
+  destination the nearest travel service offers, so a journey is one tap away.
+
+That is the pattern everywhere in this repo: where the engine can tell us, we read
+it; where it cannot, the limitation is written down and the default is the safe one.
 
 ## Design in one paragraph
 

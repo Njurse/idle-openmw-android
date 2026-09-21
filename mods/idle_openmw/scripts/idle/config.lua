@@ -98,6 +98,37 @@ M.defaults = {
     -- How long a user directive ("go shop", "rest") stays in force, in
     -- simulation seconds, before the director resumes choosing for itself.
     directiveTtl = 120,
+
+    -- Let the director use travel services (silt strider / boat / guild guide)
+    -- on its own initiative. OFF by default: it relocates the player without
+    -- being asked, and the 1000-hour simulation showed an unbounded travel goal
+    -- starves training and trading. The console lists destinations so you can
+    -- order a journey deliberately; this only controls the autonomous case.
+    autoTravel = false,
+  },
+
+  sensing = {
+    scanRadius = 4096,          -- engine units within which actors are considered
+
+    -- OpenMW exposes NO "is at war with the player" flag (see
+    -- docs/openmw-lua-api.md §9), so hostility is a documented heuristic
+    -- (scripts/idle/worldsense.lua). Essential actors and anyone offering a
+    -- service are never enemies, whatever else says otherwise.
+    creaturesAreHostile = true,
+
+    -- NPC hostility is OFF by default, on purpose. The engine's AI Fight
+    -- disposition cannot distinguish a town guard (Fight 100) from a bandit
+    -- (Fight 95), and a mod that attacks a guard ruins a save irreversibly.
+    -- Turn this on to farm bandits; creatures are still handled above.
+    npcFightHostility = false,
+    hostileFightThreshold = 80,
+
+    -- Record ids that are never hostile, whatever the heuristics say. Use this
+    -- to protect a specific NPC you care about.
+    ignoreRecords = {},
+
+    -- How strongly a service-less "talker" counts as a quest opportunity.
+    questingWeight = 0.6,
   },
 
   debug = {
@@ -164,6 +195,20 @@ function M.validate(cfg)
   if cfg.behaviour.arriveTolerance ~= nil then
     clampProblem(problems, 'behaviour.arriveTolerance', cfg.behaviour.arriveTolerance, 1, 4096)
     cfg.behaviour.arriveTolerance = util.clamp(cfg.behaviour.arriveTolerance, 1, 4096)
+  end
+
+  cfg.sensing = cfg.sensing or util.deepCopy(M.defaults.sensing)
+  if cfg.sensing.scanRadius ~= nil then
+    clampProblem(problems, 'sensing.scanRadius', cfg.sensing.scanRadius, 128, 65536)
+    cfg.sensing.scanRadius = util.clamp(cfg.sensing.scanRadius, 128, 65536)
+  end
+  if cfg.sensing.hostileFightThreshold ~= nil then
+    clampProblem(problems, 'sensing.hostileFightThreshold', cfg.sensing.hostileFightThreshold, 0, 100)
+    cfg.sensing.hostileFightThreshold = util.clamp(cfg.sensing.hostileFightThreshold, 0, 100)
+  end
+  if cfg.sensing.questingWeight ~= nil then
+    clampProblem(problems, 'sensing.questingWeight', cfg.sensing.questingWeight, 0, 1)
+    cfg.sensing.questingWeight = util.clamp(cfg.sensing.questingWeight, 0, 1)
   end
 
   cfg.weightOverrides = cfg.weightOverrides or util.deepCopy(M.defaults.weightOverrides)

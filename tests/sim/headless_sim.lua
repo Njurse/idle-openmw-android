@@ -87,7 +87,8 @@ end
 function World:scan()
   local phase = math.floor(self.tickCount / 400) % 3
   local rng = self.rng
-  local opportunities = { shop = 0, trainer = 0, healing = 0, rest = 0.3, talk = 0, quest = 0, loot = 0, unexplored = 0 }
+  local opportunities = { shop = 0, trainer = 0, healing = 0, rest = 0.3, talk = 0, quest = 0,
+                         loot = 0, unexplored = 0, travel = 0, repair = 0, enchant = 0 }
   local enemies, danger = 0, 0
 
   if phase == 0 then
@@ -95,6 +96,7 @@ function World:scan()
     opportunities.trainer = 0.8
     opportunities.talk = 0.9
     opportunities.healing = 0.7
+    opportunities.travel = 0.75
     opportunities.unexplored = 0.2
   elseif phase == 1 then
     opportunities.unexplored = rng:uniform(0.4, 0.95)
@@ -114,6 +116,8 @@ function World:scan()
     healer = { name = 'Healer', position = { x = 300, y = 0, z = 0 }, distance = 300 },
     rest = { name = 'Bed', position = { x = 50, y = 0, z = 0 }, distance = 50 },
     talk = { name = 'Villager', position = { x = 120, y = 0, z = 0 }, distance = 120 },
+    travel = { name = 'Silt strider', position = { x = 600, y = 0, z = 0 }, distance = 600,
+               travelDestinations = { { cell = 'Balmora' }, { cell = 'Vivec' } } },
   }
   if enemies > 0 then
     nearest.enemy = { name = 'Cliff racer', position = { x = 400, y = 0, z = 0 }, distance = 400 }

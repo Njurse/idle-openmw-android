@@ -23,6 +23,7 @@ return {
   'tests.spec.runtime_spec',
   'tests.spec.statCrunch_spec',
   'tests.spec.uiLayout_spec',
+  'tests.spec.worldsense_spec',
   'tests.spec.uiModel_spec',
   'tests.spec.util_spec',
 }

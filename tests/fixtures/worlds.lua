@@ -66,7 +66,8 @@ end
 
 --- Only one thing is available -- handy for isolating a single goal.
 function M.withOnly(key, extra)
-  local opps = { shop = 0, trainer = 0, healing = 0, rest = 0, talk = 0, quest = 0, loot = 0, unexplored = 0 }
+  local opps = { shop = 0, trainer = 0, healing = 0, rest = 0, talk = 0, quest = 0,
+                 loot = 0, unexplored = 0, travel = 0, repair = 0, enchant = 0 }
   opps[key] = 1
   local over = { opportunities = opps }
   for k, v in pairs(extra or {}) do over[k] = v end

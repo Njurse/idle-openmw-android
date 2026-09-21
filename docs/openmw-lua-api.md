@@ -244,3 +244,59 @@ Requiring sibling modules uses the **VFS path as the module name**, e.g. a file 
   it on load. `core.getGameTime()` is game-time and is the wrong axis for "hours you were away".
 - The director therefore keeps the elapsed-real-seconds computation in the pure
   `offlineProgress` module and only the *timestamp source* in the runtime adapter.
+
+## 9. World sensing — services, travel, and AI dispositions
+
+Source of truth for `scripts/idle/worldsense.lua`. All verified against the
+in-tree stubs and the C++ bindings, not the online docs.
+
+### 9.1 `servicesOffered` exists (this contradicts an earlier claim in this repo)
+
+`NpcRecord.servicesOffered` and `CreatureRecord.servicesOffered` are a
+`map<string, boolean>` marking which services the actor provides:
+
+- `files/lua_api/openmw/types.lua:1266` (NPC), `:964` (creature)
+- the key set is bound by `MWLua::ServiceNames`, a 19-entry array at
+  `apps/openmw/mwlua/types/servicesoffered.hpp:11`, consumed at
+  `types/npc.cpp:166` and `types/creature.cpp:92`
+
+The 19 keys are: `Spells, Spellmaking, Enchanting, Training, Repair, Barter,
+Weapon, Armor, Clothing, Books, Ingredients, Picks, Probes, Lights, Apparatus,
+RepairItem, Misc, Potions, MagicItems`.
+
+**`Travel` is documented in that field's comment but is NOT one of the 19 bound
+keys** — a trap. Travel is detected from `travelDestinations` instead
+(`types.lua:1267`), which is a `list<TravelDestination>`.
+
+Role mapping used by `worldsense.lua`:
+
+| role | signal |
+| --- | --- |
+| `shop` | `Barter` |
+| `trainer` | `Training` |
+| `healer` | `Spells` or `Potions` |
+| `repairer` | `Repair` |
+| `enchanter` | `Enchanting` or `Spellmaking` |
+| `travel` | `#travelDestinations > 0` |
+| `questing` | none of the above — a bare "talker" |
+
+### 9.2 AI dispositions
+
+`types.Actor.stats.ai.fight(actor)` / `.alarm` / `.flee` return an `AIStat`,
+i.e. `{ base, modified }` where `modified` is "the actor's current ai value
+(read-only)" (`types.lua:544`, `:538`, `:550`; field doc near `:507`).
+
+These are **dispositions on a 0..100 scale**, not a hostility flag.
+
+### 9.3 There is no "in combat" / "at war" query
+
+Grepping the entire Lua API and `apps/openmw/mwlua/` for `isInCombat`,
+`InCombat`, `inCombat`, `getActorsInCombat` returns **nothing**. Hostility
+therefore cannot be read; it must be inferred. See `docs/limitations.md` §1.4a
+for the inference actually used and why NPC hostility is opt-in.
+
+### 9.4 Faction data (available, currently unused)
+
+`types.NPC.getFactions(actor)`, `primaryFaction`, `primaryFactionRank` exist and
+are the obvious way to sharpen the hostility heuristic beyond "creatures only".
+Not yet exercised against real data — listed in `docs/limitations.md` §4.

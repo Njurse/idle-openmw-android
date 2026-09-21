@@ -31,10 +31,11 @@ Plus, beyond the plan:
 | ✅ Phone-first `uiLayout.lua` + `uiModel.lua` | The plan asked for a portrait command panel; this makes the geometry *and* the interaction model testable |
 | ✅ The full console overhaul | The plan described a status panel; what shipped is a six-tab console (Info/Order/Pack/Talk/Log/Open) with tap-to-equip, an inventory browser and launchers for every real Morrowind window |
 | ✅ `directive.lua` ("Directive Auto") | The plan's Full Auto / Directive Auto / Manual modes |
+| ✅ `idle/worldsense.lua` | The plan assumed a `servicesOf` hook was needed; the engine actually exposes `servicesOffered`, so services are read from real records instead of guessed |
 
 ---
 
-## The six corrections
+## The seven corrections
 
 Each is verified in `docs/openmw-lua-api.md` with a `file:line` citation.
 
@@ -100,6 +101,23 @@ not methods; persistence is `require('openmw.storage')` with
 
 **Reality:** it is `interfaces.UI.MODE`; there is no `core.UI_MODE`.
 
+### C7 — A correction of *this project's own* earlier claim
+
+> **This repo's earlier `docs/limitations.md` §1.4:** "OpenMW's Lua API does not
+> expose an NPC's service flags," therefore "who is a merchant?" is not
+> answerable.
+
+**Reality:** that is false. `NpcRecord.servicesOffered` is a
+`map<string, boolean>` over the 19 `ServiceNames` the engine binds
+(`types.lua:1266`, `servicesoffered.hpp:11`). It was written down as a limitation
+and then designed around — a `servicesOf` hook that never had to exist.
+
+**Redesign:** `scripts/idle/worldsense.lua` reads the records directly; the
+`servicesOf` / `isHostile` hooks survive only as optional overrides, and the mock
+engine no longer supplies them by default (that default was hiding the bug).
+**The generalizable lesson:** a "limitation" is a claim and needs the same
+`file:line` evidence as any other claim, or the project builds on sand.
+
 ---
 
 ## Things the plan got right (kept)
@@ -136,7 +154,14 @@ not methods; persistence is `require('openmw.storage')` with
    because the plan's UI-driving approach is impossible (C3-adjacent).
 5. **`simulateActions = false` mode** — purely advisory navigation, for players
    who do not want the mod editing their inventory.
-6. **The HUD geometry is a pure, tested module.** You cannot iterate on touch
+6. **NPC hostility is opt-in, and it is a heuristic either way.** The API has no
+   "at war with the player" flag, and the AI Fight disposition cannot separate a
+   guard from a bandit, so engaging NPCs is a choice the player makes
+   (`sensing.npcFightHostility`). Creatures only, by default.
+7. **Autonomous travel ships disabled.** The 1000-hour simulation showed an
+   unbounded travel goal looping degenerately and starving training and trading;
+   the console lists destinations instead, so the player orders the journey.
+8. **The HUD geometry is a pure, tested module.** You cannot iterate on touch
    layout you cannot see; moving the arithmetic somewhere testable was the only
    way to make progress on it without a device.
 

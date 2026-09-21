@@ -101,7 +101,8 @@ describe('idle.uiModel', function()
       local rows = uiModel.buildRows('orders', panels.panel())
       local orderRows = {}
       for _, row in ipairs(rows) do
-        if row.action == 'order' then orderRows[#orderRows + 1] = row end
+        -- contextual rows (e.g. the travel service) are not static orders
+        if row.action == 'order' and not row.contextual then orderRows[#orderRows + 1] = row end
       end
       assert.equals(#orderRows, #uiModel.ORDERS)
       for _, row in ipairs(orderRows) do
@@ -111,8 +112,39 @@ describe('idle.uiModel', function()
       end
     end)
 
-    it('summarises status on the info tab', function()
-      local rows = uiModel.buildRows('info', panels.panel())
+    describe('travel orders', function()
+      it('offers travel as a queueable order', function()
+        assert.is_true(directive.isKnown('travel'))
+      end)
+
+      it('adds nothing when no travel service is nearby', function()
+        local rows = uiModel.buildRows('orders', panels.panel())
+        for _, row in ipairs(rows) do
+          assert.not_equals(row.id, 'travel-service')
+        end
+      end)
+
+      it('lists the destinations of the nearest travel service', function()
+        local panel = panels.panel({
+          travelService = 'Silt strider',
+          travel = { { cell = 'Balmora', price = 30 }, { cell = 'Vivec', price = 50 } },
+        })
+        local rows = uiModel.buildRows('orders', panel)
+        local service, go
+        for _, row in ipairs(rows) do
+          if row.id == 'travel-service' then service = row end
+          if row.id == 'order:travel:go' then go = row end
+        end
+        assert.is_not_nil(service)
+        assert.is_not_nil(go)
+        assert.is_true(service.label:find('Silt strider', 1, true) ~= nil)
+        assert.equals(go.detail, 'Balmora, Vivec')
+        assert.equals(go.payload.id, 'travel')
+        assert.is_true(directive.isKnown(go.payload.id))
+      end)
+    end)
+
+    it('summarises status on the info tab', function()      local rows = uiModel.buildRows('info', panels.panel())
       local text = {}
       for _, row in ipairs(rows) do text[#text + 1] = uiModel.formatRow(row) end
       local joined = table.concat(text, '\n')
@@ -187,8 +219,7 @@ describe('idle.uiModel', function()
       assert.equals(view.tab, 'info')
     end)
 
-    it('reports the active order', function()
-      local view = uiModel.view({ tab = 'orders' }, panels.panel({ directive = 'rest' }), { pageSize = 5 })
+    it('reports the active order', function()      local view = uiModel.view({ tab = 'orders' }, panels.panel({ directive = 'rest' }), { pageSize = 5 })
       assert.equals(view.directive, 'rest')
     end)
 

@@ -18,6 +18,7 @@ local util = require('scripts.idle.util')
 local economy = require('scripts.idle.economy')
 local combat = require('scripts.idle.combat')
 local equipment = require('scripts.idle.equipment')
+local worldsense = require('scripts.idle.worldsense')
 
 local M = {}
 
@@ -221,27 +222,92 @@ end
 -- ---------------------------------------------------------------------------
 
 local function emptyOpportunities()
-  return { shop = 0, trainer = 0, healing = 0, rest = 0, talk = 0, quest = 0, loot = 0, unexplored = 0 }
+  return { shop = 0, trainer = 0, healing = 0, repair = 0, travel = 0, enchant = 0,
+           rest = 0, talk = 0, quest = 0, loot = 0, unexplored = 0 }
+end
+
+--- An actor's level, read the way the engine exposes it (works on any actor).
+local function actorLevel(env, object)
+  local stats = env.types and env.types.Actor and env.types.Actor.stats
+  local stat = safe(stats and stats.level, object)
+  return num(stat and (stat.current or stat.base), 1)
+end
+
+--- An actor's AI Fight disposition (0..100), or nil when the engine has none.
+local function actorFight(env, object)
+  local stats = env.types and env.types.Actor and env.types.Actor.stats
+  local ai = stats and stats.ai
+  local stat = safe(ai and ai.fight, object)
+  if type(stat) == 'table' then return num(stat.modified, num(stat.base, nil)) end
+  return nil
+end
+
+--- Turn one nearby GameObject into a worldsense descriptor, reading the actor's
+--- real record (`object.type.record(object)`).
+local function describeActor(env, object, cfg)
+  local kind = type(object) == 'table' and object.type or nil
+  local record = safe(kind and kind.record, object)
+  return worldsense.describe({
+    record = type(record) == 'table' and record or {},
+    isCreature = kind ~= nil and kind == env.types.Creature,
+    fight = actorFight(env, object),
+    level = actorLevel(env, object),
+    name = type(object) == 'table' and (object.name or object.recordId) or nil,
+    id = type(object) == 'table' and object.recordId or nil,
+    position = point(type(object) == 'table' and object.position or nil),
+    object = object,
+  }, cfg)
 end
 
 --- Scan what is around the player.
 ---
---- Honest limitation: OpenMW's Lua API does not expose an NPC's service flags, so
---- "who is a merchant/trainer" is resolved through the pluggable `servicesOf`
---- hook (`opts.servicesOf` or `env.servicesOf`). When it is absent, only what we
---- can actually detect is reported: people to talk to, hostiles, containers, and
---- whether the current cell has been visited.
+--- Services come from the real `NpcRecord`/`CreatureRecord.servicesOffered` and
+--- `travelDestinations` (docs/openmw-lua-api.md §9) via scripts/idle/worldsense.lua.
+--- Hostility is worldsense's documented heuristic, because the engine exposes no
+--- direct "at war with the player" flag. `opts.servicesOf` / `opts.isHostile`
+--- remain escape hatches that override the defaults.
 function M.scanWorld(env, opts, player)
   opts = opts or {}
   local cfg = opts.cfg
   local radius = num(opts.scanRadius, M.DEFAULT_SCAN_RADIUS)
-  local servicesOf = opts.servicesOf or env.servicesOf
-  local isHostile = opts.isHostile or env.isHostile
   local position = player and player.position
 
+  local descriptors = {}
+  for _, object in ipairs((env.nearby and env.nearby.actors) or {}) do
+    descriptors[#descriptors + 1] = describeActor(env, object, cfg)
+  end
+
+  -- escape hatch 1: an explicit hostility verdict wins over the heuristic
+  local isHostile = opts.isHostile or env.isHostile
+  if isHostile then
+    for _, descriptor in ipairs(descriptors) do
+      local verdict = safe(isHostile, descriptor.object)
+      if verdict ~= nil then descriptor.hostile = verdict and true or false end
+    end
+  end
+
+  -- escape hatch 2: caller-supplied services win over the record's
+  local servicesOf = opts.servicesOf or env.servicesOf
+  if servicesOf then
+    for _, descriptor in ipairs(descriptors) do
+      local services = safe(servicesOf, descriptor.object)
+      if type(services) == 'table' then
+        for role, value in pairs(services) do descriptor.roles[role] = value and true or false end
+        descriptor.offersServices = descriptor.roles.services or descriptor.roles.travel
+      end
+    end
+  end
+
+  local scan = worldsense.scan(descriptors, {
+    position = position,
+    scanRadius = radius,
+    questingWeight = (cfg and cfg.sensing and cfg.sensing.questingWeight) or 0.6,
+  })
+
   local opportunities = emptyOpportunities()
-  local nearest = {}
-  local enemies = {}
+  for key, value in pairs(scan.opportunities) do opportunities[key] = value end
+  local nearest = scan.nearest
+  local enemies = scan.enemies
 
   local function proximity(at)
     if not position or not at then return 0.5 end
@@ -250,41 +316,21 @@ function M.scanWorld(env, opts, player)
     return util.clamp(1 - d / radius, 0, 1)
   end
 
-  local function consider(key, object, at)
+  -- containers are not actors, so worldsense does not see them
+  for _, container in ipairs((env.nearby and env.nearby.containers) or {}) do
+    local at = point(container.position)
     local closeness = proximity(at)
-    if closeness > (opportunities[key] or 0) then opportunities[key] = closeness end
+    if closeness > opportunities.loot then opportunities.loot = closeness end
     local distance = (position and at) and util.distance(position, at) or nil
-    local current = nearest[key]
+    local current = nearest.loot
     if not current or (distance and distance < (current.distance or math.huge)) then
-      nearest[key] = {
-        name = type(object) == 'table' and (object.recordId or object.name) or nil,
+      nearest.loot = {
+        name = type(container) == 'table' and container.recordId or nil,
         position = at,
         distance = distance,
-        object = object,
+        object = container,
       }
     end
-  end
-
-  for _, actor in ipairs((env.nearby and env.nearby.actors) or {}) do
-    local at = point(actor.position)
-    local hostile = isHostile and safe(isHostile, actor) or false
-    if hostile then
-      enemies[#enemies + 1] = { level = num(actor.level, 1), position = at, name = actor.recordId, object = actor }
-      consider('enemy', actor, at)
-    else
-      consider('talk', actor, at)
-      local services = servicesOf and safe(servicesOf, actor) or nil
-      if type(services) == 'table' then
-        if services.shop then consider('shop', actor, at) end
-        if services.trainer then consider('trainer', actor, at) end
-        if services.healer then consider('healing', actor, at) end
-        if services.quest then consider('quest', actor, at) end
-      end
-    end
-  end
-
-  for _, container in ipairs((env.nearby and env.nearby.containers) or {}) do
-    consider('loot', container, point(container.position))
   end
 
   local capability = opts.capability or {}

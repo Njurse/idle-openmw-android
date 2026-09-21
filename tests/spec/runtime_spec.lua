@@ -5,6 +5,7 @@ describe('runtime.openmw adapter', function()
   local configMod = require('scripts.idle.config')
   local statCrunch = require('scripts.idle.statCrunch')
   local directorMod = require('scripts.idle.director')
+  local worldsense = require('scripts.idle.worldsense')
 
   local cfg = configMod.new()
 
@@ -99,13 +100,15 @@ describe('runtime.openmw adapter', function()
   end)
 
   describe('observer.scanWorld', function()
-    it('turns service hooks into opportunities and nearest targets', function()
+    it('reads the real servicesOffered record into opportunities', function()
       withEnv({
         position = { x = 0, y = 0, z = 0 },
         cell = { name = 'Balmora', isExterior = true },
         actors = {
-          { recordId = 'arrille', position = { x = 100, y = 0, z = 0 }, services = { shop = true, talk = true } },
-          { recordId = 'trainer', position = { x = 2000, y = 0, z = 0 }, services = { trainer = true } },
+          { recordId = 'arrille', position = { x = 100, y = 0, z = 0 },
+            servicesOffered = { Barter = true, Misc = true } },
+          { recordId = 'trainer', position = { x = 2000, y = 0, z = 0 },
+            servicesOffered = { Training = true } },
         },
       }, function(env)
         local player = observer.readPlayer(env, {})
@@ -115,15 +118,17 @@ describe('runtime.openmw adapter', function()
         assert.is_true(world.opportunities.shop > world.opportunities.trainer)
         assert.equals(world.nearest.shop.name, 'arrille')
         assert.equals(world.opportunities.talk > 0, true)
+        -- both are friendly: a merchant must never be classified as an enemy
+        assert.equals(world.enemies, 0)
       end)
     end)
 
-    it('counts hostiles and assesses danger', function()
+    it('treats creatures as enemies and records their level', function()
       withEnv({
         position = { x = 0, y = 0, z = 0 },
         actors = {
-          { recordId = 'rat', position = { x = 50, y = 0, z = 0 }, level = 2, hostile = true },
-          { recordId = 'dremora', position = { x = 60, y = 0, z = 0 }, level = 40, hostile = true },
+          { recordId = 'rat', position = { x = 50, y = 0, z = 0 }, level = 2, creature = true },
+          { recordId = 'dremora', position = { x = 60, y = 0, z = 0 }, level = 40, creature = true },
         },
       }, function(env)
         local player = observer.readPlayer(env, {})
@@ -131,7 +136,69 @@ describe('runtime.openmw adapter', function()
         local world = observer.scanWorld(env, { cfg = cfg, capability = weak }, player)
         assert.equals(world.enemies, 2)
         assert.equals(world.nearest.enemy.name, 'rat')
+        assert.equals(world.enemies_nearby[2].level, 40)
         assert.is_true(world.danger > 0)
+      end)
+    end)
+
+    it('leaves NPCs alone by default, even belligerent ones', function()
+      withEnv({
+        position = { x = 0, y = 0, z = 0 },
+        actors = {
+          { recordId = 'bandit', position = { x = 100, y = 0, z = 0 }, fight = 95 },
+          { recordId = 'guard', position = { x = 100, y = 0, z = 0 }, fight = 100 },
+        },
+      }, function(env)
+        local player = observer.readPlayer(env, {})
+        local world = observer.scanWorld(env, { cfg = cfg, capability = {} }, player)
+        assert.equals(world.enemies, 0)
+      end)
+    end)
+
+    it('turns aggressive NPCs hostile when opted in, sparing merchants', function()
+      local aggressive = configMod.new({ sensing = { npcFightHostility = true } })
+      withEnv({
+        position = { x = 0, y = 0, z = 0 },
+        actors = {
+          { recordId = 'bandit', position = { x = 100, y = 0, z = 0 }, fight = 95 },
+          { recordId = 'townsfolk', position = { x = 100, y = 0, z = 0 }, fight = 30 },
+          { recordId = 'merchant', position = { x = 100, y = 0, z = 0 }, fight = 100,
+            servicesOffered = { Barter = true } },
+        },
+      }, function(env)
+        local player = observer.readPlayer(env, {})
+        local world = observer.scanWorld(env, { cfg = aggressive, capability = {} }, player)
+        assert.equals(world.enemies, 1)
+        assert.equals(world.enemies_nearby[1].name, 'bandit')
+      end)
+    end)
+
+    it('never treats an essential actor as an enemy', function()
+      withEnv({
+        position = { x = 0, y = 0, z = 0 },
+        actors = { { recordId = 'caius', position = { x = 10, y = 0, z = 0 }, fight = 100, isEssential = true } },
+      }, function(env)
+        local player = observer.readPlayer(env, {})
+        local world = observer.scanWorld(env, { cfg = cfg, capability = {} }, player)
+        assert.equals(world.enemies, 0)
+      end)
+    end)
+
+    it('surfaces travel services and their destinations', function()
+      withEnv({
+        position = { x = 0, y = 0, z = 0 },
+        actors = {
+          { recordId = 'silt strider', position = { x = 300, y = 0, z = 0 },
+            travelDestinations = { { cell = 'Balmora' }, { cell = 'Seyda Neen' } } },
+        },
+      }, function(env)
+        local player = observer.readPlayer(env, {})
+        local world = observer.scanWorld(env, { cfg = cfg, capability = {} }, player)
+        assert.is_true(world.opportunities.travel > 0)
+        assert.equals(world.nearest.travel.name, 'silt strider')
+        local destinations = worldsense.destinationsOf(world.nearest.travel)
+        assert.equals(#destinations, 2)
+        assert.equals(destinations[2].cell, 'Seyda Neen')
       end)
     end)
 
@@ -299,7 +366,7 @@ describe('runtime.openmw adapter', function()
         cell = { name = 'Balmora', isExterior = true }, gold = 300,
         skills = { longblade = 64 },
         actors = {
-          { recordId = 'arrille', position = { x = 200, y = 0, z = 0 }, services = { shop = true } },
+          { recordId = 'arrille', position = { x = 200, y = 0, z = 0 }, servicesOffered = { Barter = true } },
         },
       }, function(env)
         local classDef = observer.readClass(env, env.self.object)

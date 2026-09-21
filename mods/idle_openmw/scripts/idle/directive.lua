@@ -22,6 +22,7 @@ M.GOAL_FOR = {
   heal = 'heal',
   talk = 'talk',
   quest = 'quest',
+  travel = 'travel',
   explore = 'explore',
 }
 
