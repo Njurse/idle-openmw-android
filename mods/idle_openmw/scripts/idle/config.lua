@@ -112,6 +112,10 @@ M.defaults = {
     topInset = 24,
     bottomInset = 24,
     textScale = 1.0,
+    -- 'manual'  -- you drive; the game's own touch controls are active
+    -- 'directive' -- auto-play, but your orders take precedence
+    -- 'auto'    -- fully self-playing (default)
+    startMode = 'auto',
   },
 }
 

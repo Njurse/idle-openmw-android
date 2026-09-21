@@ -25,7 +25,9 @@ M.pathfinder = require('scripts.idle.pathfinder')
 M.combat = require('scripts.idle.combat')
 M.dialogue = require('scripts.idle.dialogue')
 M.directive = require('scripts.idle.directive')
+M.equipment = require('scripts.idle.equipment')
 M.uiLayout = require('scripts.idle.uiLayout')
+M.uiModel = require('scripts.idle.uiModel')
 M.director = require('scripts.idle.director')
 
 return M

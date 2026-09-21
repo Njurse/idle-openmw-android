@@ -56,6 +56,13 @@ local offlineProgress = require('scripts.idle.offlineProgress')
 
 local M = {}
 
+-- Which mode the player is in. Mirrored by uiModel.MODES / uiLayout.MODES.
+--   manual    -- the player drives; we emit no commands at all
+--   directive -- auto-play, but queued user orders take precedence
+--   auto      -- fully self-playing
+M.MODES = { 'manual', 'directive', 'auto' }
+M.DEFAULT_MODE = 'auto'
+
 -- ---------------------------------------------------------------------------
 -- pure planning helpers
 -- ---------------------------------------------------------------------------
@@ -173,6 +180,10 @@ function M.planCommands(goalId, statView, world, snapshot, cfg, ctx)
 
   elseif goalId == 'idle' then
     commands[#commands + 1] = { type = 'stop' }
+
+  elseif goalId == 'manual' then
+    -- the player has the controls; emit nothing at all
+    return {}
   end
 
   return commands
@@ -205,6 +216,8 @@ function M.new(opts)
     lastDecisionAt = -math.huge,
     currentGoalAt = -math.huge,
     memory = dialogue.newMemory(),
+    dialogueEvents = {},
+    mode = (cfg.ui and cfg.ui.startMode) or M.DEFAULT_MODE,
     directives = directive.new(cfg.behaviour.directiveTtl),
     visited = {},
     counters = { ticks = 0, goalChanges = 0, commands = 0 },
@@ -240,6 +253,36 @@ function Director:setConfig(overrides)
   self:setClass(self.classDef)
   return self.cfg
 end
+
+--- Is `mode` one we understand?
+function M.isKnownMode(mode)
+  for _, candidate in ipairs(M.MODES) do
+    if candidate == mode then return true end
+  end
+  return false
+end
+
+--- Set the play mode. Returns the mode actually in force.
+function Director:setMode(mode)
+  if not M.isKnownMode(mode) then return self.mode end
+  if mode ~= self.mode then
+    self.mode = mode
+    self:logLine(('Mode: %s'):format(mode), mode == 'manual' and 'warn' or 'info')
+  end
+  return self.mode
+end
+
+--- Cycle manual -> directive -> auto -> manual.
+function Director:nextMode()
+  for i, candidate in ipairs(M.MODES) do
+    if candidate == self.mode then
+      return self:setMode(M.MODES[i % #M.MODES + 1])
+    end
+  end
+  return self:setMode(M.DEFAULT_MODE)
+end
+
+function Director:isManual() return self.mode == 'manual' end
 
 --- Queue an explicit user directive (the "Directive Auto" mode).
 function Director:pushDirective(id, payload)
@@ -281,7 +324,14 @@ function Director:tick(dt, snapshot)
   local pending = self.directives:peek(self.time)
   local chosen, row
   local emergency = (natural == 'survive' or natural == 'flee')
-  if not emergency and pending then
+  if self.mode == 'manual' then
+    -- the player has the controls: report but do nothing
+    chosen = 'manual'
+    row = {
+      id = 'manual', score = 0, need = 0, opportunity = 0, risk = 0,
+      aptitude = 0, bias = 0, reason = 'you have the controls',
+    }
+  elseif not emergency and pending then
     chosen = pending.goal
     row = {
       id = chosen, score = math.huge, need = 1, opportunity = 1, risk = 0,
@@ -319,6 +369,17 @@ function Director:onDialogue(event)
   local parsed = dialogue.parse(event)
   if not parsed then return nil end
   self.memory:observe(parsed, self.time)
+
+  -- keep a short transcript for the console's Talk tab
+  self.dialogueEvents[#self.dialogueEvents + 1] = {
+    actor = dialogue.actorId(parsed.actor),
+    kind = parsed.kind,
+    recordId = parsed.recordId,
+    time = self.time,
+    description = dialogue.describe(parsed),
+  }
+  while #self.dialogueEvents > 20 do table.remove(self.dialogueEvents, 1) end
+
   local action = dialogue.interpret(parsed)
   if action.intent ~= 'ignore' then
     self:logLine(dialogue.describe(parsed), action.intent == 'note_refusal' and 'warn' or 'info')
@@ -354,6 +415,7 @@ function Director:status()
     goal = self.goal,
     reason = self.row and self.row.reason or nil,
     directive = self:currentDirective() and self:currentDirective().id or nil,
+    mode = self.mode,
     level = view.level,
     gold = view.gold or 0,
     healthFraction = view.healthFraction or 1,
@@ -367,12 +429,27 @@ function Director:status()
   }
 end
 
+--- Everything the console UI needs from the director (the engine-derived parts
+--- are added by runtime/observer.lua:readPanel). See scripts/idle/uiModel.lua
+--- for the full panel-snapshot contract.
+function Director:panelData()
+  return {
+    status = self:status(),
+    mode = self.mode,
+    directive = self:currentDirective() and self:currentDirective().id or nil,
+    dialogue = self.dialogueEvents,
+    topics = self.memory:knownTopics(),
+    log = self.log:recent(60),
+  }
+end
+
 --- Persistable state. `now` (wall-clock) is supplied by the runtime.
 function Director:serialize(now)
   return {
     version = 1,
     time = self.time,
     goal = self.goal,
+    mode = self.mode,
     gold = self.gold,
     rngState = self.rng:getState(),
     memory = self.memory:serialize(),
@@ -388,6 +465,7 @@ function Director:load(data)
   self.time = data.time or 0
   self.goal = data.goal
   self.gold = data.gold
+  if data.mode and M.isKnownMode(data.mode) then self.mode = data.mode end
   self.counters = data.counters or self.counters
   if data.rngState then self.rng:setState(data.rngState) end
   if data.memory then self.memory:load(data.memory) end
