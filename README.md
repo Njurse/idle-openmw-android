@@ -36,11 +36,24 @@ Three modes, cycled by tapping the top-left `[AUTO]` line (or pressing **L**):
 | **AUTO** | Fully self-playing. |
 
 The console's tabs are **Info** (why the director chose what it chose), **Order**
-(one tap to send the character shopping / resting / training / exploring),
-**Pack** (your inventory: junk flags, worn markers, tap to Equip / Sell / Drop),
-**Talk** (recent conversations, topics heard, quests), **Log** (activity), and
-**Open** — which launches Morrowind's *real* windows (Inventory, Journal, Barter,
-Training, Dialogue, Spells, Map), so nothing in the game is out of reach.
+(one tap to send the character shopping / resting / training / exploring, plus
+every destination the nearest travel service offers), **Pack** (your inventory:
+junk flags, worn markers, tap to Equip / Sell / Drop), **Talk** (recent
+conversations, topics heard, quests), **Log** (activity), **Open** — which
+launches Morrowind's *real* windows (Inventory, Journal, Barter, Training,
+Dialogue, Spells, Map), so nothing in the game is out of reach — and **Setup**,
+where the bot's own behaviour is tappable: simulated actions, autonomous travel,
+whether it may attack NPCs or creatures, console refresh rate, and the mode it
+loads into. Changes apply immediately and only the values you changed are saved.
+
+Two things make the console liveable rather than a slab over half your screen:
+
+- **Shrink** (a footer button on every tab) collapses it to a tab strip, one row
+  and one footer row, handing most of the screen back to the game. Tap
+  **Expand** to bring it back. Collapsing is purely presentational — the director
+  is not consulted, nothing changes about what the character is doing.
+- A **page readout** ("rows 15-28 of 40") sits above the list, so you always know
+  where you are in a long inventory or log.
 
 
 ---
@@ -51,7 +64,7 @@ Training, Dialogue, Spells, Map), so nothing in the game is out of reach.
 
 ```bash
 pip install lupa                     # embedded LuaJIT, one wheel, no compiler
-python tools/run_tests.py            # 288 specs under LuaJIT 2.1
+python tools/run_tests.py            # 322 specs under LuaJIT 2.1
 python tools/run_tests.py --all      # also verify Lua 5.1 and 5.4 portability
 python tools/run_tests.py --sim      # 1000-game-hour simulation with invariants
 python tools/run_tests.py --only director   # just the specs matching a substring
@@ -137,7 +150,7 @@ tests/                            headless, no engine
 ├── harness.lua                   zero-dependency describe/it/expect/assert
 ├── run.lua                       suite entry point
 ├── specs.lua                     fallback manifest
-├── spec/                         288 specs
+├── spec/                         322 specs
 ├── mocks/openmw.lua              a full fake engine
 ├── fixtures/                     classes, states, worlds
 └── sim/headless_sim.lua          1000-game-hour invariant run

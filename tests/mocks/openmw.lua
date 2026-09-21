@@ -175,6 +175,23 @@ function M.env(spec)
   local equipmentBySlot = {}
   local equipCalls = {}
 
+  -- ---- storage (real, in-memory) -----------------------------------------
+  local playerSections, globalSections = {}, {}
+  local function sectionFor(scope, name)
+    name = name or 'IdleOpenMW'
+    if not scope[name] then
+      local data = {}
+      scope[name] = {
+        _data = data,
+        get = function(self, key) return self._data[key] end,
+        set = function(self, key, value) self._data[key] = value return true end,
+        remove = function(self, key) self._data[key] = nil return true end,
+        has = function(self, key) return self._data[key] ~= nil end,
+      }
+    end
+    return scope[name]
+  end
+
   -- ---- types -------------------------------------------------------------
   -- A real NpcRecord/CreatureRecord. Note servicesOffered and
   -- travelDestinations: these are the fields scripts/idle/worldsense.lua reads.
@@ -449,8 +466,10 @@ function M.env(spec)
       sendGlobalEvent = function() end,
     },
     storage = {
-      playerSection = function() return { get = function() end, set = function() end } end,
-      globalSection = function() return { get = function() end, set = function() end } end,
+      -- A real in-memory section store, so persistence round-trips can be tested.
+      -- Sections are keyed by name, exactly as openmw.storage behaves.
+      playerSection = function(name) return sectionFor(playerSections, name) end,
+      globalSection = function(name) return sectionFor(globalSections, name) end,
     },
     async = {
       registerTimerCallback = function() return function() end end,
@@ -496,6 +515,8 @@ function M.env(spec)
     -- test introspection
     _createdObjects = createdObjects,
     _createdElements = createdElements,
+    _playerSections = playerSections,
+    _globalSections = globalSections,
     _equipCalls = equipCalls,
     _equipmentBySlot = function() return equipmentBySlot end,
     _interfaceCalls = interfaceCalls,

@@ -25,6 +25,7 @@ local observer = require('scripts.runtime.observer')
 local executorMod = require('scripts.runtime.executor')
 local directorMod = require('scripts.idle.director')
 local configMod = require('scripts.idle.config')
+local uiModel = require('scripts.idle.uiModel')
 local offlineProgress = require('scripts.idle.offlineProgress')
 
 local self = engine.self()
@@ -278,6 +279,38 @@ end
 function ACTIONS.launch(payload)
   if not (payload and payload.mode) then return false end
   return openWindow(payload.mode, payload.window)
+end
+
+--- Persist only what the player changed, so future default changes still apply.
+local function persistUserConfig()
+  local section = engine.playerStorage(configMod.SECTION_NAME)
+  if section and type(section.set) == 'function' then
+    pcall(section.set, section, 'config', configMod.overridesOf(state.cfg))
+  end
+end
+
+--- Cycle a Setup-tab option and persist it.
+--- The director, the executor and the panel all read the same config table, so
+--- the change lands everywhere at once; re-deriving puts the director's cached
+--- weights back in sync.
+function ACTIONS.set_option(payload)
+  if not (payload and payload.key) then return false, 'no option given' end
+  local option = uiModel.findOption(payload.key)
+  if not option then return false, ('unknown option %s'):format(tostring(payload.key)) end
+
+  local value = uiModel.nextOptionValue(option, uiModel.optionValue(state.cfg, option))
+  if not uiModel.setOptionValue(state.cfg, option, value) then
+    return false, ('could not set %s'):format(option.key)
+  end
+
+  configMod.validate(state.cfg)
+  state.cfg = state.director:setConfig(state.cfg)
+  state.executor.cfg = state.cfg
+  persistUserConfig()
+
+  local shown = uiModel.formatOptionValue(option, uiModel.optionValue(state.cfg, option))
+  state.director:logLine(('%s: %s'):format(option.label, shown), 'info')
+  return true
 end
 
 local function act(action, payload)

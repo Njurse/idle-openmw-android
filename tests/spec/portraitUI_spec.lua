@@ -11,7 +11,8 @@ describe('runtime.portraitUI', function()
     local console = uiLayout.console(SCREEN, nil, {
       mode = 'auto', tabs = uiModel.TABS, footer = uiModel.footerFor(tab), footerRows = 2,
     })
-    return 5 + 1 + #uiModel.TABS + console.pageSize + 2 + #console.footer
+    local page = console.page and 1 or 0
+    return 5 + 1 + page + #uiModel.TABS + console.pageSize + 2 + #console.footer
   end
 
   --- Load the HUD script fresh against a mocked engine.
@@ -32,9 +33,18 @@ describe('runtime.portraitUI', function()
   --- Find a created element by its current text.
   local function elementWithText(env, text)
     for _, element in ipairs(env._createdElements) do
-      if element.layout.props.text == text then return element end
+      if not element.destroyed and element.layout.props.text == text then return element end
     end
     return nil
+  end
+
+  --- Elements that are currently on screen (a rebuild destroys the old ones).
+  local function liveElements(env)
+    local live = {}
+    for _, element in ipairs(env._createdElements) do
+      if not element.destroyed then live[#live + 1] = element end
+    end
+    return live
   end
 
   --- Find a created element whose text contains a substring.
@@ -238,5 +248,110 @@ describe('runtime.portraitUI', function()
     mocks.uninstall()
     assert.is_true(ok)
     assert.is_true(#env._createdElements > 0)
+  end)
+
+  describe('the page readout', function()
+    local function pageTextMatching(env)
+      for _, element in ipairs(liveElements(env)) do
+        local text = element.layout.props.text
+        if type(text) == 'string'
+          and (text:match('^%d+ rows$') or text:match('^rows %d+%-%d+ of %d+$')) then
+          return text
+        end
+      end
+      return nil
+    end
+
+    it('tells the player which rows are on screen', function()
+      local env, script = loadHud({ screen = SCREEN }, stubInterface(panels.panel()))
+      pcall(script.engineHandlers.onUpdate, 0.6)
+      local text = pageTextMatching(env)
+      mocks.uninstall()
+      assert.is_not_nil(text)
+    end)
+
+    it('is absent while the console is collapsed', function()
+      local env, script = loadHud({ screen = SCREEN }, stubInterface(panels.panel()))
+      pcall(script.engineHandlers.onUpdate, 0.6)
+      assert.is_not_nil(pageTextMatching(env))
+
+      elementWithText(env, 'Shrink').layout.events.mouseClick()
+      pcall(script.engineHandlers.onUpdate, 0.6)
+      local text = pageTextMatching(env)
+      mocks.uninstall()
+      assert.is_nil(text)
+    end)
+  end)
+
+  describe('collapsing the console', function()
+    --- The console's background is its tallest live element.
+    local function panelElement(env)
+      local best
+      for _, element in ipairs(liveElements(env)) do
+        local size = element.layout.props.size
+        if size and (not best or size.y > best.layout.props.size.y) then best = element end
+      end
+      return best
+    end
+
+    it('gives the game back most of the screen and offers a way back', function()
+      local env, script = loadHud({ screen = SCREEN }, stubInterface(panels.panel()))
+      pcall(script.engineHandlers.onUpdate, 0.6)
+      local expanded = panelElement(env).layout.props.size.y
+      assert.is_not_nil(elementWithText(env, 'Shrink'))
+
+      elementWithText(env, 'Shrink').layout.events.mouseClick()
+      pcall(script.engineHandlers.onUpdate, 0.6)
+
+      local collapsed = panelElement(env).layout.props.size.y
+      local back = elementWithText(env, 'Expand')
+      mocks.uninstall()
+
+      assert.is_true(collapsed < expanded)
+      assert.is_not_nil(back, 'no way to expand the console again')
+    end)
+
+    it('does not ask the director for anything', function()
+      -- collapsing is purely presentational: the IdleOpenMW interface sees no call
+      local idle = stubInterface(panels.panel())
+      local env, script = loadHud({ screen = SCREEN }, idle)
+      pcall(script.engineHandlers.onUpdate, 0.6)
+      local before = #idle.calls
+
+      elementWithText(env, 'Shrink').layout.events.mouseClick()
+      pcall(script.engineHandlers.onUpdate, 0.6)
+      local after = #idle.calls
+      mocks.uninstall()
+      assert.equals(after, before)
+    end)
+
+    it('can be expanded again without leaking elements', function()
+      local env, script = loadHud({ screen = SCREEN }, stubInterface(panels.panel()))
+      pcall(script.engineHandlers.onUpdate, 0.6)
+      local baseline = #liveElements(env)
+
+      elementWithText(env, 'Shrink').layout.events.mouseClick()
+      pcall(script.engineHandlers.onUpdate, 0.6)
+      elementWithText(env, 'Expand').layout.events.mouseClick()
+      pcall(script.engineHandlers.onUpdate, 0.6)
+      local restored = #liveElements(env)
+      mocks.uninstall()
+
+      -- back to exactly the expanded console: the rebuild destroyed the old
+      -- widgets instead of stacking a second console on top of the first
+      assert.equals(restored, baseline)
+    end)
+
+    it('still ticks repeatedly while collapsed', function()
+      local env, script = loadHud({ screen = SCREEN }, stubInterface(panels.panel()))
+      pcall(script.engineHandlers.onUpdate, 0.6)
+      elementWithText(env, 'Shrink').layout.events.mouseClick()
+      local ok = true
+      for _ = 1, 6 do
+        ok = ok and pcall(script.engineHandlers.onUpdate, 0.5)
+      end
+      mocks.uninstall()
+      assert.is_true(ok)
+    end)
   end)
 end)

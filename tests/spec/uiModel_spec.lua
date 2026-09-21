@@ -1,6 +1,7 @@
 describe('idle.uiModel', function()
   local uiModel = require('scripts.idle.uiModel')
   local directive = require('scripts.idle.directive')
+  local configMod = require('scripts.idle.config')
   local panels = require('tests.fixtures.panel')
 
   describe('modes', function()
@@ -21,16 +22,17 @@ describe('idle.uiModel', function()
   end)
 
   describe('tabs', function()
-    it('has the six console tabs', function()
-      expect(uiModel.tabIds()):toEqualDeep({ 'info', 'orders', 'pack', 'talk', 'log', 'open' })
+    it('has the seven console tabs', function()
+      expect(uiModel.tabIds()):toEqualDeep({ 'info', 'orders', 'pack', 'talk', 'log', 'open', 'setup' })
       assert.is_true(uiModel.isKnownTab('pack'))
+      assert.is_true(uiModel.isKnownTab('setup'))
       assert.is_false(uiModel.isKnownTab('nope'))
     end)
 
     it('steps and wraps', function()
       assert.equals(uiModel.nextTab('info', 1), 'orders')
-      assert.equals(uiModel.nextTab('info', -1), 'open')
-      assert.equals(uiModel.nextTab('open', 1), 'info')
+      assert.equals(uiModel.nextTab('info', -1), 'setup')
+      assert.equals(uiModel.nextTab('setup', 1), 'info')
     end)
   end)
 
@@ -38,8 +40,14 @@ describe('idle.uiModel', function()
     it('is contextual per tab', function()
       assert.is_true(#uiModel.footerFor('info') > 0)
       assert.is_true(#uiModel.footerFor('pack') >= 3)
-      expect(uiModel.footerFor('open')):toEqualDeep({})
-      expect(uiModel.footerFor('nonsense')):toEqualDeep({})
+      -- every tab, including the launcher-only one, can collapse the console
+      expect(uiModel.footerFor('open')):toEqualDeep({ { id = 'toggle_panel', label = 'Shrink' } })
+      expect(uiModel.footerFor('nonsense')):toEqualDeep({ { id = 'toggle_panel', label = 'Shrink' } })
+    end)
+
+    it('flips the collapse label with state', function()
+      expect(uiModel.footerFor('open', { collapsed = true })):toEqualDeep(
+        { { id = 'toggle_panel', label = 'Expand' } })
     end)
 
     it('marks the actions that need a selection', function()
@@ -219,7 +227,8 @@ describe('idle.uiModel', function()
       assert.equals(view.tab, 'info')
     end)
 
-    it('reports the active order', function()      local view = uiModel.view({ tab = 'orders' }, panels.panel({ directive = 'rest' }), { pageSize = 5 })
+    it('reports the active order', function()
+      local view = uiModel.view({ tab = 'orders' }, panels.panel({ directive = 'rest' }), { pageSize = 5 })
       assert.equals(view.directive, 'rest')
     end)
 
@@ -227,6 +236,106 @@ describe('idle.uiModel', function()
       local view = uiModel.view({}, nil, { pageSize = 4 })
       assert.equals(view.tab, 'info')
       assert.equals(view.mode, 'auto')
+    end)
+  end)
+
+  describe('options (the Setup tab)', function()
+    it('reads values out of the config by path', function()
+      local option = uiModel.findOption('npcFightHostility')
+      assert.is_not_nil(option)
+      assert.is_false(uiModel.optionValue(configMod.new(), option))
+      assert.is_nil(uiModel.optionValue(nil, option))
+      assert.is_nil(uiModel.optionValue({}, { path = { 'nope', 'deeper' } }))
+    end)
+
+    it('cycles booleans and wraps choices', function()
+      local flag = uiModel.findOption('autoTravel')
+      assert.is_true(uiModel.nextOptionValue(flag, false))
+      assert.is_false(uiModel.nextOptionValue(flag, true))
+      assert.is_true(uiModel.nextOptionValue(flag, nil))
+
+      local choice = uiModel.findOption('startMode')
+      assert.equals(uiModel.nextOptionValue(choice, 'auto'), 'directive')
+      assert.equals(uiModel.nextOptionValue(choice, 'manual'), 'auto')  -- wraps
+    end)
+
+    it('writes values through the path', function()
+      local cfg = configMod.new()
+      local option = uiModel.findOption('npcFightHostility')
+      assert.is_true(uiModel.setOptionValue(cfg, option, true))
+      assert.is_true(cfg.sensing.npcFightHostility)
+      assert.is_false(uiModel.setOptionValue(cfg, { path = {} }, true))
+      assert.is_false(uiModel.setOptionValue(nil, option, true))
+    end)
+
+    it('formats values for display', function()
+      assert.equals(uiModel.formatOptionValue({ kind = 'boolean' }, true), 'ON')
+      assert.equals(uiModel.formatOptionValue({ kind = 'boolean' }, false), 'OFF')
+      assert.equals(uiModel.formatOptionValue({ kind = 'choice' }, 0.5), '0.50')
+      assert.equals(uiModel.formatOptionValue({ kind = 'choice' }, 'manual'), 'manual')
+      assert.equals(uiModel.formatOptionValue({ kind = 'choice' }, nil), '--')
+    end)
+
+    it('every option points at a real config path', function()
+      local cfg = configMod.new()
+      for _, option in ipairs(uiModel.OPTIONS) do
+        assert.is_true(#option.path > 0, option.key .. ' has no path')
+        local node = cfg
+        for index = 1, #option.path - 1 do
+          node = node[option.path[index]]
+          assert.is_not_nil(node, option.key .. ' points at nothing')
+        end
+        assert.is_not_nil(node[option.path[#option.path]], option.key .. ' points at nothing')
+      end
+    end)
+
+    it('lists every option as an actionable row', function()
+      local rows = uiModel.buildRows('setup', panels.panel())
+      local seen = {}
+      for _, row in ipairs(rows) do
+        if row.action == 'set_option' then
+          seen[row.payload.key] = row
+          assert.is_not_nil(uiModel.findOption(row.payload.key))
+          assert.is_true(#row.detail > 0)
+        end
+      end
+      for _, option in ipairs(uiModel.OPTIONS) do
+        assert.is_not_nil(seen[option.key], option.key .. ' is missing from the Setup tab')
+      end
+    end)
+  end)
+
+  describe('the page readout', function()
+    it('describes the visible window', function()
+      assert.equals(uiModel.pageText({ total = 40, offset = 0, pageSize = 14 }), 'rows 1-14 of 40')
+      assert.equals(uiModel.pageText({ total = 40, offset = 14, pageSize = 14 }), 'rows 15-28 of 40')
+      assert.equals(uiModel.pageText({ total = 40, offset = 35, pageSize = 14 }), 'rows 36-40 of 40')
+    end)
+
+    it('says nothing when everything fits or there is nothing', function()
+      assert.equals(uiModel.pageText({ total = 5, offset = 0, pageSize = 14 }), '5 rows')
+      assert.equals(uiModel.pageText({ total = 0 }), '')
+      assert.equals(uiModel.pageText(nil), '')
+    end)
+
+    it('reaches the view', function()
+      local view = uiModel.view({ tab = 'pack' }, panels.panel(), { pageSize = 2 })
+      assert.equals(view.pageSize, 2)
+      assert.is_true(view.total >= #panels.panel().inventory)
+    end)
+  end)
+
+  describe('the collapse toggle in the view footer', function()
+    it('reflects the collapsed state', function()
+      local expanded = uiModel.view({ tab = 'info' }, panels.panel(), { pageSize = 5 })
+      local collapsed = uiModel.view({ tab = 'info', collapsed = true }, panels.panel(), { pageSize = 5 })
+      local function toggle(view)
+        for _, button in ipairs(view.footer) do
+          if button.id == 'toggle_panel' then return button end
+        end
+      end
+      assert.equals(toggle(expanded).label, 'Shrink')
+      assert.equals(toggle(collapsed).label, 'Expand')
     end)
   end)
 end)

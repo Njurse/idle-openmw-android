@@ -172,15 +172,30 @@ M.TAB_HEIGHT = 34
 M.ROW_HEIGHT = 22
 M.FOOTER_ROWS = 2
 
+--- When collapsed, the console shrinks to a tab strip, one list row and one
+--- footer row, so the player can see almost the whole game while still being one
+--- tap away from everything. This is the answer to "the console covers the lower
+--- half of the screen" (docs/limitations.md section 3).
+M.COLLAPSED_FRACTION = 0.16
+
 function M.panelFraction(mode)
   return M.PANEL_FRACTION[mode] or M.PANEL_FRACTION.auto
 end
 
 --- Split the screen into the game viewport (top) and the console (bottom).
-function M.split(base, mode)
-  local fraction = M.panelFraction(mode)
+--- @param collapsed when true, use the collapsed height (see M.COLLAPSED_FRACTION)
+function M.split(base, mode, collapsed)
+  local minPanel, maxPanel
+  if collapsed then
+    minPanel = math.floor(base.height * 0.12)
+    maxPanel = math.floor(base.height * 0.26)
+  else
+    minPanel = math.floor(base.height * 0.22)
+    maxPanel = math.floor(base.height * 0.62)
+  end
+
+  local fraction = collapsed and M.COLLAPSED_FRACTION or M.panelFraction(mode)
   local panelHeight = math.floor(base.height * fraction)
-  local minPanel, maxPanel = math.floor(base.height * 0.22), math.floor(base.height * 0.62)
   panelHeight = util.clamp(panelHeight, minPanel, maxPanel)
 
   local panelY = base.height - panelHeight
@@ -193,6 +208,7 @@ function M.split(base, mode)
   return {
     viewport = { x = 0, y = 0, width = base.width, height = panelY },
     panel = { x = 0, y = panelY, width = base.width, height = panelHeight },
+    collapsed = collapsed and true or false,
   }
 end
 
@@ -217,38 +233,44 @@ function M.tabRects(panel, tabs, scale)
 end
 
 --- Rectangles for the scrollable list area and its up/down controls.
+--- When `opts.showPage` is set, a thin readout strip ("rows 1-14 of 40") is
+--- carved out of the TOP of the list, so the rows start below it.
 function M.listRects(panel, tabsHeight, scale, opts)
   opts = opts or {}
   local rowHeight = math.max(M.ROW_HEIGHT, math.floor(M.ROW_HEIGHT * scale * 0.8))
   local footerHeight = (opts.footerRows or M.FOOTER_ROWS) * rowHeight
   local scrollWidth = math.max(30, math.floor(30 * scale * 0.9))
+  local pageHeight = opts.showPage and math.max(1, math.floor(rowHeight * 0.8)) or 0
 
   local top = panel.y + tabsHeight
   local bottom = panel.y + panel.height - footerHeight
-  local height = math.max(rowHeight, bottom - top)
-  local pageSize = math.max(1, math.floor(height / rowHeight))
+  local span = math.max(rowHeight, bottom - top)
 
   local list = {
     x = panel.x,
-    y = top,
+    y = top + pageHeight,
     width = panel.width - scrollWidth,
-    height = height,
+    height = math.max(rowHeight, span - pageHeight),
     rowHeight = rowHeight,
-    pageSize = pageSize,
-    rows = {},
   }
-  for i = 1, pageSize do
+  if pageHeight > 0 then
+    list.page = { x = panel.x, y = top, width = list.width, height = pageHeight }
+  end
+  list.pageSize = math.max(1, math.floor(list.height / rowHeight))
+  list.rows = {}
+  for i = 1, list.pageSize do
     list.rows[i] = {
       x = list.x,
-      y = top + (i - 1) * rowHeight,
+      y = list.y + (i - 1) * rowHeight,
       width = list.width,
       height = rowHeight,
       index = i,
     }
   end
-  list.up = { x = list.x + list.width, y = top, width = scrollWidth, height = math.floor(height / 2) }
-  list.down = { x = list.x + list.width, y = top + math.floor(height / 2),
-                width = scrollWidth, height = height - math.floor(height / 2) }
+  -- the scroll column spans the full list area (the page strip stops at list.width)
+  list.up = { x = list.x + list.width, y = top, width = scrollWidth, height = math.floor(span / 2) }
+  list.down = { x = list.x + list.width, y = top + math.floor(span / 2),
+                width = scrollWidth, height = span - math.floor(span / 2) }
   return list
 end
 
@@ -280,27 +302,35 @@ end
 --- Everything the renderer needs, in one place, so it is all unit-testable.
 --- @param screen { x, y }
 --- @param cfg    config table
---- @param model  { mode, tabs = {...}, footer = {...}, rowCount = n, footerRows? }
+--- @param model  { mode, tabs = {...}, footer = {...}, rowCount = n, footerRows?,
+---                  collapsed?, showPage? }
 function M.console(screen, cfg, model)
   model = model or {}
   local base = M.compute(screen, cfg)
-  local split = M.split(base, model.mode)
+  local split = M.split(base, model.mode, model.collapsed)
 
   local tabs = M.tabRects(split.panel, model.tabs or {}, base.scale)
   local tabsHeight = tabs[1] and tabs[1].height or 0
-  local list = M.listRects(split.panel, tabsHeight, base.scale, { footerRows = model.footerRows })
+  -- a collapsed console has no room for a readout strip
+  local showPage = model.showPage
+  if showPage == nil then showPage = not split.collapsed end
+  local list = M.listRects(split.panel, tabsHeight, base.scale,
+    { footerRows = model.footerRows, showPage = showPage })
   local footer = M.footerRects(split.panel, tabsHeight, base.scale,
     #(model.footer or {}), { footerRows = model.footerRows })
 
   return {
     base = base,
     mode = model.mode or 'auto',
+    collapsed = split.collapsed,
     screen = { width = base.width, height = base.height },
     viewport = split.viewport,
     panel = split.panel,
+    showPage = showPage,
     tabs = tabs,
     tabsHeight = tabsHeight,
     list = list,
+    page = list.page,
     footer = footer,
     footerIds = util.map(model.footer or {}, function(action) return action.id end),
     pageSize = list.pageSize,
@@ -320,6 +350,7 @@ function M.regions(layout)
   end
 
   for _, tab in ipairs(layout.tabs or {}) do add('tab:' .. tab.id, tab) end
+  if layout.page then add('page:readout', layout.page) end
   if layout.list then
     for _, row in ipairs(layout.list.rows or {}) do add('row:' .. row.index, row) end
     add('scroll:up', layout.list.up)

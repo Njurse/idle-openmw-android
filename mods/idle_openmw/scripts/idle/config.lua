@@ -164,6 +164,33 @@ local function clampProblem(problems, path, value, lo, hi)
   end
 end
 
+--- The parts of `cfg` that differ from the shipped defaults, as a nested table.
+--- Persisting only the player's actual changes means later default changes still
+--- reach existing saves (which is why the whole config is not just dumped).
+function M.overridesOf(cfg)
+  local function walk(defaults, values)
+    local out = nil
+    for key, default in pairs(defaults or {}) do
+      -- NOT `(type(values) == 'table') and values[key] or nil`: that idiom turns a
+      -- legitimate `false` into `nil`, so "turn this feature off" would never persist.
+      local value
+      if type(values) == 'table' then value = values[key] end
+      if type(default) == 'table' then
+        local nested = walk(default, value)
+        if nested then
+          out = out or {}
+          out[key] = nested
+        end
+      elseif value ~= nil and value ~= default then
+        out = out or {}
+        out[key] = value
+      end
+    end
+    return out
+  end
+  return walk(M.defaults, cfg) or {}
+end
+
 --- Validate a config in place, clamping where sensible.
 --- Returns the config and a list of human-readable problems (empty == clean).
 function M.validate(cfg)

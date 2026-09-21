@@ -165,10 +165,12 @@ wrap.
   closed single-player world. The mod awards a bounded, deterministic catch-up
   (`offline.maxRealHours`, default 8) so idling offline is not a strict loss.
   It is deliberately capped to make that explicit.
-- **The console covers the lower half of the screen** (~46%; ~30% in MANUAL). That
-  is a deliberate trade so the game stays visible above it, and it is
-  configurable via the mode, but it *does* mean the lower half of the world is
-  hidden while the panel is open. There is no auto-hide or swipe-to-dismiss yet.
+- **The console covers the lower half of the screen** (~46%; ~30% in MANUAL;
+  ~16% collapsed). That is a deliberate trade so the game stays visible above it,
+  and it is configurable. The **Shrink** footer button collapses it to a tab
+  strip + one row + one footer row, so the obstruction is now opt-in rather than
+  permanent. Still missing: an *automatic* hide (e.g. when the player touches the
+  game world, or after N seconds of no interaction) and a swipe gesture.
 - **No occlusion handling.** An isometric/third-person view can be blocked by
   scenery. There is no "fade nearby obstructing objects" shader.
 - **Threat model is heuristic.** `combat.assess` uses enemy level counts against

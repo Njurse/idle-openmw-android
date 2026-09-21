@@ -221,6 +221,29 @@ director:panelData()             --- brain-derived  --->  status, mode,
   `mwlua/uibindings.cpp`: `Interface`, `Journal`, `Barter`, `Training`,
   `Dialogue`, `Rest`, `SpellBuying`, … Dialogue is given a `target` taken from
   the last snapshot's nearest talkable actor.
+- **Setup** is the one tab that writes instead of reading.
+  `act('set_option', { key })` cycles a value in the **live** config table — the
+  one the director, the executor and the panel all hold a reference to — then
+  re-derives the director's cached state and persists `config.overridesOf(cfg)`,
+  i.e. only the keys that actually differ from the shipped defaults. Persisting
+  the difference rather than the whole config is why a later default change still
+  reaches an existing save.
+
+## Collapsing the console (and a bug worth remembering)
+
+`uiLayout.split(base, mode, collapsed)` gives the collapsed console its own
+fraction (`M.COLLAPSED_FRACTION`), `console(cfg, { collapsed = true })` drops the
+page strip, and `portraitUI` keeps the flag in its own state — collapsing is
+*presentational*, so the director is never consulted. The spec asserts the
+director sees no `act` call at all when you collapse.
+
+The first implementation set `state.built = false` to force a rebuild and forgot
+to destroy the old widgets. The tests caught it immediately: `elementWithText`
+still found the previous tab strip, and the "no leaking elements" spec counted
+two consoles. Every rebuild now goes through one `requestRebuild()` that destroys
+first — resize/rotation included, which had its own copy of the destroy loop.
+That the leak was invisible on paper and obvious in a headless test is the whole
+argument for building the console this way.
 
 ## Tap-to-equip without guessing
 

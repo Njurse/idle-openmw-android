@@ -38,6 +38,7 @@ M.TABS = {
   { id = 'talk', label = 'Talk' },
   { id = 'log', label = 'Log' },
   { id = 'open', label = 'Open' },
+  { id = 'setup', label = 'Setup' },
 }
 
 M.MODES = { 'manual', 'directive', 'auto' }
@@ -62,6 +63,77 @@ M.ORDERS = {
   { id = 'explore', label = 'Explore' },
 }
 
+--- Options the player can cycle from the Setup tab. Each is a dotted path into
+--- the live config, so changing one takes effect on the next tick.
+M.OPTIONS = {
+  { key = 'simulateActions', kind = 'boolean', path = { 'behaviour', 'simulateActions' },
+    label = 'Simulated actions' },
+  { key = 'autoTravel', kind = 'boolean', path = { 'behaviour', 'autoTravel' },
+    label = 'Travel on its own' },
+  { key = 'npcFightHostility', kind = 'boolean', path = { 'sensing', 'npcFightHostility' },
+    label = 'Attack hostile NPCs' },
+  { key = 'creaturesAreHostile', kind = 'boolean', path = { 'sensing', 'creaturesAreHostile' },
+    label = 'Attack creatures' },
+  { key = 'refresh', kind = 'choice', path = { 'ui', 'refresh' },
+    choices = { 0.25, 0.5, 1.0, 2.0 }, label = 'Console refresh (s)' },
+  { key = 'startMode', kind = 'choice', path = { 'ui', 'startMode' },
+    choices = { 'auto', 'directive', 'manual' }, label = 'Mode on load' },
+}
+
+--- Read an option's current value out of a config by its path.
+function M.optionValue(config, option)
+  local node = config
+  for _, key in ipairs(option.path or {}) do
+    if type(node) ~= 'table' then return nil end
+    node = node[key]
+  end
+  return node
+end
+
+--- The next value in an option's cycle: booleans flip, choices wrap.
+function M.nextOptionValue(option, current)
+  if option.kind == 'boolean' then return not (current == true) end
+  local choices = option.choices or {}
+  if #choices == 0 then return current end
+  for index, value in ipairs(choices) do
+    if value == current then return choices[(index % #choices) + 1] end
+  end
+  return choices[1]
+end
+
+--- Find an option definition by key.
+function M.findOption(key)
+  for _, option in ipairs(M.OPTIONS) do
+    if option.key == key then return option end
+  end
+  return nil
+end
+
+--- Write `value` at an option's path, creating intermediate tables as needed.
+--- Returns true on success. Refuses rather than guessing when the path is broken.
+function M.setOptionValue(config, option, value)
+  if type(config) ~= 'table' or type(option) ~= 'table' then return false end
+  local path = option.path or {}
+  if #path == 0 then return false end
+  local node = config
+  for index = 1, #path - 1 do
+    local key = path[index]
+    if node[key] == nil then node[key] = {} end
+    if type(node[key]) ~= 'table' then return false end
+    node = node[key]
+  end
+  node[path[#path]] = value
+  return true
+end
+
+--- How an option's value reads in the list.
+function M.formatOptionValue(option, value)
+  if option.kind == 'boolean' then return value and 'ON' or 'OFF' end
+  if value == nil then return '--' end
+  if type(value) == 'number' then return ('%.2f'):format(value) end
+  return tostring(value)
+end
+
 --- Launchers: open Morrowind's OWN windows. This is what keeps the whole game
 --- reachable from the console (modes verified in mwlua/uibindings.cpp).
 M.LAUNCHERS = {
@@ -76,21 +148,33 @@ M.LAUNCHERS = {
 }
 
 --- Contextual footer per tab. `label` is the text on the button.
-function M.footerFor(tabId)
+--- Every tab also gets a `toggle_panel` button, because collapsing the console is
+--- how the player gets the game back (docs/limitations.md section 3).
+--- @param opts { collapsed? } — flips the toggle's label
+function M.footerFor(tabId, opts)
+  opts = opts or {}
+  local actions
   if tabId == 'info' then
-    return { { id = 'cycle_mode', label = 'Mode' }, { id = 'pause', label = 'Pause' } }
+    actions = { { id = 'cycle_mode', label = 'Mode' }, { id = 'pause', label = 'Pause' } }
   elseif tabId == 'orders' then
-    return { { id = 'queue', label = 'Queue' }, { id = 'cancel', label = 'Cancel' } }
+    actions = { { id = 'queue', label = 'Queue' }, { id = 'cancel', label = 'Cancel' } }
   elseif tabId == 'pack' then
-    return { { id = 'equip', label = 'Equip' }, { id = 'sell', label = 'Sell' },
-             { id = 'drop', label = 'Drop' }, { id = 'refresh', label = 'Refresh' } }
+    actions = { { id = 'equip', label = 'Equip' }, { id = 'sell', label = 'Sell' },
+                { id = 'drop', label = 'Drop' }, { id = 'refresh', label = 'Refresh' } }
   elseif tabId == 'talk' then
-    return { { id = 'talk_nearest', label = 'Talk' }, { id = 'open_dialogue', label = 'Window' },
-             { id = 'open_journal', label = 'Journal' } }
+    actions = { { id = 'talk_nearest', label = 'Talk' }, { id = 'open_dialogue', label = 'Window' },
+                { id = 'open_journal', label = 'Journal' } }
   elseif tabId == 'log' then
-    return { { id = 'clear_log', label = 'Clear' }, { id = 'open_journal', label = 'Journal' } }
+    actions = { { id = 'clear_log', label = 'Clear' }, { id = 'open_journal', label = 'Journal' } }
+  else
+    actions = {}
   end
-  return {}
+
+  actions[#actions + 1] = {
+    id = 'toggle_panel',
+    label = opts.collapsed and 'Expand' or 'Shrink',
+  }
+  return actions
 end
 
 --- Footer actions that need a selected row to make sense.
@@ -200,6 +284,20 @@ function M.formatRow(row_)
   return tostring(row_.label or '')
 end
 
+--- "rows 3-12 of 40", for the console's readout strip (`uiLayout.listRects.page`).
+--- @param state { total?, offset?, pageSize? }
+function M.pageText(state)
+  state = state or {}
+  local total = state.total or 0
+  if total <= 0 then return '' end
+  local pageSize = math.max(1, state.pageSize or 1)
+  local offset = math.max(0, state.offset or 0)
+  if total <= pageSize then return ('%d rows'):format(total) end
+  local from = math.min(total, offset + 1)
+  local to = math.min(total, offset + pageSize)
+  return ('rows %d-%d of %d'):format(from, to, total)
+end
+
 local function infoRows(panel)
   local rows = {}
   local status = panel.status or {}
@@ -285,6 +383,24 @@ local function orderRows(panel)
 
   rows[#rows + 1] = row({ id = 'orders-note', kind = 'heading',
     label = 'Queueing an order overrides auto-play for a while' })
+  return rows
+end
+
+local function setupRows(panel)
+  local rows = {}
+  rows[#rows + 1] = row({ id = 'setup-note', kind = 'heading',
+    label = 'Tap an option to cycle it; changes apply at once' })
+  for _, option in ipairs(M.OPTIONS) do
+    rows[#rows + 1] = row({
+      id = 'option:' .. option.key,
+      kind = 'action',
+      label = option.label,
+      detail = M.formatOptionValue(option, M.optionValue(panel.config, option)),
+      action = 'set_option',
+      payload = { key = option.key, path = option.path },
+      selectable = false,
+    })
+  end
   return rows
 end
 
@@ -403,6 +519,7 @@ function M.buildRows(tabId, panel)
   if tabId == 'talk' then return talkRows(panel) end
   if tabId == 'log' then return logRows(panel) end
   if tabId == 'open' then return openRows() end
+  if tabId == 'setup' then return setupRows(panel) end
   return {}
 end
 
@@ -426,9 +543,11 @@ function M.view(state, panel, layout)
     rows = rows,
     visible = visible,
     offset = offset,
+    total = #rows,
+    pageSize = pageSize,
     selection = selection,
     selected = M.selectedRow(rows, offset, pageSize, state.selection or 1),
-    footer = M.footerFor(tabId),
+    footer = M.footerFor(tabId, { collapsed = state.collapsed }),
     mode = panel and panel.mode or 'auto',
     directive = panel and panel.directive or nil,
   }

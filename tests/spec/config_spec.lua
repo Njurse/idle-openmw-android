@@ -54,6 +54,42 @@ describe('idle.config', function()
     end)
   end)
 
+  describe('overridesOf', function()
+    it('is empty for an untouched config', function()
+      assert.equals(next(config.overridesOf(config.new())), nil)
+    end)
+
+    it('captures only what changed', function()
+      local cfg = config.new()
+      cfg.sensing.npcFightHostility = true
+      cfg.ui.refresh = 2.0
+      local overrides = config.overridesOf(cfg)
+      expect(overrides):toEqualDeep({ sensing = { npcFightHostility = true },
+                                      ui = { refresh = 2.0 } })
+    end)
+
+    it('round-trips: new(overridesOf(cfg)) reproduces the changed values', function()
+      local cfg = config.new()
+      cfg.sensing.creaturesAreHostile = false
+      cfg.behaviour.autoTravel = true
+      cfg.behaviour.barterRatio = 0.5
+      cfg.tick.interval = 4
+
+      local restored = config.new(config.overridesOf(cfg))
+      assert.is_false(restored.sensing.creaturesAreHostile)
+      assert.is_true(restored.behaviour.autoTravel)
+      assert.equals(restored.behaviour.barterRatio, 0.5)
+      assert.equals(restored.tick.interval, 4)
+      -- and the untouched defaults are still the defaults
+      assert.equals(restored.behaviour.simulateActions, config.defaults.behaviour.simulateActions)
+    end)
+
+    it('survives a nil or junk config', function()
+      assert.equals(next(config.overridesOf(nil)), nil)
+      assert.equals(next(config.overridesOf(42)), nil)
+    end)
+  end)
+
   it('rejects non-numeric weight overrides', function()    local cfg = config.new({ weightOverrides = { combat = 'lots' } })
     local _, problems = config.validate(cfg)
     assert.is_true(#problems >= 1)

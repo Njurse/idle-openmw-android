@@ -217,4 +217,63 @@ describe('idle.uiLayout', function()
       assert.is_true(tall.pageSize >= short.pageSize)
     end)
   end)
+
+  describe('collapsing the console', function()
+    local function console(over)
+      local model = { mode = 'auto', tabs = tabs, footer = { { id = 'a' }, { id = 'b' } }, footerRows = 1 }
+      for key, value in pairs(over or {}) do model[key] = value end
+      return layout.console(PHONE, cfg, model)
+    end
+
+    it('gives the game back most of the screen', function()
+      local expanded = console({ collapsed = false })
+      local collapsed = console({ collapsed = true })
+      assert.is_true(collapsed.panel.height < expanded.panel.height)
+      assert.is_true(collapsed.viewport.height > expanded.viewport.height)
+      assert.equals(collapsed.collapsed, true)
+      assert.equals(expanded.collapsed, false)
+      -- and it must stay a real panel, not a sliver
+      assert.is_true(collapsed.panel.height > collapsed.tabsHeight)
+      assert.is_true(collapsed.pageSize >= 1)
+    end)
+
+    it('drops the page readout strip when collapsed', function()
+      assert.is_nil(console({ collapsed = true }).page)
+      assert.is_not_nil(console({ collapsed = false }).page)
+    end)
+
+    it('never collapses into the notch', function()
+      for _, screen in ipairs({ PHONE, SMALL, BIG }) do
+        local collapsed = console({ collapsed = true })
+        local base = layout.compute(screen, cfg)
+        assert.is_true(collapsed.panel.y >= base.safeTop - 1)
+        assert.equals(collapsed.viewport.y + collapsed.viewport.height, collapsed.panel.y)
+      end
+    end)
+  end)
+
+  describe('the page readout', function()
+    it('sits above the first row and inside the list width', function()
+      local console = layout.console(PHONE, cfg, { mode = 'auto', tabs = tabs, footer = {} })
+      assert.is_not_nil(console.page)
+      local firstRow = console.list.rows[1]
+      assert.is_true(console.page.y + console.page.height <= firstRow.y)
+      -- it must not steal taps from the scroll column
+      assert.is_true(console.page.x + console.page.width <= console.list.up.x)
+    end)
+
+    it('is part of the touch regions and hit-testable', function()
+      local console = layout.console(PHONE, cfg, { mode = 'auto', tabs = tabs, footer = {} })
+      local regions = layout.regions(console)
+      assert.equals(layout.hitTest(regions, { x = console.page.x + 2, y = console.page.y + 2 }),
+        'page:readout')
+    end)
+
+    it('costs at most one row of list capacity', function()
+      local withPage = layout.console(PHONE, cfg, { mode = 'auto', tabs = tabs, footer = {}, showPage = true })
+      local without = layout.console(PHONE, cfg, { mode = 'auto', tabs = tabs, footer = {}, showPage = false })
+      assert.is_true(withPage.pageSize <= without.pageSize)
+      assert.is_true(without.pageSize - withPage.pageSize <= 1)
+    end)
+  end)
 end)

@@ -171,8 +171,71 @@ describe('runtime.idleDirector', function()
     end)
   end)
 
-  it('keeps ticking after an engine call throws', function()
-    withScript(SPEC, function(env, handlers)
+  describe('Setup tab options', function()
+    it('cycles a boolean, applies it live and persists only the change', function()
+      withScript(SPEC, function(env, handlers)
+        tick(handlers, 1)
+        local cfg = handlers.interface.getConfig()
+        assert.is_false(cfg.sensing.npcFightHostility)   -- the safe default
+
+        assert.is_true(handlers.interface.act('set_option', { key = 'npcFightHostility' }))
+        -- the panel and the director must both see the new value
+        assert.is_true(handlers.interface.getConfig().sensing.npcFightHostility)
+        assert.is_true(handlers.interface.panel().config.sensing.npcFightHostility)
+
+        local section = env._playerSections['IdleOpenMW']
+        assert.is_not_nil(section, 'the option was not persisted')
+        expect(section:get('config')):toEqualDeep({ sensing = { npcFightHostility = true } })
+      end)
+    end)
+
+    it('cycles a choice through its options and wraps', function()
+      withScript(SPEC, function(env, handlers)
+        tick(handlers, 1)
+        assert.equals(handlers.interface.getConfig().ui.startMode, 'auto')
+        handlers.interface.act('set_option', { key = 'startMode' })
+        assert.equals(handlers.interface.getConfig().ui.startMode, 'directive')
+        handlers.interface.act('set_option', { key = 'startMode' })
+        handlers.interface.act('set_option', { key = 'startMode' })
+        assert.equals(handlers.interface.getConfig().ui.startMode, 'auto')
+      end)
+    end)
+
+    it('clamps a value that the config would reject', function()
+      withScript(SPEC, function(env, handlers)
+        tick(handlers, 1)
+        -- ui.refresh cycles 0.25/0.5/1.0/2.0, all inside the valid range
+        for _ = 1, 4 do handlers.interface.act('set_option', { key = 'refresh' }) end
+        assert.is_true(handlers.interface.getConfig().ui.refresh <= 2.0)
+        assert.is_true(handlers.interface.getConfig().ui.refresh >= 0.25)
+      end)
+    end)
+
+    it('refuses an unknown option instead of guessing', function()
+      withScript(SPEC, function(env, handlers)
+        tick(handlers, 1)
+        local ok, message = handlers.interface.act('set_option', { key = 'nonexistent' })
+        assert.is_false(ok)
+        assert.is_true(tostring(message):find('unknown option', 1, true) ~= nil)
+        assert.is_false(handlers.interface.act('set_option', {}))
+      end)
+    end)
+
+    it('logs the change so it is visible in the Log tab', function()
+      withScript(SPEC, function(env, handlers)
+        tick(handlers, 1)
+        handlers.interface.act('set_option', { key = 'autoTravel' })
+        local log = handlers.interface.panel().log
+        local found = false
+        for _, entry in ipairs(log) do
+          if tostring(entry.message):find('Travel on its own', 1, true) then found = true end
+        end
+        assert.is_true(found)
+      end)
+    end)
+  end)
+
+  it('keeps ticking after an engine call throws', function()    withScript(SPEC, function(env, handlers)
       local explode = true
       local realInventory = env.types.Actor.inventory
       env.types.Actor.inventory = function(actor)

@@ -56,6 +56,9 @@ local state = {
   elements = {},
   rowCount = 0,
   footerCount = 0,
+  -- Collapsing is a purely presentational concern, so it lives here rather than
+  -- in the director (see docs/limitations.md section 3).
+  collapsed = false,
 }
 
 -- ---------------------------------------------------------------------------
@@ -119,6 +122,32 @@ end
 
 local function refreshNow() state.sinceRefresh = REFRESH_SECONDS end
 
+--- Destroy every element the console owns. A rebuild MUST go through this, or the
+--- old widgets stay on screen and the touch regions go stale (which is exactly
+--- how the collapse toggle leaked its elements the first time).
+local function destroyElements()
+  local function destroyAll(list)
+    for _, element in pairs(list or {}) do
+      if element and not element.destroyed and element.destroy then element:destroy() end
+    end
+  end
+  destroyAll(state.elements.top)
+  destroyAll(state.elements.tabs)
+  destroyAll(state.elements.rows)
+  destroyAll(state.elements.footer)
+  if state.elements.page then destroyAll({ state.elements.page }) end
+  if state.elements.scrollUp then destroyAll({ state.elements.scrollUp }) end
+  if state.elements.scrollDown then destroyAll({ state.elements.scrollDown }) end
+  if state.elements.panel then destroyAll({ state.elements.panel }) end
+end
+
+--- Drop the current widgets so the next update rebuilds from scratch.
+local function requestRebuild()
+  destroyElements()
+  state.elements = {}
+  state.built = false
+end
+
 local function onTabTap(tabId)
   state.tab = tabId
   state.offset = 0
@@ -163,6 +192,15 @@ local function onFooterTap(index)
   if not view then return end
   local button = view.footer[index]
   if not button then return end
+
+  -- collapsing the console is UI-local: flip it and rebuild the geometry
+  if button.id == 'toggle_panel' then
+    state.collapsed = not state.collapsed
+    requestRebuild()
+    refreshNow()
+    return
+  end
+
   local api = idle()
   if not api then return end
 
@@ -213,12 +251,13 @@ local function build()
   end
 
   local tabs = uiModel.TABS
-  local footer = uiModel.footerFor(state.tab)
+  local footer = uiModel.footerFor(state.tab, { collapsed = state.collapsed })
   local layout = uiLayout.console(screen, cfg, {
     mode = startMode,
     tabs = tabs,
     footer = footer,
     footerRows = 2,
+    collapsed = state.collapsed,
   })
   state.layout = layout
   state.elements = {}
@@ -291,6 +330,16 @@ local function build()
     text = 'v', size = 14 * textScale, color = rgb(0.9, 0.9, 0.6), template = 'textNormal',
     onTap = function() onScroll(3) end,
   })
+
+  -- --- page readout ("rows 1-14 of 40"), absent when collapsed ---
+  state.elements.page = nil
+  if layout.page then
+    state.elements.page = createElement({
+      x = layout.page.x + math.floor(6 * scale), y = layout.page.y,
+      width = layout.page.width - math.floor(12 * scale), height = layout.page.height,
+      text = '', size = 10 * textScale, color = rgb(0.75, 0.75, 0.75), template = 'textNormal',
+    })
+  end
 
   -- --- footer buttons ---
   state.footerCount = #layout.footer
@@ -378,6 +427,15 @@ local function render()
     local button = view.footer[index]
     setText(state.elements.footer[index], button and button.label or '')
   end
+
+  -- page readout (absent while collapsed)
+  if state.elements.page and state.layout then
+    setText(state.elements.page, uiModel.pageText({
+      total = view.total,
+      offset = view.offset,
+      pageSize = state.layout.pageSize,
+    }))
+  end
 end
 
 -- ---------------------------------------------------------------------------
@@ -409,22 +467,7 @@ end
 --- Rebuild on resize/rotation: the layout is resolution-derived.
 local function onResolutionChanged()
   if state.disabled then return end
-  pcall(function()
-    local function destroyAll(list)
-      for _, element in pairs(list or {}) do
-        if element and element.destroy then element:destroy() end
-      end
-    end
-    destroyAll(state.elements.top)
-    destroyAll(state.elements.tabs)
-    destroyAll(state.elements.rows)
-    destroyAll(state.elements.footer)
-    if state.elements.scrollUp then state.elements.scrollUp:destroy() end
-    if state.elements.scrollDown then state.elements.scrollDown:destroy() end
-    if state.elements.panel then state.elements.panel:destroy() end
-  end)
-  state.elements = {}
-  state.built = false
+  pcall(requestRebuild)
 end
 
 return {
