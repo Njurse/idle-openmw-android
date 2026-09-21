@@ -1,0 +1,81 @@
+-- scripts/runtime/engine.lua
+-- The ONLY module that names `openmw.*` packages.
+--
+-- Everything else in the mod talks to the engine through the `env` table that
+-- this module assembles (see scripts/runtime/observer.lua for the contract), or
+-- through the helpers here. Keeping the engine surface in one file means the
+-- rest of the runtime can be exercised against tests/mocks/openmw.lua.
+
+local M = {}
+
+local cache = {}
+
+--- require() an engine module once, returning nil (not throwing) when the mod
+--- is loaded outside OpenMW -- e.g. while running headless tests.
+local function engineModule(name)
+  if cache[name] == nil then
+    local ok, value = pcall(require, name)
+    cache[name] = ok and value or false
+  end
+  return cache[name] or nil
+end
+
+--- Forget cached modules (used by tests).
+function M.reset() cache = {} end
+
+M.self        = function() return engineModule('openmw.self') end
+M.world       = function() return engineModule('openmw.world') end
+M.nearby      = function() return engineModule('openmw.nearby') end
+M.types       = function() return engineModule('openmw.types') end
+M.util        = function() return engineModule('openmw.util') end
+M.core        = function() return engineModule('openmw.core') end
+M.storage     = function() return engineModule('openmw.storage') end
+M.async       = function() return engineModule('openmw.async') end
+M.interfaces  = function() return engineModule('openmw.interfaces') end
+M.input       = function() return engineModule('openmw.input') end
+M.ui          = function() return engineModule('openmw.ui') end
+M.camera      = function() return engineModule('openmw.camera') end
+M.markup      = function() return engineModule('openmw.markup') end
+
+--- Assemble the env table the observer/executor consume.
+function M.env()
+  return {
+    self       = M.self(),
+    world      = M.world(),
+    nearby     = M.nearby(),
+    types      = M.types(),
+    util       = M.util(),
+    core       = M.core(),
+    storage    = M.storage(),
+    async      = M.async(),
+    interfaces = M.interfaces(),
+    input      = M.input(),
+    ui         = M.ui(),
+  }
+end
+
+--- Wall-clock seconds. `os.time()` is available under OpenMW's LuaJIT and is the
+--- only axis that measures time-since-last-play (core.getRealTime() resets each
+--- launch). See docs/openmw-lua-api.md §8.
+function M.wallClock()
+  if type(os) == 'table' and type(os.time) == 'function' then
+    return os.time()
+  end
+  return nil
+end
+
+--- Persisted per-script storage section (survives save/load).
+function M.playerStorage(section)
+  local storage = M.storage()
+  if not storage or type(storage.playerSection) ~= 'function' then return nil end
+  return storage.playerSection(section or 'IdleOpenMW')
+end
+
+--- Global (per-save, not per-script) storage section.
+function M.globalStorage(section)
+  local storage = M.storage()
+  if not storage or type(storage.globalSection) ~= 'function' then return nil end
+  return storage.globalSection(section or 'IdleOpenMW')
+end
+
+return M

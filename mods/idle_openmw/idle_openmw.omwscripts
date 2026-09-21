@@ -1,0 +1,10 @@
+# Idle OpenMW -- singleplayer idle director
+#
+# Format: <flags>: <path>.  Comment lines start with '#' (NOT '--').
+# See docs/openmw-lua-api.md §6 for the verified grammar.
+#
+# Both entries are PLAYER scripts, so `self` is the player character and
+# openmw.ui / openmw.input are available (needed for movement and the HUD).
+
+PLAYER: scripts/idleDirector.lua
+PLAYER: scripts/portraitUI.lua
