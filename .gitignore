@@ -1,0 +1,27 @@
+# --- research / upstream clones (never committed) ---
+/.research/
+
+# --- build output ---
+/build/
+/dist/
+*.apk
+*.aab
+*.zip
+
+# --- python (headless test host) ---
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+.pytest_cache/
+
+# --- lua ---
+*.luac
+luac.out
+
+# --- editors / OS ---
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
+*.swp
