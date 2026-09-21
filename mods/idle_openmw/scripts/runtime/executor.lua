@@ -17,8 +17,14 @@
 local util = require('scripts.idle.util')
 local rngMod = require('scripts.idle.rng')
 local pathfinder = require('scripts.idle.pathfinder')
+local equipment = require('scripts.idle.equipment')
 
 local M = {}
+
+local function num(value, fallback)
+  if type(value) == 'number' then return value end
+  return fallback
+end
 
 local function safe(fn, ...)
   if type(fn) ~= 'function' then return nil end
@@ -44,7 +50,8 @@ function M.new(env, cfg, opts)
     onLog = opts.onLog,
     queue = {},
     actions = {},
-    applied = { sales = 0, purchases = 0, goldEarned = 0, goldSpent = 0, rests = 0, trains = 0 },
+    applied = { sales = 0, purchases = 0, goldEarned = 0, goldSpent = 0, rests = 0, trains = 0,
+                equips = 0, drops = 0 },
     route = nil,
   }, Executor)
   if opts.nav then executor.route = pathfinder.newRoute(opts.nav, cfg) end
@@ -158,6 +165,76 @@ end
 -- ---------------------------------------------------------------------------
 -- command execution
 -- ---------------------------------------------------------------------------
+
+--- Equip an item in the right slot, using the pure type->slot mapping.
+--- Returns ok, message. Falls back to "use the inventory window" for tools and
+--- anything whose slot cannot be determined (see scripts/idle/equipment.lua).
+function Executor:equip(recordId)
+  local types = self.env.types
+  local actor = self:_player()
+  local inventory = self:_inventory()
+  local object = inventory and inventory.find and safe(function() return inventory:find(recordId) end)
+  if type(object) ~= 'table' then return false, ('%s is not carried'):format(tostring(recordId)) end
+
+  local record = safe(object.type and object.type.record, object) or {}
+  local resolved = equipment.resolve(object.type, record, types)
+  if not resolved.slot then
+    return false, ('%s is not something we can equip — use the inventory window'):format(tostring(recordId))
+  end
+
+  local slots = types and types.Actor and types.Actor.EQUIPMENT_SLOT
+  local slotValue = slots and slots[resolved.slot]
+  if type(slotValue) ~= 'number' then
+    return false, ('unknown equipment slot %s'):format(tostring(resolved.slot))
+  end
+
+  -- setEquipment may only be used on self, which is exactly what a PLAYER script has
+  local ok = pcall(function() types.Actor.setEquipment(actor, { [slotValue] = object }) end)
+  if not ok then return false, ('the engine refused to equip %s'):format(tostring(recordId)) end
+
+  self.applied.equips = (self.applied.equips or 0) + 1
+  self:log(('Equipped %s (%s)'):format(tostring(recordId), resolved.slot), 'good')
+  return true
+end
+
+--- Sell a single stack at the simulated barter price.
+function Executor:sellOne(recordId, count)
+  if self.cfg.behaviour.simulateActions == false then
+    self:log('Barter UI needed to sell', 'warn')
+    return 0
+  end
+  local inventory = self:_inventory()
+  local object = inventory and inventory.find and safe(function() return inventory:find(recordId) end)
+  if type(object) ~= 'table' then return 0 end
+
+  local record = safe(object.type and object.type.record, object) or {}
+  local available = num(object.count, 1)
+  count = math.min(count or available, available)
+  if count <= 0 then return 0 end
+
+  local removed = self:_removeItems(recordId, count)
+  if removed == 0 then return 0 end
+
+  local gold = math.floor(count * num(record.value, 0) * (self.cfg.behaviour.barterRatio or 0.8))
+  self:_addGold(gold)
+  self.applied.sales = self.applied.sales + 1
+  self.applied.goldEarned = self.applied.goldEarned + gold
+  self:log(('Sold %s x%d for %s gold'):format(tostring(recordId), count, util.formatNumber(gold)), 'good')
+  return gold
+end
+
+--- Drop a stack of items into the world.
+function Executor:dropOne(recordId, count)
+  local inventory = self:_inventory()
+  local object = inventory and inventory.find and safe(function() return inventory:find(recordId) end)
+  if type(object) ~= 'table' or type(object.remove) ~= 'function' then return false end
+  local ok = pcall(function() object:remove(count or 1) end)
+  if ok then
+    self.applied.drops = (self.applied.drops or 0) + 1
+    self:log(('Dropped %s x%d'):format(tostring(recordId), count or 1), 'info')
+  end
+  return ok
+end
 
 --- Execute a one-shot command. May return a replacement command (wander).
 function Executor:_execute(command, now)

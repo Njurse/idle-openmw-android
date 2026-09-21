@@ -7,8 +7,9 @@
 --   assert.equals(engine.types(), env.types)
 --   mocks.uninstall()
 --
--- The mock keeps round-trip state (inventory counts, stat pools) so behaviour
--- like "sell junk -> gold goes up" can actually be asserted.
+-- The mock keeps round-trip state (inventory counts, stat pools, equipment) so
+-- behaviour like "sell junk -> gold goes up" and "equip -> slot filled" can
+-- actually be asserted.
 
 local classPriorities = require('scripts.idle.classPriorities')
 
@@ -21,8 +22,33 @@ local ENGINE_MODULES = {
 }
 
 -- ---------------------------------------------------------------------------
--- small builders
+-- engine data tables, mirroring the real numeric values' *names*
 -- ---------------------------------------------------------------------------
+
+--- Item type tables, as bound by apps/openmw/mwlua/types/*.cpp.
+local TYPE_CLASSES = {
+  Armor = { TYPE = { Helmet = 0, Cuirass = 1, LPauldron = 2, RPauldron = 3, Greaves = 4,
+                     Boots = 5, LGauntlet = 6, RGauntlet = 7, Shield = 8,
+                     LBracer = 9, RBracer = 10 } },
+  Clothing = { TYPE = { Amulet = 0, Belt = 1, LGlove = 2, Pants = 3, RGlove = 4,
+                        Ring = 5, Robe = 6, Shirt = 7, Shoes = 8, Skirt = 9 } },
+  Weapon = { TYPE = { ShortBladeOneHand = 0, LongBladeOneHand = 1, LongBladeTwoHand = 2,
+                      BluntOneHand = 3, BluntTwoClose = 4, BluntTwoWide = 5, SpearTwoWide = 6,
+                      AxeOneHand = 7, AxeTwoHand = 8, MarksmanBow = 9, MarksmanCrossbow = 10,
+                      MarksmanThrown = 11, Arrow = 12, Bolt = 13 } },
+  Light = { TYPE = { Default = 0 } },
+  Lockpick = { TYPE = {} }, Probe = { TYPE = {} }, Repair = { TYPE = {} },
+  Apparatus = { TYPE = {} }, Potion = { TYPE = {} }, Ingredient = { TYPE = {} },
+  Book = { TYPE = {} }, Miscellaneous = { TYPE = {} },
+}
+
+--- Equipment slot numbers (names matter; the numbers are mock-internal).
+local EQUIPMENT_SLOT = {
+  Helmet = 0, Cuirass = 1, Greaves = 2, LeftPauldron = 3, RightPauldron = 4,
+  LeftGauntlet = 5, RightGauntlet = 6, Boots = 7, Shirt = 8, Pants = 9, Skirt = 10,
+  Robe = 11, LeftRing = 12, RightRing = 13, Amulet = 14, Belt = 15,
+  CarriedRight = 16, CarriedLeft = 17, Ammunition = 18, NoSlot = -1,
+}
 
 local function point(p)
   p = p or {}
@@ -35,11 +61,17 @@ local function dynamicStat(spec)
   return { base = base, current = spec.current or base, modifier = spec.modifier or 0 }
 end
 
+-- ---------------------------------------------------------------------------
+-- inventory
+-- ---------------------------------------------------------------------------
+
 --- An inventory: a live store + the documented Inventory methods.
-local function newInventory(items, gold)
+--- An item spec may carry `class` (which type class it is) and `recordType`.
+local function newInventory(items, gold, types)
   local store = {}
   local function ensure(id)
-    store[id] = store[id] or { count = 0, value = 0, weight = 0, equipped = false }
+    store[id] = store[id] or { count = 0, value = 0, weight = 0, equipped = false,
+                               class = 'Miscellaneous', recordType = 0 }
     return store[id]
   end
 
@@ -49,17 +81,20 @@ local function newInventory(items, gold)
     entry.value = item.value or entry.value
     entry.weight = item.weight or entry.weight
     entry.equipped = item.equipped or entry.equipped
+    entry.class = item.class or entry.class
+    if item.recordType ~= nil then entry.recordType = item.recordType end
   end
   if gold then ensure('gold_001').count = gold end
 
+  --- A GameObject-like item whose `.type` IS the engine type class table,
+  --- exactly as the real API presents it.
   local function itemObject(id)
     local entry = store[id]
+    local typeClass = types[entry.class] or TYPE_CLASSES.Miscellaneous
     return {
       recordId = id,
       count = entry.count,
-      type = {
-        record = function() return { id = id, value = entry.value, weight = entry.weight } end,
-      },
+      type = typeClass,
       remove = function(_, n) entry.count = math.max(0, entry.count - (n or entry.count)) end,
     }
   end
@@ -85,19 +120,38 @@ local function newInventory(items, gold)
     local entry = ensure(id)
     entry.count = entry.count + (count or 1)
   end
+  function inventory:_entry(id) return store[id] end
   return inventory
 end
 
-local function makeActorObject(actor, store)
-  return {
+--- Records with value/weight/type, attached to the type class at build time.
+local function attachRecords(types, inventory)
+  for id, entry in pairs(inventory._store) do
+    local typeClass = types[entry.class] or TYPE_CLASSES.Miscellaneous
+    if typeClass then
+      typeClass.record = function(object)
+        local target = object and object.recordId and inventory._store[object.recordId] or entry
+        return {
+          id = target and target.recordId or id,
+          value = target and target.value or entry.value,
+          weight = target and target.weight or entry.weight,
+          type = target and target.recordType or entry.recordType,
+        }
+      end
+    end
+  end
+end
+
+local typeClassesFallback = TYPE_CLASSES.Miscellaneous
+
+local function makeActorObject(actor)  return {
     recordId = actor.recordId,
     count = actor.count or 1,
-    _store = store,
-    type = { record = function() return { value = actor.value or 0, weight = actor.weight or 0 } end },
+    type = TYPE_CLASSES.Miscellaneous,
     moveInto = function(_, inventory)
       if inventory and inventory._insert then inventory:_insert(actor.recordId, actor.count or 1) end
     end,
-    remove = function() end,
+    remove = function(_, n) actor.removed = (actor.removed or 0) + (n or 1) end,
     activateBy = function() actor.activated = (actor.activated or 0) + 1 end,
     teleport = function() end,
     split = function() end,
@@ -113,14 +167,36 @@ end
 function M.env(spec)
   spec = spec or {}
 
-  local inventory = newInventory(spec.inventory, spec.gold)
+  local inventory -- forward declaration: the types table below closes over it
+
+  local equipmentBySlot = {}
+  local equipCalls = {}
+
+  -- ---- types -------------------------------------------------------------
+  local types = {
+    Armor = TYPE_CLASSES.Armor,
+    Clothing = TYPE_CLASSES.Clothing,
+    Weapon = TYPE_CLASSES.Weapon,
+    Light = TYPE_CLASSES.Light,
+    Lockpick = TYPE_CLASSES.Lockpick,
+    Probe = TYPE_CLASSES.Probe,
+    Repair = TYPE_CLASSES.Repair,
+    Apparatus = TYPE_CLASSES.Apparatus,
+    Potion = TYPE_CLASSES.Potion,
+    Ingredient = TYPE_CLASSES.Ingredient,
+    Book = TYPE_CLASSES.Book,
+    Miscellaneous = TYPE_CLASSES.Miscellaneous,
+    Item = {},
+    Player = {},
+    NPC = {},
+  }
+
   local actor = { recordId = spec.recordId or 'player' }
   local controls = {
     movement = 0, sideMovement = 0, yawChange = 0, pitchChange = 0,
     run = false, sneak = false, jump = false,
   }
 
-  -- skills: every known skill defaults to 5, overridden by the spec
   local skillStats = {}
   for _, category in ipairs(classPriorities.CATEGORIES) do
     for _, skillId in ipairs(classPriorities.skillsInCategory(category)) do
@@ -132,11 +208,9 @@ function M.env(spec)
     skillStats[id] = { base = v.base or 5, modified = v.modified or v.base or 5, progress = v.progress or 0 }
   end
 
+  local ATTRIBUTES = { 'strength', 'intelligence', 'willpower', 'agility', 'speed', 'endurance',
+                       'personality', 'luck' }
   local attributeStats = {}
-  local ATTRIBUTES = {
-    'strength', 'intelligence', 'willpower', 'agility', 'speed', 'endurance',
-    'personality', 'luck',
-  }
   for _, id in ipairs(ATTRIBUTES) do attributeStats[id] = { base = 40, modified = 40 } end
   for id, values in pairs(spec.attributes or {}) do
     local v = type(values) == 'table' and values or { base = values, modified = values }
@@ -148,21 +222,89 @@ function M.env(spec)
     magicka = dynamicStat(spec.magicka),
     fatigue = dynamicStat(spec.fatigue),
   }
-
   local levelStat = { current = spec.level or 1, progress = spec.levelProgress or 0 }
 
   local skillsApi, attributesApi = {}, {}
-  for id, stat in pairs(skillStats) do
-    skillsApi[id] = function() return stat end
-  end
-  for id, stat in pairs(attributeStats) do
-    attributesApi[id] = function() return stat end
-  end
+  for id, stat in pairs(skillStats) do skillsApi[id] = function() return stat end end
+  for id, stat in pairs(attributeStats) do attributesApi[id] = function() return stat end end
 
-  -- nearby actors
-  local nearbyActors = {}
+  -- ---- inventory (needs `types` for item type classes) -------------------
+  inventory = newInventory(spec.inventory, spec.gold, types)
+  attachRecords(types, inventory)
+
+  types.Actor = {
+    EQUIPMENT_SLOT = EQUIPMENT_SLOT,
+    stats = {
+      dynamic = {
+        health = function() return pools.health end,
+        magicka = function() return pools.magicka end,
+        fatigue = function() return pools.fatigue end,
+      },
+      level = function() return levelStat end,
+    },
+    inventory = function() return inventory end,
+    record = function() return { capacity = spec.capacity or 400 } end,
+    getEquipment = function()
+      local out = {}
+      for _slot, id in pairs(equipmentBySlot) do
+        out[#out + 1] = { recordId = id }
+      end
+      for id, entry in pairs(inventory._store) do
+        if entry.equipped and entry.count > 0 then out[#out + 1] = { recordId = id } end
+      end
+      return out
+    end,
+    getCapacity = function() return spec.capacity or 400 end,
+    setEquipment = function(_actor, equipment)
+      equipCalls[#equipCalls + 1] = equipment
+      if spec.refuseEquip then error('the engine refused to equip (mock)') end
+      equipmentBySlot = {}
+      for slot, item in pairs(equipment or {}) do
+        local id = type(item) == 'table' and (item.recordId or item.id) or item
+        equipmentBySlot[slot] = id
+        local entry = id and inventory._store[id]
+        if entry then entry.equipped = true end
+      end
+    end,
+    getBarterGold = function() return spec.barterGold or 500 end,
+    setBarterGold = function() end,
+    isDead = function() return false end,
+    getStance = function() return 0 end,
+    setStance = function() end,
+    getSelectedSpell = function() return nil end,
+    setSelectedSpell = function() end,
+  }
+
+  types.NPC = {
+    record = function() return { class = spec.classId or 'warrior' } end,
+    classes = {
+      record = function(classId)
+        local preset = classPriorities.presets[classId]
+        if preset then
+          return {
+            id = preset.id, name = preset.name, specialization = preset.specialization,
+            majorSkills = preset.majorSkills, minorSkills = preset.minorSkills,
+            attributes = preset.favoredAttributes,
+          }
+        end
+        return spec.classRecord
+      end,
+    },
+    stats = { skills = skillsApi, attributes = attributesApi },
+  }
+
+  types.Player = {
+    journal = function()
+      return { journalTextEntries = spec.journal or {}, topics = spec.journalTopics or {} }
+    end,
+    quests = function() return spec.quests or {} end,
+    addTopic = function() end,
+  }
+
+  -- ---- nearby ------------------------------------------------------------
+  local nearbyActors, nearbyContainers = {}, {}
   for _, entry in ipairs(spec.actors or {}) do
-    local object = makeActorObject(entry, entry.store or {})
+    local object = makeActorObject(entry)
     nearbyActors[#nearbyActors + 1] = {
       recordId = entry.recordId,
       position = point(entry.position),
@@ -170,22 +312,16 @@ function M.env(spec)
       hostile = entry.hostile or false,
       services = entry.services,
       object = object,
-      _entry = entry,
     }
   end
-
-  local nearbyContainers = {}
   for _, entry in ipairs(spec.containers or {}) do
     nearbyContainers[#nearbyContainers + 1] = {
-      recordId = entry.recordId,
-      position = point(entry.position),
-      object = makeActorObject(entry, entry.store or {}),
+      recordId = entry.recordId, position = point(entry.position), object = makeActorObject(entry),
     }
   end
 
-  local createdObjects = {}
+  -- ---- ui ----------------------------------------------------------------
   local createdElements = {}
-
   local uiMock = {
     TYPE = { Widget = 'Widget', Text = 'Text', TextEdit = 'TextEdit', Window = 'Window',
              Image = 'Image', Flex = 'Flex', Container = 'Container' },
@@ -204,56 +340,13 @@ function M.env(spec)
     end,
   }
 
-  local types = {
-    Actor = {
-      stats = {
-        dynamic = {
-          health = function() return pools.health end,
-          magicka = function() return pools.magicka end,
-          fatigue = function() return pools.fatigue end,
-        },
-        level = function() return levelStat end,
-      },
-      inventory = function() return inventory end,
-      record = function() return { capacity = spec.capacity or 400 } end,
-      getEquipment = function()
-        local out = {}
-        for id, entry in pairs(inventory._store) do
-          if entry.equipped and entry.count > 0 then out[#out + 1] = { recordId = id } end
-        end
-        return out
-      end,
-      getCapacity = function() return spec.capacity or 400 end,
-    },
-    NPC = {
-      record = function() return { class = spec.classId or 'warrior' } end,
-      classes = {
-        record = function(classId)
-          local preset = classPriorities.presets[classId]
-          if preset then
-            return {
-              id = preset.id,
-              name = preset.name,
-              specialization = preset.specialization,
-              majorSkills = preset.majorSkills,
-              minorSkills = preset.minorSkills,
-              attributes = preset.favoredAttributes,
-            }
-          end
-          return spec.classRecord
-        end,
-      },
-      stats = { skills = skillsApi, attributes = attributesApi },
-    },
-    Player = {},
-    Item = {},
-  }
+  local createdObjects = {}
 
   local world = {
     players = { actor },
     activeActors = { actor },
     createObject = function(recordId, count)
-      local object = makeActorObject({ recordId = recordId, count = count }, {})
+      local object = makeActorObject({ recordId = recordId, count = count })
       createdObjects[#createdObjects + 1] = object
       return object
     end,
@@ -271,14 +364,30 @@ function M.env(spec)
     enableAI = function() end,
   }
 
+  local FIND_PATH_STATUS = { Success = 1, Failed = 0, InProgress = 2 }
+
   local nearby = {
     actors = nearbyActors,
     containers = nearbyContainers,
-    doors = {},
-    activators = {},
-    items = {},
-    FIND_PATH_STATUS = { Success = 1, Failed = 0, InProgress = 2 },
+    doors = {}, activators = {}, items = {},
+    FIND_PATH_STATUS = FIND_PATH_STATUS,
+    --- Faithful to the real API: returns TWO values (status, points).
+    findPath = function(from, to)
+      local points = {}
+      local dx, dy, dz = (to.x or 0) - (from.x or 0), (to.y or 0) - (from.y or 0), (to.z or 0) - (from.z or 0)
+      local total = math.sqrt(dx * dx + dy * dy + dz * dz)
+      local count = math.max(1, math.ceil(total / 50))
+      for i = 1, count do
+        local t = i / count
+        points[i] = { x = (from.x or 0) + dx * t, y = (from.y or 0) + dy * t, z = (from.z or 0) + dz * t }
+      end
+      if spec.findPathFails then return FIND_PATH_STATUS.Failed, nil end
+      return FIND_PATH_STATUS.Success, points
+    end,
   }
+
+  local interfaceCalls = {}
+  local uiModesSet = {}
 
   local env = {
     self = self,
@@ -313,25 +422,42 @@ function M.env(spec)
     },
     interfaces = {
       AI = { startPackage = function() end },
-      Controls = { overrideMovementControls = function() end, overrideCombatControls = function() end },
-      UI = { MODE = {}, setMode = function() end, getMode = function() end },
-      -- Morrowind-themed UI templates, as provided by the built-in MWUI interface
+      Controls = {
+        overrideMovementControls = function(...) interfaceCalls[#interfaceCalls + 1] = { 'movement', ... } end,
+        overrideCombatControls = function() end,
+        overrideUiControls = function() end,
+      },
+      UI = {
+        MODE = { Interface = 'Interface', Journal = 'Journal', Dialogue = 'Dialogue',
+                 Barter = 'Barter', Rest = 'Rest', Training = 'Training' },
+        setMode = function(mode, options)
+          uiModesSet[#uiModesSet + 1] = { mode = mode, options = options }
+        end,
+        getMode = function() return uiModesSet[#uiModesSet] and uiModesSet[#uiModesSet].mode end,
+      },
       MWUI = {
         templates = {
           boxTransparentThick = { name = 'boxTransparentThick' },
           boxTransparent = { name = 'boxTransparent' },
+          boxSolidThick = { name = 'boxSolidThick' },
           textNormal = { name = 'textNormal' },
           textHeader = { name = 'textHeader' },
         },
       },
     },
-    input = {},
+    input = { KEY = { L = 38 } },
     ui = uiMock,
     -- pluggable hooks
     servicesOf = spec.servicesOf or function(candidate) return candidate.services end,
     isHostile = spec.isHostile or function(candidate) return candidate.hostile == true end,
+    -- test introspection
     _createdObjects = createdObjects,
     _createdElements = createdElements,
+    _equipCalls = equipCalls,
+    _equipmentBySlot = function() return equipmentBySlot end,
+    _interfaceCalls = interfaceCalls,
+    _uiModesSet = uiModesSet,
+    _pools = pools,
   }
 
   return env
@@ -340,6 +466,7 @@ end
 -- ---------------------------------------------------------------------------
 -- package.preload wiring (so scripts/runtime/engine.lua resolves the mock)
 -- ---------------------------------------------------------------------------
+
 function M.install(spec)
   local env = M.env(spec)
   local modules = {
@@ -354,7 +481,8 @@ function M.install(spec)
     ['openmw.interfaces'] = env.interfaces,
     ['openmw.input'] = env.input,
     ['openmw.ui'] = env.ui,
-  }  for name, value in pairs(modules) do
+  }
+  for name, value in pairs(modules) do
     package.loaded[name] = nil
     package.preload[name] = function() return value end
   end
@@ -372,8 +500,6 @@ function M.uninstall()
 end
 
 --- A nav port that returns a straight line of waypoints (for pathfinder tests).
---- @param step distance between waypoints
---- @param failAt when true, findPath always fails
 function M.nav(step, failAt)
   local nav = { calls = 0 }
   nav.findPath = function(from, to)

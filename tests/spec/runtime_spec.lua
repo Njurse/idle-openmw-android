@@ -317,4 +317,158 @@ describe('runtime.openmw adapter', function()
       end)
     end)
   end)
+
+  describe('observer.readPanel', function()
+    local PANEL_SPEC = {
+      classId = 'warrior',
+      level = 7,
+      gold = 900,
+      capacity = 300,
+      position = { x = 0, y = 0, z = 0 },
+      cell = { name = 'Balmora', isExterior = true },
+      inventory = {
+        { id = 'cuirass', count = 1, value = 300, weight = 40, class = 'Armor', recordType = 1 },
+        { id = 'chitin dagger', count = 5, value = 8, weight = 4, class = 'Weapon', recordType = 0 },
+        { id = 'lockpick', count = 12, value = 5, weight = 0.1, class = 'Lockpick' },
+        { id = 'healing potion', count = 3, value = 25, weight = 0.5, class = 'Potion' },
+      },
+      journal = { { text = 'You arrived in Balmora.', questId = 'q1', day = 3 } },
+      quests = {
+        q1 = { id = 'q1', stage = 5, started = true, finished = false },
+        q2 = { id = 'q2', stage = 90, started = true, finished = true },
+      },
+    }
+
+    it('reports the player summary', function()
+      withEnv(PANEL_SPEC, function(env)
+        local panel = observer.readPanel(env, { cfg = cfg })
+        assert.equals(panel.player.gold, 900)
+        assert.equals(panel.player.level, 7)
+        assert.equals(panel.player.encumbrance.max, 300)
+        assert.equals(panel.player.cell.name, 'Balmora')
+      end)
+    end)
+
+    it('annotates items for the pack tab', function()
+      withEnv(PANEL_SPEC, function(env)
+        local panel = observer.readPanel(env, { cfg = cfg })
+        local byId = {}
+        for _, item in ipairs(panel.inventory) do byId[item.id] = item end
+
+        assert.equals(byId.cuirass.equipSlot, 'Cuirass')
+        assert.is_true(byId.cuirass.junk)          -- 7.5 gold/weight
+        assert.is_true(byId['chitin dagger'].junk) -- 2.0 gold/weight
+        assert.is_false(byId.lockpick.junk)        -- 50 gold/weight, and a tool
+        assert.is_false(byId['healing potion'].junk)
+        assert.equals(byId.lockpick.valuePerWeight, 50)
+      end)
+    end)
+
+    it('reads the journal and only unfinished quests', function()
+      withEnv(PANEL_SPEC, function(env)
+        local panel = observer.readPanel(env, { cfg = cfg })
+        assert.equals(#panel.journal, 1)
+        assert.equals(panel.journal[1].questId, 'q1')
+        assert.equals(#panel.quests, 1)
+        assert.equals(panel.quests[1].id, 'q1')
+      end)
+    end)
+
+    it('degrades gracefully with no Player type', function()
+      withEnv({}, function(env)
+        env.types.Player = nil
+        local panel = observer.readPanel(env, {})
+        expect(panel.journal):toEqualDeep({})
+        expect(panel.quests):toEqualDeep({})
+      end)
+    end)
+  end)
+
+  describe('executor actions', function()
+    local ACTION_SPEC = {
+      classId = 'warrior',
+      position = { x = 0, y = 0, z = 0 },
+      gold = 500,
+      inventory = {
+        { id = 'cuirass', count = 1, value = 300, weight = 40, class = 'Armor', recordType = 1 },
+        { id = 'chitin dagger', count = 5, value = 8, weight = 4, class = 'Weapon', recordType = 0 },
+        { id = 'lockpick', count = 12, value = 5, weight = 0.1, class = 'Lockpick' },
+      },
+    }
+
+    it('equips armour into the slot the type mapping chose', function()
+      withEnv(ACTION_SPEC, function(env)
+        local ex = executorMod.new(env, cfg, {})
+        local ok = ex:equip('cuirass')
+        assert.is_true(ok)
+        assert.equals(#env._equipCalls, 1)
+        local slots = env.types.Actor.EQUIPMENT_SLOT
+        assert.equals(env._equipmentBySlot()[slots.Cuirass], 'cuirass')
+        assert.equals(ex.applied.equips, 1)
+      end)
+    end)
+
+    it('refuses to guess for tools, and says why', function()
+      withEnv(ACTION_SPEC, function(env)
+        local ex = executorMod.new(env, cfg, {})
+        local ok, message = ex:equip('lockpick')
+        assert.is_false(ok)
+        assert.is_true(tostring(message):find('inventory window', 1, true) ~= nil)
+        assert.equals(#env._equipCalls, 0)
+      end)
+    end)
+
+    it('reports an item that is not carried', function()
+      withEnv(ACTION_SPEC, function(env)
+        local ex = executorMod.new(env, cfg, {})
+        local ok, message = ex:equip('nothing')
+        assert.is_false(ok)
+        assert.is_true(tostring(message):find('not carried', 1, true) ~= nil)
+      end)
+    end)
+
+    it('survives the engine refusing to equip', function()
+      withEnv({
+        inventory = { { id = 'cuirass', count = 1, value = 300, weight = 40, class = 'Armor', recordType = 1 } },
+        refuseEquip = true,
+      }, function(env)
+        local ex = executorMod.new(env, cfg, {})
+        local ok, message = ex:equip('cuirass')
+        assert.is_false(ok)
+        assert.is_true(tostring(message):find('refused', 1, true) ~= nil)
+      end)
+    end)
+
+    it('sells one stack and banks the gold', function()
+      withEnv(ACTION_SPEC, function(env)
+        local ex = executorMod.new(env, cfg, {})
+        local inventory = env.types.Actor.inventory(env.self.object)
+        local before = inventory:countOf('gold_001')
+        local gold = ex:sellOne('chitin dagger', 5)
+        -- 5 * 8 * 0.8 barter ratio
+        assert.equals(gold, 32)
+        assert.equals(inventory:countOf('gold_001'), before + 32)
+        assert.equals(inventory:countOf('chitin dagger'), 0)
+      end)
+    end)
+
+    it('drops items out of the pack', function()
+      withEnv(ACTION_SPEC, function(env)
+        local ex = executorMod.new(env, cfg, {})
+        local inventory = env.types.Actor.inventory(env.self.object)
+        assert.is_true(ex:dropOne('lockpick', 4))
+        assert.equals(inventory:countOf('lockpick'), 8)
+      end)
+    end)
+
+    it('is advisory only when simulated actions are off', function()
+      withEnv(ACTION_SPEC, function(env)
+        local advisory = configMod.new({ behaviour = { simulateActions = false } })
+        local ex = executorMod.new(env, advisory, {})
+        local inventory = env.types.Actor.inventory(env.self.object)
+        assert.equals(ex:sellOne('chitin dagger', 5), 0)
+        assert.equals(inventory:countOf('chitin dagger'), 5)
+      end)
+    end)
+  end)
 end)

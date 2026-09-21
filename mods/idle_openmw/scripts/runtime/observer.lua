@@ -17,6 +17,7 @@
 local util = require('scripts.idle.util')
 local economy = require('scripts.idle.economy')
 local combat = require('scripts.idle.combat')
+local equipment = require('scripts.idle.equipment')
 
 local M = {}
 
@@ -126,6 +127,7 @@ function M.readInventory(env, actor)
       if not M.CURRENCY[id] then
         -- record of the item's own type carries value/weight
         local record = safe(object.type and object.type.record, object)
+        local resolved = equipment.resolve(object.type, record, env.types)
         out[#out + 1] = {
           id = id,
           count = num(object.count, 1),
@@ -133,6 +135,10 @@ function M.readInventory(env, actor)
           weight = num(record and record.weight, 0),
           equipped = id and equipped[id] or false,
           quest = false,
+          kind = resolved.kind,
+          typeName = resolved.typeName,
+          equipSlot = resolved.slot,
+          equippable = resolved.equippable,
         }
       end
     end
@@ -309,6 +315,90 @@ function M.scanWorld(env, opts, player)
     junkValue = junkValue,
     nearest = nearest,
     enemies_nearby = enemies,
+  }
+end
+
+--- Recent journal entries (newest last), for the console's Talk tab.
+function M.readJournal(env, actor)
+  local out = {}
+  local Player = env.types and env.types.Player
+  if not Player or type(Player.journal) ~= 'function' then return out end
+  local journal = safe(Player.journal, actor)
+  if type(journal) ~= 'table' then return out end
+  local entries = journal.journalTextEntries
+  if type(entries) ~= 'table' then return out end
+
+  local count = #entries
+  for i = math.max(1, count - 19), count do
+    local entry = entries[i]
+    if type(entry) == 'table' then
+      out[#out + 1] = { text = entry.text, questId = entry.questId, day = entry.day }
+    end
+  end
+  return out
+end
+
+--- Started, unfinished quests, sorted by id (deterministic).
+function M.readQuests(env, actor)
+  local out = {}
+  local Player = env.types and env.types.Player
+  if not Player or type(Player.quests) ~= 'function' then return out end
+  local quests = safe(Player.quests, actor)
+  if type(quests) ~= 'table' then return out end
+
+  for id, quest in pairs(quests) do
+    if type(quest) == 'table' and quest.started and not quest.finished then
+      out[#out + 1] = {
+        id = quest.id or id,
+        stage = quest.stage,
+        started = quest.started,
+        finished = quest.finished,
+      }
+    end
+  end
+  table.sort(out, function(a, b) return tostring(a.id) < tostring(b.id) end)
+  return out
+end
+
+--- Everything the console UI needs from the ENGINE. The director-derived half
+--- (status, mode, dialogue transcript, log) is added by idleDirector.lua.
+--- See scripts/idle/uiModel.lua for the full panel-snapshot contract.
+function M.readPanel(env, opts)
+  opts = opts or {}
+  local cfg = opts.cfg
+  local player = M.readPlayer(env, opts)
+  local actor = (env.self and env.self.object) or env.self
+
+  local inventory = {}
+  for _, item in ipairs(player.inventory) do
+    local ratio = economy.valuePerWeight(item)
+    inventory[#inventory + 1] = {
+      id = item.id,
+      count = item.count,
+      value = item.value,
+      weight = item.weight,
+      equipped = item.equipped,
+      quest = item.quest,
+      kind = item.kind,
+      typeName = item.typeName,
+      equipSlot = item.equipSlot,
+      equippable = item.equippable,
+      valuePerWeight = (type(ratio) == 'number' and ratio < 1e9) and util.round(ratio, 1) or nil,
+      junk = cfg and economy.isJunk(item, cfg) or false,
+    }
+  end
+
+  return {
+    player = {
+      gold = player.gold,
+      level = player.level,
+      encumbrance = player.encumbrance,
+      position = player.position,
+      cell = player.cell,
+    },
+    inventory = inventory,
+    journal = M.readJournal(env, actor),
+    quests = M.readQuests(env, actor),
   }
 end
 
