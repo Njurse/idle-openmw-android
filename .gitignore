@@ -1,6 +1,9 @@
 # --- research / upstream clones (never committed) ---
 /.research/
 
+# --- agent/tool session metadata (not part of the project) ---
+/.reasonix/
+
 # --- build output ---
 /build/
 /dist/
