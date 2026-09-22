@@ -64,7 +64,7 @@ Two things make the console liveable rather than a slab over half your screen:
 
 ```bash
 pip install lupa                     # embedded LuaJIT, one wheel, no compiler
-python tools/run_tests.py            # 322 specs under LuaJIT 2.1
+python tools/run_tests.py            # 401 specs under LuaJIT 2.1
 python tools/run_tests.py --all      # also verify Lua 5.1 and 5.4 portability
 python tools/run_tests.py --sim      # 1000-game-hour simulation with invariants
 python tools/run_tests.py --only director   # just the specs matching a substring
@@ -150,7 +150,7 @@ tests/                            headless, no engine
 ├── harness.lua                   zero-dependency describe/it/expect/assert
 ├── run.lua                       suite entry point
 ├── specs.lua                     fallback manifest
-├── spec/                         322 specs
+├── spec/                         401 specs
 ├── mocks/openmw.lua              a full fake engine
 ├── fixtures/                     classes, states, worlds
 └── sim/headless_sim.lua          1000-game-hour invariant run
@@ -186,6 +186,37 @@ Two things the engine genuinely does not expose, and what the mod does about the
 
 That is the pattern everywhere in this repo: where the engine can tell us, we read
 it; where it cannot, the limitation is written down and the default is the safe one.
+
+## Not dying at work
+
+Dying is the one outcome that ends a set-and-forget run: the engine drops to the
+load menu and nothing continues until you notice. So the mod carries a *guardian*,
+in two layers:
+
+- **Prevent.** Health is topped back up before it can reach zero
+  (`guardian.criticalHealthFraction`, default 15%). This is cheating, and it is
+  labelled as such; `guardian.preventDeath = false` turns it off and the guardian
+  then only withdraws a wounded character instead.
+- **Recover.** If death happens anyway, either **respawn** (the default) or
+  **reload a save**:
+
+  ```lua
+  guardian.onDeath = 'respawn'   -- 'respawn' | 'reload' | 'none'
+  guardian.saveSlot = nil        -- required for 'reload'
+  ```
+
+"Nearest town" is honestly **the last settlement you were healthy in**
+(`guardian.safeHealthFraction`, default 60%). We cannot route to a town the
+character has never seen, so the mod remembers where it last was fine and returns
+there. On respawn every pool is refilled, not just health — a rescue that leaves
+you with no fatigue to run on is how a rescue becomes a loop.
+
+**MANUAL mode is left strictly alone**: you are present, so the game behaves like
+vanilla, death included. `guardian.activeInManual = true` opts in.
+
+Two engine facts shaped this (see `docs/openmw-lua-api.md` §10): `teleport` and
+`menu.loadGame` are *global-script-only*, which is why the mod has one `GLOBAL:`
+script (`scripts/idleWarden.lua`) alongside its two `PLAYER:` ones.
 
 ## Design in one paragraph
 

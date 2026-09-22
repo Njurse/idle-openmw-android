@@ -300,3 +300,79 @@ for the inference actually used and why NPC hostility is opt-in.
 `types.NPC.getFactions(actor)`, `primaryFaction`, `primaryFactionRank` exist and
 are the obvious way to sharpen the hostility heuristic beyond "creatures only".
 Not yet exercised against real data — listed in `docs/limitations.md` §4.
+
+## 10. Death, teleporting and save loading
+
+Everything here was read out of `files/lua_api/openmw/` in the OpenMW tree; the
+citations are `file:line`.
+
+### 10.1 The two things a PLAYER script cannot do
+
+| Call | Citation | Note |
+| --- | --- | --- |
+| `GameObject:teleport(cellOrName, position, options)` | `core.lua:258-273` | *"Can be called only from a global script."* Also `moveInto` (`core.lua:277`) and `remove`. |
+| `menu.loadGame(directory, slotName)` | `menu.lua:34` | The whole `menu` module is global-side. |
+
+This matters because our mod was PLAYER-only. It is why `scripts/idleWarden.lua`
+exists as a `GLOBAL:` entry in `idle_openmw.omwscripts`, fed by
+`core.sendGlobalEvent('IdleOpenMW_Guardian', ...)` from the player script.
+
+### 10.2 `teleport` details that decide the design
+
+```
+GameObject:teleport(cellOrName, position, options)
+  cellOrName -- a Cell, a cell NAME, or '' for the default exterior worldspace.
+               "If the worldspace has multiple cells (i.e. an exterior), the
+                destination cell is calculated using `position`."
+  options    -- { rotation = Transform, onGround = boolean }
+```
+
+Two consequences worth writing down:
+
+* **`''` plus a position is the right way to respawn in a town.** It needs no
+  stored `Cell` handle, and those go stale across a save/load — storing one would
+  have introduced a bug that only shows up after a reload.
+* **The move is deferred**: *"the effect is not immediate; the position will be
+  updated only in the next frame."* Anything that depends on the new position
+  must therefore wait a frame, which is why the warden sends a
+  `IdleOpenMW_GuardianApplied` event back rather than assuming success.
+
+`types.PLAYER.setTeleportingEnabled(player, state)` (`types.lua:1334`) can switch
+teleporting off; a teleport issued while it is off does nothing, so the warden
+re-enables it before rescuing.
+
+### 10.3 Reaching the player from a global script
+
+`world.players` is an `ObjectList` that *"currently ... always has one element"*
+(`world.lua:14-15`). That is how the warden finds the character, since a global
+script has no `self`:
+
+```lua
+local player = world.players[1]
+player:teleport('', util.vector3(x, y, z), { onGround = true })
+```
+
+### 10.4 Death is observable, but reviving is not an API
+
+There is no `resurrect`/`revive` call. What exists is:
+
+* `Actor.isDead(actor)` and `Actor.isDeathFinished(actor)` — reading only.
+* Dynamic pools are writable: `types.Actor.stats.dynamic.health(actor).current = n`.
+
+So "coming back" is composed: write the pools, and move the object. Note that
+`isDead` is unnecessary for detection anyway — the snapshot we already build
+carries `health.current`, and `<= 0` is the same fact without an engine call.
+
+### 10.5 GLOBAL script event contract
+
+A global script receives `core.sendGlobalEvent(name, data)` through a table named
+`eventHandlers` (`docs/source/reference/lua-scripting/overview.rst:264`):
+
+```lua
+local eventHandlers = {}
+eventHandlers['MyEvent'] = function(data) ... end
+return { eventHandlers = eventHandlers }
+```
+
+An unknown action is *logged*, not ignored: silence would hide a bug in the
+caller.

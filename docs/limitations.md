@@ -187,6 +187,31 @@ wrap.
 
 ---
 
+### 1.8 Death recovery is a patch, not a cure
+
+The guardian (README, "Not dying at work") is honest about being crude:
+
+- **`preventDeath` is cheating.** Topping the pool up before it reaches zero is
+  the only thing that reliably keeps an unattended run alive, and it is not a
+  simulation of anything. Set it false for an honest run.
+- **"Nearest town" is "the last settlement you were healthy in."** We cannot
+  route to a town the character has never seen, and there is no settlement graph
+  to search. "Nearest" would need one.
+- **Positions are not persisted yet.** `lastSafe` lives in memory for the session,
+  so a respawn after a full game restart has nowhere to send the character until
+  it has walked into a settlement again. It should be written in `onSave`.
+- **Respawn risk is unverified on real data.** Teleporting to a remembered
+  position assumes that spot is still safe; the engine cannot confirm it. If a
+  creature is standing there, the rescue may simply re-kill the character. The
+  `cooldown` (30s) bounds the thrash but does not fix the cause.
+- **A death inside the same frame as the engine's death sequence may be missed**,
+  because detection rides on the decision interval (`cfg.tick.interval`), not on a
+  per-frame check. A dead character persists across frames, so this is unlikely
+  to be fatal — but it is not instantaneous.
+- **Recovery is off in MANUAL mode** by default, on the reasoning that a present
+  human wants vanilla behaviour. If you walk away leaving it in MANUAL, nothing
+  rescues you; that is a real footgun.
+
 ## 4. The most valuable next steps
 
 1. **On-device console pass** — verify `ignorePointerEvents`, MWUI template fit,
