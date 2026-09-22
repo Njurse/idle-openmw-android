@@ -163,6 +163,7 @@ local function destroyElements()
   if state.elements.scrollUp then destroyAll({ state.elements.scrollUp }) end
   if state.elements.scrollDown then destroyAll({ state.elements.scrollDown }) end
   if state.elements.panel then destroyAll({ state.elements.panel }) end
+  if state.elements.status then destroyAll({ state.elements.status }) end
 end
 
 --- Drop the current widgets so the next update rebuilds from scratch.
@@ -300,6 +301,17 @@ local function build()
 
   local scale = layout.base.scale
   local textScale = layout.base.textScale
+
+  -- --- status bar background ---
+  -- uiLayout gives us `layout.status` (top of the screen, under the notch) but
+  -- the strip text was drawn straight onto the game: tan Morrowind text over
+  -- bright terrain is unreadable. Fill the rect the layout already reserved.
+  state.elements.status = createElement({
+    x = layout.base.status.x, y = layout.base.status.y,
+    width = layout.base.status.width, height = layout.base.status.height,
+    size = 10, type = ui.TYPE.Window, template = 'boxTransparentThick',
+    onTap = function() end, -- swallow taps so they do not reach the game
+  })
 
   -- --- top strip (four text rows + a mode button) ---
   local stripHeight = math.floor(20 * scale)

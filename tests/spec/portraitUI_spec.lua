@@ -12,7 +12,7 @@ describe('runtime.portraitUI', function()
       mode = 'auto', tabs = uiModel.TABS, footer = uiModel.footerFor(tab), footerRows = 2,
     })
     local page = console.page and 1 or 0
-    return 5 + 1 + page + #uiModel.TABS + console.pageSize + 2 + #console.footer
+    return 5 + 2 + page + #uiModel.TABS + console.pageSize + 2 + #console.footer
   end
 
   --- Load the HUD script fresh against a mocked engine.

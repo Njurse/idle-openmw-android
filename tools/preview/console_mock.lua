@@ -60,6 +60,13 @@ function M.build(screenW, screenH, opts)
     colour = role('panel'),
   }
 
+  -- --- status bar background ---
+  elements[#elements + 1] = {
+    kind = 'panel', x = layout.base.status.x, y = layout.base.status.y,
+    w = layout.base.status.width, h = layout.base.status.height,
+    colour = role('panel'),
+  }
+
   -- --- top strip (mirrors portraitUI.render) ---
   local status = panel.status or {}
   local player = panel.player or {}
