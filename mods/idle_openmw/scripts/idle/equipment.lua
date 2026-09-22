@@ -43,6 +43,54 @@ M.KIND_SLOT = {
 --- own inventory window (tools like lockpicks/probes are selected, not worn).
 M.EQUIPPABLE_KINDS = { armor = true, clothing = true, weapon = true, light = true }
 
+--- The equipment slots in paper-doll order (head to hands to feet). The console's
+--- Pack tab draws these around the character as a cheap "portrait": we cannot
+--- render the 3D actor, but we can show exactly what is worn where.
+M.SLOT_ORDER = {
+  'Helmet', 'Amulet', 'Robe', 'Cuirass', 'Shirt',
+  'LeftPauldron', 'RightPauldron',
+  'LeftGauntlet', 'RightGauntlet',
+  'LeftRing', 'RightRing',
+  'Belt', 'Pants', 'Skirt',
+  'CarriedLeft', 'CarriedRight',
+  'Boots', 'Ammunition',
+}
+
+--- Human labels for the slots that are not obvious.
+M.SLOT_LABEL = {
+  LeftPauldron = 'L pauldron', RightPauldron = 'R pauldron',
+  LeftGauntlet = 'L gauntlet', RightGauntlet = 'R gauntlet',
+  LeftRing = 'L ring', RightRing = 'R ring',
+  CarriedLeft = 'Left hand', CarriedRight = 'Right hand',
+}
+
+function M.slotLabel(slot) return M.SLOT_LABEL[slot] or slot end
+
+--- Read a paper-doll from a panel inventory: the item worn in each slot, in
+--- M.SLOT_ORDER. `items` entries carry { id, count, equipped, equipSlot }.
+--- Pure -- the whole doll is unit-tested.
+function M.paperDoll(items)
+  local worn = {}
+  local index = {}
+  for i, item in ipairs(items or {}) do
+    if type(item) == 'table' and item.equipped and item.equipSlot then
+      worn[item.equipSlot] = item
+      index[item.equipSlot] = i
+    end
+  end
+
+  local out = {}
+  for _, slot in ipairs(M.SLOT_ORDER) do
+    out[#out + 1] = {
+      slot = slot,
+      label = M.slotLabel(slot),
+      item = worn[slot],
+      index = index[slot],
+    }
+  end
+  return out
+end
+
 --- Item kind -> the engine types table that describes it.
 M.KIND_TYPE_CLASS = {
   armor = 'Armor', clothing = 'Clothing', weapon = 'Weapon', light = 'Light',

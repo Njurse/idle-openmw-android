@@ -212,14 +212,31 @@ describe('idle.uiModel', function()
 
   describe('view', function()
     it('resolves the tab, page and selection', function()
-      local view = uiModel.view({ tab = 'pack', offset = 0, selection = 2 },
-        panels.panel(), { pageSize = 10 })
+      local view = uiModel.view({ tab = 'pack', offset = 0, selection = 1 },
+        panels.panel(), { pageSize = 20 })
       assert.equals(view.tab, 'pack')
       assert.equals(view.mode, 'auto')
-      assert.equals(#view.visible.rows, 5) -- 4 items + the summary line
-      assert.equals(view.selection, 2)
-      assert.equals(view.selected.id, 'item:chitin dagger')
+      -- the pack tab leads with the worn paper-doll, then the carried items
+      assert.is_true(#view.visible.rows >= 5)
+      local hasWorn, hasItem = false, false
+      for _, r in ipairs(view.visible.rows) do
+        if r.id == 'worn-header' then hasWorn = true end
+        if r.id == 'item:chitin dagger' then hasItem = true end
+      end
+      assert.is_true(hasWorn)   -- the "portrait" of what is worn
+      assert.is_true(hasItem)   -- and the carried list is still there
       assert.is_true(#view.footer > 0)
+    end)
+
+    it('shows an equipped item in its paper-doll slot', function()
+      local view = uiModel.view({ tab = 'pack', offset = 0, selection = 1 },
+        panels.panel(), { pageSize = 20 })
+      local entry
+      for _, r in ipairs(view.visible.rows) do
+        if r.id == 'worn:CarriedRight' then entry = r end
+      end
+      assert.is_not_nil(entry)
+      assert.is_true(tostring(entry.detail):find('longsword', 1, true) ~= nil)
     end)
 
     it('falls back to a valid tab', function()

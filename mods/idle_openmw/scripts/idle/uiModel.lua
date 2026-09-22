@@ -24,6 +24,7 @@
 local util = require('scripts.idle.util')
 local activityLog = require('scripts.idle.activityLog')
 local economy = require('scripts.idle.economy')
+local equipment = require('scripts.idle.equipment')
 
 local M = {}
 
@@ -433,6 +434,32 @@ local function packRows(panel)
   local rows = {}
   local inventory = panel.inventory or {}
   local cfg = panel.config
+
+  -- --- the "portrait": what is worn, slot by slot (equipment.paperDoll) ---
+  local known = false
+  for _, item in ipairs(inventory) do
+    if item.equipped then known = true break end
+  end
+  if known then
+    rows[#rows + 1] = row({ id = 'worn-header', kind = 'heading', label = 'Worn' })
+    for _, entry in ipairs(equipment.paperDoll(inventory)) do
+      local item = entry.item
+      if item or entry.slot == 'CarriedRight' or entry.slot == 'CarriedLeft' then
+        rows[#rows + 1] = row({
+          id = 'worn:' .. entry.slot,
+          kind = item and 'action' or 'info',
+          label = '  ' .. entry.label,
+          detail = item and ('%s%s'):format(tostring(item.id),
+            (item.count or 1) > 1 and (' x' .. item.count) or '') or '(empty)',
+          -- tapping a worn piece selects it, so the footer can swap/sell/drop it
+          action = item and 'select' or nil,
+          payload = item and { index = entry.index, id = item.id, count = item.count } or nil,
+          selectable = false,
+        })
+      end
+    end
+    rows[#rows + 1] = row({ id = 'carried-header', kind = 'heading', label = 'Carried' })
+  end
 
   for index, item in ipairs(inventory) do
     local flags = {}

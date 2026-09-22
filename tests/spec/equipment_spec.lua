@@ -88,4 +88,45 @@ describe('idle.equipment', function()
     assert.is_nil(equipment.resolve(nil, nil, nil).slot)
     assert.is_nil(equipment.resolve(types.Armor, nil, types).slot)
   end)
+
+  describe('paperDoll', function()
+    local items = {
+      { id = 'steel cuirass', count = 1, equipped = true, equipSlot = 'Cuirass' },
+      { id = 'longsword', count = 1, equipped = true, equipSlot = 'CarriedRight' },
+      { id = 'chitin dagger', count = 3, equipped = false, equipSlot = 'CarriedRight' },
+      { id = 'lockpick', count = 12, equipped = false },
+    }
+
+    it('returns every slot in paper-doll order', function()
+      local doll = equipment.paperDoll(items)
+      assert.equals(#doll, #equipment.SLOT_ORDER)
+      assert.equals(doll[1].slot, equipment.SLOT_ORDER[1])
+    end)
+
+    it('fills the slots something is worn in, and leaves the rest empty', function()
+      local bySlot = {}
+      for _, entry in ipairs(equipment.paperDoll(items)) do bySlot[entry.slot] = entry end
+      assert.equals(bySlot.Cuirass.item.id, 'steel cuirass')
+      assert.equals(bySlot.CarriedRight.item.id, 'longsword')
+      assert.is_nil(bySlot.Helmet.item)
+    end)
+
+    it('carries the inventory index so a worn piece can be acted on', function()
+      local bySlot = {}
+      for _, entry in ipairs(equipment.paperDoll(items)) do bySlot[entry.slot] = entry end
+      assert.equals(bySlot.Cuirass.index, 1)
+      assert.equals(bySlot.CarriedRight.index, 2)
+    end)
+
+    it('gives a human label to the awkward slots', function()
+      assert.equals(equipment.slotLabel('LeftPauldron'), 'L pauldron')
+      assert.equals(equipment.slotLabel('CarriedRight'), 'Right hand')
+      assert.equals(equipment.slotLabel('Helmet'), 'Helmet')
+    end)
+
+    it('survives an empty or nil inventory', function()
+      assert.equals(#equipment.paperDoll({}), #equipment.SLOT_ORDER)
+      assert.equals(#equipment.paperDoll(nil), #equipment.SLOT_ORDER)
+    end)
+  end)
 end)
