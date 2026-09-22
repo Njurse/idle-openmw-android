@@ -18,8 +18,27 @@
    ```
    With a mod manager, add `Mods/idle_openmw` as a data path and enable
    `idle_openmw.omwscripts`.
-4. Load a save (or start a new game). The HUD appears top-left and the director
-   takes over. Press **L** to toggle auto-play.
+4. Start a new game or load a save.
+
+### The first run: new game → character creation → Seyda Neen
+
+The mod is deliberately inert until the character is **free in the world**
+(`scripts/idle/lifecycle.lua`). Concretely, on a new game:
+
+- During character creation the engine's own windows ask you to pick a gender,
+  name, race, class and birthsign. The mod emits **no** movement or action
+  commands, so nothing fights those windows, and the console **stays hidden** so
+  it does not cover them.
+- Why it can tell: `types.Player.isCharGenFinished(player)` is false until the
+  `chargenstate` global flips to `-1` (`docs/openmw-lua-api.md` §13). A `Chargen*`
+  UI mode is a second, independent signal.
+- Once the Census & Excise office releases you into Seyda Neen, the phase becomes
+  `world`: the console appears and the director takes over.
+- Press **L** to toggle auto-play (MANUAL ↔ AUTO), or use the console's
+  **Mode** button.
+
+If the console never appears, open the **Info** tab's "Holding" row — it names the
+phase the mod is waiting on (usually `Character creation`).
 
 **Sanity check the install** without launching the game: the mod is plain Lua, so
 you can require it in the test host:

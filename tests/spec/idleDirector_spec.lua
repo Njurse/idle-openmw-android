@@ -366,6 +366,15 @@ describe('runtime.idleDirector lifecycle + camera wiring', function()
     for _ = 1, (times or 1) do handlers.engineHandlers.onUpdate(dt or 2.5) end
   end
 
+  --- The last value passed to interfaces.Controls.overrideMovementControls.
+  local function lastOverride(env)
+    for i = #env._interfaceCalls, 1, -1 do
+      local call = env._interfaceCalls[i]
+      if call[1] == 'movement' then return call[2] end
+    end
+    return nil
+  end
+
   it("reports the engine's live UI stack on the panel", function()
     local env = mocks.install({ uiModes = { 'Interface', 'Dialogue' } })
     local ui = observer.readUi(env)
@@ -392,8 +401,9 @@ describe('runtime.idleDirector lifecycle + camera wiring', function()
         assert.equals(status.goal, 'chargen')
         assert.is_false(status.acting)
         assert.equals(status.phase, 'chargen')
-        -- nothing steers the character: the input script is not overridden and
-        -- no movement is commanded
+        -- nothing steers the character: the engine's own controls are in charge
+        -- and no movement is commanded
+        assert.is_true(lastOverride(env) == false)
         assert.not_equals(env.self.controls.movement or 0, 1)
       end)
   end)
@@ -404,6 +414,7 @@ describe('runtime.idleDirector lifecycle + camera wiring', function()
       local status = handlers.interface.status()
       assert.is_true(status.acting)
       assert.equals(status.phase, 'world')
+      assert.is_true(lastOverride(env) == true) -- we drive again
     end)
   end)
 

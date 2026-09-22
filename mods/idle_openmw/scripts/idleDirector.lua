@@ -94,12 +94,18 @@ end
 --- Hand movement controls to, or take them from, the game's own input script.
 --- THIS is what makes manual play work: with the override off, the built-in
 --- playercontrols script drives the player again.
+---
+--- It also covers character creation: while we are not in the world (chargen,
+--- menu, load screen) the engine's own controls must be in charge, exactly as in
+--- manual play -- scripts/idle/lifecycle.lua.
 local function applyControlOverride()
   local interfaces = engine.interfaces()
   local controls = interfaces and interfaces.Controls
   if not controls or type(controls.overrideMovementControls) ~= 'function' then return end
   local manual = state.director ~= nil and state.director:isManual()
-  pcall(controls.overrideMovementControls, not manual)
+  local phase = state.director and state.director.phase
+  local acting = phase == nil or phase.acting == true
+  pcall(controls.overrideMovementControls, acting and not manual)
 end
 
 --- Lock the camera to an isometric view, if the player asked for it.
@@ -306,6 +312,7 @@ local function update(dt)
       end
 
       local result = state.director:tick(elapsed, snapshot)
+      applyControlOverride()
 
       if acting then
         state.executor:submit(result.commands)
