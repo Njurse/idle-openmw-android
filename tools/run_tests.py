@@ -217,6 +217,8 @@ def main(argv=None) -> int:
     parser.add_argument("--sim", action="store_true", help="run the headless simulation harness instead of the specs")
     parser.add_argument("--hours", type=float, default=1000.0, help="simulated game-hours (with --sim)")
     parser.add_argument("--seed", type=int, default=1337, help="RNG seed (with --sim)")
+    parser.add_argument("--trace", action="store_true",
+                        help="print the decision trace (with --sim; see scripts/idle/trace.lua)")
     parser.add_argument("--list", action="store_true", help="list discovered spec modules and exit")
     parser.add_argument("--only", default=None,
                         help="only run spec modules whose name contains this (e.g. --only director)")
@@ -230,6 +232,8 @@ def main(argv=None) -> int:
         return 0
 
     color = not args.no_color and os.environ.get("NO_COLOR") is None and sys.stdout.isatty()
+    if args.trace:
+        os.environ["HARNESS_TRACE"] = "1"
 
     os.chdir(REPO_ROOT)
 

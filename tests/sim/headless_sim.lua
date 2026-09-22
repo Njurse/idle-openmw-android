@@ -400,4 +400,20 @@ else
   print('  all invariants held\n')
 end
 
+-- ---------------------------------------------------------------------------
+-- development trace (HARNESS_TRACE=1 -> `python tools/run_tests.py --sim --trace`)
+-- ---------------------------------------------------------------------------
+-- The decision timeline: every goal transition and order, in order, with the
+-- reason and the command count. This is the thing to read when a long run goes
+-- wrong -- scripts/idle/trace.lua.
+if os ~= nil and type(os.getenv) == 'function' and os.getenv('HARNESS_TRACE') then
+  local limit = tonumber(os.getenv('HARNESS_TRACE_LINES')) or 60
+  print(('  trace (%s):'):format(warrior.director:traceSummary()))
+  local lines = warrior.director:traceLines(limit)
+  local skipped = math.max(0, warrior.director.trace:count() - limit)
+  if skipped > 0 then line(('... (%d earlier events)'):format(skipped)) end
+  for _, l in ipairs(lines) do line(l) end
+  print('')
+end
+
 return #failures == 0

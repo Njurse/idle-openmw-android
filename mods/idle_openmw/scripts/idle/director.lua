@@ -55,6 +55,7 @@ local activityLog = require('scripts.idle.activityLog')
 local offlineProgress = require('scripts.idle.offlineProgress')
 local worldsense = require('scripts.idle.worldsense')
 local lifecycle = require('scripts.idle.lifecycle')
+local traceMod = require('scripts.idle.trace')
 
 local M = {}
 
@@ -241,6 +242,8 @@ function M.new(opts)
     currentGoalAt = -math.huge,
     memory = dialogue.newMemory(),
     dialogueEvents = {},
+    -- Development trace: every decision, with its numbers (scripts/idle/trace.lua).
+    trace = traceMod.new(400),
     mode = (cfg.ui and cfg.ui.startMode) or M.DEFAULT_MODE,
     directives = directive.new(cfg.behaviour.directiveTtl),
     visited = {},
@@ -312,8 +315,15 @@ function Director:isManual() return self.mode == 'manual' end
 function Director:pushDirective(id, payload)
   local entry = self.directives:push(id, payload, self.time)
   if entry then self:logLine(('Directive: %s'):format(id), 'warn') end
+  if entry then self.trace:add('order', id, self.time) end
   return entry
 end
+
+--- Development trace helpers (scripts/idle/trace.lua). The trace records goal
+--- transitions, directives and dialogue, with their numbers -- the thing you
+--- read when a long run goes wrong. `tools/run_tests.py --trace` prints it.
+function Director:traceLines(n) return self.trace:lines(n) end
+function Director:traceSummary() return self.trace:summary() end
 
 --- The directive currently in force, or nil.
 function Director:currentDirective() return self.directives:peek(self.time) end
@@ -356,6 +366,7 @@ function Director:tick(dt, snapshot)
     self.row = { id = phase.id, score = 0, need = 0, opportunity = 0, risk = 0,
                  aptitude = 0, bias = 0, reason = phase.note or phase.label }
     self.commands = {}
+    self.trace:add('phase', phase.id, self.time)
     return { goal = self.goal, commands = {}, status = self:status() }
   end
 
@@ -400,6 +411,13 @@ function Director:tick(dt, snapshot)
   })
   self.commands = commands
   self.counters.commands = self.counters.commands + #commands
+
+  -- Trace the transition (not every tick): this is the timeline you read when a
+  -- run goes wrong -- see scripts/idle/trace.lua and tools/run_tests.py --trace.
+  if changed or emergency then
+    self.trace:add('goal', ('%s%s'):format(chosen, row and row.reason and (' (' .. row.reason .. ')') or ''),
+      self.time, { ('cmds=%d'):format(#commands) })
+  end
 
   return { goal = self.goal, commands = commands, status = self:status() }
 end
