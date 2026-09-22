@@ -362,3 +362,83 @@ from the scripts in `tools/android/`:
 - the launcher is configured reproducibly (`ui-drive.py`);
 - the engine runs on the device and renders;
 - and the mod is one `content=` line away from loading on any engine that supports it.
+
+## Finding F — a stale `content=` line aborts the launch entirely (fixed, scripted)
+
+Re-verified on the emulator: with `content=idle_openmw.omwscripts` present, the
+engine does not merely *skip* the mod — it dies before the game starts:
+
+```
+OpenMW: Fatal error
+Cannot load file: /storage/emulated/0/omwmod/idle_openmw.omwscripts
+```
+
+The line is not in `Morrowind.ini` (its `[Game Files]` holds only the three ESMs)
+and not in the launcher's prefs; it is copied from the launcher's private
+template, which is regenerated into the config the engine reads on every launch:
+
+```
+/data/user/0/is.xyz.omw_nightly/files/config/openmw.base.cfg   <- the template
+/data/user/0/is.xyz.omw_nightly/files/config/openmw.cfg        <- generated from it
+```
+
+The launcher's **Mods** screen cannot remove it: its plugin list is
+esm/esp/omwaddon/omwgame only (**Finding B**), so a `.omwscripts` entry is
+invisible there. The template is the only place to fix it, and editing the
+generated `openmw.cfg` does not stick — it is rewritten on the next launch.
+
+Fix, scripted and idempotent (`adb root` required; a `google_apis` image allows it,
+a PlayStore image does not):
+
+```bash
+bash tools/android/emulator-cfg-fix.sh            # show the stale lines
+bash tools/android/emulator-cfg-fix.sh --apply    # back up, then remove them
+```
+
+After it, the launcher's **Play** button reaches `ui.activity.GameActivity` and
+the engine loads content:
+
+```
+I] Loading content file Morrowind.esm
+I] Loading content file Tribunal.esm
+I] Loading content file Bloodmoon.esm
+```
+
+## Finding G — the emulator's GLES2 path stalls the renderer (not a mod problem)
+
+With F fixed the engine boots and loads Morrowind, but the frame never advances.
+Two `screencap`s six seconds apart (and one across a tap) are **byte-identical**,
+while the process stays alive — the render loop is stalled, not crashed. The
+engine's own log shows why:
+
+```
+W] ERROR: 0:3: 'dFdx' : built-in functions cannot be redefined
+W] glLinkProgram ... FAILED
+W] Program Link Failed for unknown reason.
+```
+
+The 2021 build's shaders expect desktop GLSL; the emulator's GLES2 translator
+rejects them. So on this emulator the game is a frozen frame — before any mod
+question arises. Two independent walls, then, both engine-side:
+
+1. the engine **cannot load** `.omwscripts` (Findings B/C), and
+2. the engine **cannot render** under the emulator's GLES path (this finding).
+
+Neither is the mod's fault, and neither can be fixed from Lua or from data.
+
+## What the device still proves, and what it cannot
+
+Proven today, on the emulator:
+
+- the AVD boots, the launcher runs, and `adb` can drive it and screenshot it;
+- our staged data root satisfies the launcher (`/storage/emulated/0/Morrowind`);
+- with the stale line removed the engine loads all three ESMs;
+- the failure modes are **engine** failure modes, reproducible on demand.
+
+Not provable here: that the console, tap-to-move, or the layout overrides look
+right — the renderer never draws a second frame. That check needs a real device or
+an engine built for it (`docs/ui-overhaul.md`, `docs/theme.md`), which is exactly
+what `tools/preview_console.py` exists to substitute for until then.
+
+Evidence frames: `build/device/` (`01-openmw-launch`, `03-boot`, `05-menu`,
+`08-a`/`08-b` the identical pair).
