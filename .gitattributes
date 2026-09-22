@@ -9,6 +9,14 @@
 *.rst   text eol=lf
 *.json  text eol=lf
 
+# The engine's MyGUI layouts are CRLF, and our generated overrides mirror them
+# byte-for-byte apart from the root widget line. `-text` disables newline
+# normalisation for these so that stays true; normalising them to LF would make
+# every line of every override differ from the engine copy, hiding the single
+# real change in a whole-file diff. Deliberately NOT `-diff`: that would
+# make git report these as binary and hide the one-line change from review.
+mods/idle_openmw/mygui/*.layout  -text
+
 # Binary
 *.png   binary
 *.apk   binary
