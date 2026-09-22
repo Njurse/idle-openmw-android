@@ -111,6 +111,26 @@ end
 --- @param snapshot table
 --- @param cfg table
 --- @param ctx table { classDef = ..., }
+--- Should we switch goals, or stay? (Pure; see the call site for the why.)
+--- Returns the possibly-unchanged `(goal, row)`.
+function M.applyHysteresis(goal, row, current, ranked, cfg)
+  local margin = (cfg and cfg.behaviour and cfg.behaviour.hysteresis) or 0
+  if margin <= 0 or not current or not goal or goal == current then return goal, row end
+  -- never get in the way of an emergency
+  if goal == 'survive' or goal == 'flee' then return goal, row end
+  if current == 'idle' or current == 'survive' or current == 'flee' then return goal, row end
+  local currentRow = util.firstWhere(ranked or {}, function(r) return r.id == current end)
+  -- drop the current goal the moment it stops being viable
+  if not currentRow or (currentRow.need or 0) <= 0 or (currentRow.score or 0) <= 0 then
+    return goal, row
+  end
+  local best = row and (row.score or 0) or 0
+  if best < (currentRow.score or 0) * (1 + margin) then
+    return current, currentRow
+  end
+  return goal, row
+end
+
 function M.planCommands(goalId, statView, world, snapshot, cfg, ctx)
   ctx = ctx or {}
   local commands = {}
@@ -366,6 +386,13 @@ function Director:tick(dt, snapshot)
 
   local natural, ranked, naturalRow = goalScoring.select(view, self.weights, world, self.cfg)
   self.ranked = ranked
+
+  -- Goal hysteresis. Without it the director flaps between comparable goals: the
+  -- decision trace showed `quest` <-> `fight` changing almost every step (~40% of
+  -- all steps -- docs/observability.md). Keep the goal we are on unless another
+  -- beats it by a margin. Emergencies ignore this: flee/survive always take over,
+  -- and a goal that is no longer viable (need 0) is dropped at once.
+  natural, naturalRow = M.applyHysteresis(natural, naturalRow, self.goal, ranked, self.cfg)
 
   -- Where are we in the game's life? During character creation, the main menu or
   -- a load screen the director must not touch the character at all: emitting

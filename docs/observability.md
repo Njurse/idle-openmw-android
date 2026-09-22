@@ -36,13 +36,30 @@ Its first job was to look at a long run, and it immediately showed something the
 green invariants had hidden: late in the run the director **thrashes between
 `quest` and `fight`** roughly every step (~40% of all steps are a goal change --
 `warrior goal changes: 48741` of 120000). The sim is green because nothing
-*breaks*; the bot is just dithering rather than committing.
+*breaks*; the bot is just dithering.
 
-That is a real finding, not a green light: a goal *hysteresis* (stay on the
-current goal unless another beats it by a margin) is the obvious next experiment,
-and the trace is how to measure whether it helps. Recorded here rather than fixed
-blind -- goal selection is the heart of the brain and wants a change you can see
-in the timeline.
+### The fix was tried, measured, and rejected
+
+A goal **hysteresis** -- keep the current goal unless another beats it by a margin
+-- is the obvious experiment, so it was built (`director.applyHysteresis`, the
+`behaviour.hysteresis` knob, unit-tested) and then **measured against the sim**
+(same seed, so the numbers are comparable):
+
+| `behaviour.hysteresis` | goal changes | gold at 1000h | invariants |
+| --- | --- | --- | --- |
+| `0.0` (default) | 48741 | 2721 | hold |
+| `0.25` | 45855 (-6%) | 1994 (**-27%**) | hold |
+| `0.6` | 43539 (-11%) | 2142 (**-21%**) | hold |
+
+It buys a tenth off the thrash and pays a fifth of the income: staying put
+*entrenches cheap goals* instead of cycling on to the profitable ones. So it ships
+**off**, with the knob kept and the measurement written down. This is the point of
+the exercise -- the trace made a hypothesis cheap to test and cheap to *reject*,
+rather than shipping a plausible-sounding "fix" that quietly makes the bot poorer.
+
+The remaining thrash is therefore not obviously a defect: the cycling appears to be
+doing useful work. A better lever, if one is wanted, is to make `fight`'s *need*
+less eager rather than to freeze the goal -- measure it the same way.
 
 ## Related test tools
 

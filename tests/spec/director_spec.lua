@@ -217,6 +217,48 @@ describe('idle.director', function()
     end)
   end)
 
+  describe('goal hysteresis', function()
+    local ranked = {
+      { id = 'quest', score = 0.10, need = 0.5 },
+      { id = 'fight', score = 0.11, need = 0.5 },
+      { id = 'shop', score = 0.40, need = 1.0 },
+    }
+    local on = { behaviour = { hysteresis = 0.25 } }
+
+    it('stays on the current goal when the challenger only edges ahead', function()
+      -- quest 0.12 vs fight 0.11: within the 25% margin, so we stay on fight
+      local goal = directorMod.applyHysteresis('quest', { score = 0.12 }, 'fight', ranked, on)
+      assert.equals(goal, 'fight')
+    end)
+
+    it('switches when the challenger clearly wins', function()
+      -- quest 0.30 vs fight 0.11: no contest
+      local goal = directorMod.applyHysteresis('quest', { score = 0.30 }, 'fight', ranked, on)
+      assert.equals(goal, 'quest')
+    end)
+
+    it('does nothing at all when the margin is 0 (the default)', function()
+      local goal = directorMod.applyHysteresis('shop', { score = 0.4 }, 'fight', ranked, {})
+      assert.equals(goal, 'shop')
+    end)
+
+    it('never blocks an emergency', function()
+      assert.equals(directorMod.applyHysteresis('flee', { score = 0.2 }, 'quest', ranked, on), 'flee')
+      assert.equals(directorMod.applyHysteresis('survive', { score = 0.2 }, 'quest', ranked, on), 'survive')
+      -- and never keeps you stuck on one
+      assert.equals(directorMod.applyHysteresis('shop', { score = 0.4 }, 'flee', ranked, on), 'shop')
+    end)
+
+    it('drops the current goal the moment it stops being viable', function()
+      local dead = { { id = 'quest', score = 0, need = 0 }, { id = 'shop', score = 0.4, need = 1 } }
+      assert.equals(directorMod.applyHysteresis('shop', { score = 0.4 }, 'quest', dead, on), 'shop')
+    end)
+
+    it('is a no-op when there is no current goal', function()
+      assert.equals(directorMod.applyHysteresis('shop', { score = 0.4 }, nil, ranked, on), 'shop')
+    end)
+  end)
+
   describe('helpers', function()
     it('finds the lowest major skill', function()
       local state = states.warrior()

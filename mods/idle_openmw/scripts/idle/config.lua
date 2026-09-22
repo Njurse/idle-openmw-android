@@ -111,6 +111,14 @@ M.defaults = {
     -- the character without being asked. Turn it on from the console's Setup tab
     -- to let the bot explore on its own between orders.
     roam = false,
+
+    -- Goal hysteresis: keep the current goal unless another beats it by this
+    -- fraction (0 = off). MEASURED, and DEFAULT OFF because it does not pay:
+    -- over the 1000-hour sim a margin of 0.25 cut goal changes 48741 -> 45855
+    -- (-6%) and gold 2721 -> 1994 (-27%); 0.6 gave -11% changes / -21% gold. It
+    -- entrenches cheap goals instead of cycling on to the profitable ones. Kept
+    -- as a tested knob; see docs/observability.md. Emergencies ignore it.
+    hysteresis = 0.0,
   },
 
   -- "Don't let them die at work." Policy is in scripts/idle/guardian.lua; the
@@ -334,6 +342,10 @@ function M.validate(cfg)
   end
 
   cfg.weightOverrides = cfg.weightOverrides or util.deepCopy(M.defaults.weightOverrides)
+  if cfg.behaviour and cfg.behaviour.hysteresis ~= nil then
+    clampProblem(problems, 'behaviour.hysteresis', cfg.behaviour.hysteresis, 0, 5)
+    cfg.behaviour.hysteresis = util.clamp(cfg.behaviour.hysteresis, 0, 5)
+  end
   for key, value in pairs(cfg.weightOverrides) do
     if type(value) ~= 'number' or value < 0 then
       problems[#problems + 1] = 'weightOverrides.' .. tostring(key) .. ' must be a non-negative number'
