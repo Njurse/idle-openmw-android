@@ -59,6 +59,7 @@ local state = {
   -- Collapsing is a purely presentational concern, so it lives here rather than
   -- in the director (see docs/limitations.md section 3).
   collapsed = false,
+  hidden = false,
 }
 
 -- ---------------------------------------------------------------------------
@@ -442,11 +443,45 @@ end
 -- handlers
 -- ---------------------------------------------------------------------------
 
+--- Should the console be on screen right now?
+--- It is a game HUD, so it stays hidden until the character is free in the
+--- world -- never over the character-creation windows (scripts/idle/lifecycle.lua).
+--- A mod build without the `phase` interface keeps the old always-visible
+--- behaviour rather than guessing.
+local function consoleWanted()
+  local api = idle()
+  if not api or type(api.phase) ~= 'function' then return true end
+  local ok, phase = pcall(api.phase)
+  if not ok then return true end
+  return phase == nil or phase == 'world'
+end
+
 local function update(dt)
   if state.disabled then return end
   if not usable() then state.disabled = true return end
 
   local ok, err = pcall(function()
+    -- The console is a *game* HUD. During character creation (and the menu / a
+    -- load screen) the engine is asking the player questions and the console
+    -- must not cover them -- so it hides until the character is free in the
+    -- world (scripts/idle/lifecycle.lua). Skipping the build also means no
+    -- elements exist to interact with, which is exactly right there.
+    if not consoleWanted() then
+      if not state.hidden then
+        destroyElements()
+        state.elements = {}
+        state.rowCount = 0
+        state.footerCount = 0
+        state.built = false
+        state.hidden = true
+      end
+      return
+    end
+    if state.hidden then
+      state.hidden = false
+      state.built = false -- force a fresh build now that we are in the world
+    end
+
     if not state.built then build() end
     state.sinceRefresh = state.sinceRefresh + (dt or 0)
     if state.sinceRefresh >= REFRESH_SECONDS then

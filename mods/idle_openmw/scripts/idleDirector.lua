@@ -539,6 +539,9 @@ return {
     panel = panel,
     act = act,
     mode = function() return state.director and state.director.mode or nil end,
+    phase = function()
+      return state.director and state.director.phase and state.director.phase.id or nil
+    end,
     setMode = function(mode)
       if not state.director then return nil end
       local applied = state.director:setMode(mode)

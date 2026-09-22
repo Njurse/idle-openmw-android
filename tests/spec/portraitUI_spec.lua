@@ -354,4 +354,54 @@ describe('runtime.portraitUI', function()
       assert.is_true(ok)
     end)
   end)
+
+  describe('hides over character creation', function()
+    --- A stub interface whose `phase()` follows a mutable ref.
+    local function phased(ref, panelData)
+      local idle = stubInterface(panelData)
+      idle.phase = function() return ref.value end
+      return idle
+    end
+
+    it('draws nothing while the character is still being created', function()
+      local env, script = loadHud({ screen = SCREEN }, phased({ value = 'chargen' }, panels.panel()))
+      pcall(script.engineHandlers.onUpdate, 0.6)
+      local drawn = #liveElements(env)
+      mocks.uninstall()
+      assert.equals(drawn, 0) -- nothing covers the chargen windows
+    end)
+
+    it('appears once the character reaches the world', function()
+      local ref = { value = 'chargen' }
+      local env, script = loadHud({ screen = SCREEN }, phased(ref, panels.panel()))
+      pcall(script.engineHandlers.onUpdate, 0.6)
+      ref.value = 'world'
+      pcall(script.engineHandlers.onUpdate, 0.6)
+      local drawn = #liveElements(env)
+      mocks.uninstall()
+      assert.is_true(drawn > 0)
+    end)
+
+    it('hides again if we fall back to a gated phase', function()
+      local ref = { value = 'world' }
+      local env, script = loadHud({ screen = SCREEN }, phased(ref, panels.panel()))
+      pcall(script.engineHandlers.onUpdate, 0.6)
+      local before = #liveElements(env)
+      ref.value = 'loading'
+      pcall(script.engineHandlers.onUpdate, 0.6)
+      local after = #liveElements(env)
+      mocks.uninstall()
+      assert.is_true(before > 0)
+      assert.equals(after, 0)
+    end)
+
+    it('keeps the console visible when the interface has no phase()', function()
+      -- an older/unknown interface must not hide the console by accident
+      local env, script = loadHud({ screen = SCREEN }, stubInterface(panels.panel()))
+      pcall(script.engineHandlers.onUpdate, 0.6)
+      local drawn = #liveElements(env)
+      mocks.uninstall()
+      assert.is_true(drawn > 0)
+    end)
+  end)
 end)
