@@ -64,11 +64,18 @@ Two things make the console liveable rather than a slab over half your screen:
 
 ```bash
 pip install lupa                     # embedded LuaJIT, one wheel, no compiler
-python tools/run_tests.py            # 401 specs under LuaJIT 2.1
+python tools/run_tests.py            # 460 specs under LuaJIT 2.1
 python tools/run_tests.py --all      # also verify Lua 5.1 and 5.4 portability
 python tools/run_tests.py --sim      # 1000-game-hour simulation with invariants
 python tools/run_tests.py --only director   # just the specs matching a substring
 python tools/run_tests.py --list     # list discovered spec modules
+python tools/preview_console.py --png       # draw the console (docs/theme.md)
+```
+
+**See the console without launching the game:**
+
+```bash
+python tools/preview_console.py --tab info --png    # -> build/console-preview.png
 ```
 
 **Install into OpenMW:**

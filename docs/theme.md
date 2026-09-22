@@ -65,6 +65,20 @@ override, but that re-registers MyGUI's fonts for the *whole* game, not just our
 console, and Lua text would still use the engine default rather than a font we
 name. Not worth the blast radius.)
 
+## See it without the game
+
+The console's layout, rows and colours are pure Lua, so they can be drawn
+outside OpenMW. `tools/preview_console.py` loads `uiLayout`/`uiModel`/`theme` in
+an embedded LuaJIT and paints a mock:
+
+```
+python tools/preview_console.py --tab info --png      # build/console-preview.{html,png}
+python tools/preview_console.py --tab pack --theme plain
+```
+
+It is a **mock, not a screenshot**: the game art is a flat placeholder and the
+font is a serif stand-in (see above). Layout and colour are exact.
+
 ## Verification
 
 ```
