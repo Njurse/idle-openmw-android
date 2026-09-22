@@ -27,6 +27,8 @@ local directorMod = require('scripts.idle.director')
 local configMod = require('scripts.idle.config')
 local uiModel = require('scripts.idle.uiModel')
 local offlineProgress = require('scripts.idle.offlineProgress')
+local guardianMod = require('scripts.idle.guardian')
+local settlementMod = require('scripts.idle.settlement')
 
 local self = engine.self()
 
@@ -38,6 +40,10 @@ local state = {
   snapshot = nil,
   pendingRestore = nil,
   failures = 0,
+  guardian = {
+    lastSafe = nil,             -- the last settlement we were healthy in
+    sinceIntervention = nil,    -- sim seconds since the last rescue (nil = never)
+  },
 }
 
 -- ---------------------------------------------------------------------------
@@ -143,6 +149,96 @@ local function simulationTime()
   return 0
 end
 
+--- "Don't let them die at work."
+---
+--- Detection only. The policy is scripts/idle/guardian.lua and the two actions
+--- that need world authority (teleport, loadGame) are applied by the GLOBAL
+--- script scripts/idleWarden.lua -- a PLAYER script cannot call either.
+local function guardianTick(snapshot)
+  local settings = state.cfg.guardian or {}
+  if settings.enabled == false then return end
+  if state.director:isManual() and settings.activeInManual ~= true then return end
+
+  local player = snapshot and snapshot.player
+  if not player then return end
+
+  local health = player.health or {}
+  local current, maximum = health.current, health.base
+
+  -- observer.scanWorld already rates the danger (0..1) via combat.assess; note
+  -- `world.enemies` is a COUNT and `world.enemies_nearby` the list, which is an
+  -- easy way to write a len() bug here.
+  local world = snapshot.world or {}
+  local danger = world.danger
+  if type(danger) ~= 'number' then
+    local nearby = world.enemies_nearby
+    danger = (type(nearby) == 'table' and #nearby > 0) and 1 or 0
+  end
+
+  -- Remember where we were last safe. Only while healthy, and only in a
+  -- settlement: this is what "respawn at the nearest town" degrades to when you
+  -- cannot route to a town you have never seen.
+  if player.position and guardianMod.worthRemembering(
+       settlementMod.isSettlement(player.cell, { cfg = state.cfg }),
+       { health = current, healthMax = maximum }, state.cfg) then
+    state.guardian.lastSafe = {
+      name = settlementMod.displayName(player.cell),
+      position = { x = player.position.x, y = player.position.y, z = player.position.z },
+    }
+  end
+
+  local interval = state.cfg.tick.interval or 1
+  state.guardian.sinceIntervention =
+    (state.guardian.sinceIntervention == nil) and math.huge
+    or (state.guardian.sinceIntervention + interval)
+
+  local action, reason = guardianMod.assess({
+    dead = (current ~= nil and current <= 0),
+    health = current,
+    healthMax = maximum,
+    danger = danger,
+    hasSafeSpot = state.guardian.lastSafe ~= nil,
+    hasSave = settings.saveSlot ~= nil,
+    sinceIntervention = state.guardian.sinceIntervention,
+  }, state.cfg)
+
+  if action == 'none' then return end
+
+  if action == 'heal' then
+    local target = guardianMod.healTarget({ health = current, healthMax = maximum }, state.cfg)
+    if target then
+      -- healing a pool we cannot write must never take the director down; under
+      -- headless tests engine.types() is nil, so this is a genuine no-op there
+      pcall(function()
+        local types = engine.types()
+        if types then
+          types.Actor.stats.dynamic.health(self.object).current = target
+        end
+      end)
+    end
+  elseif action == 'respawn' or action == 'reload' then
+    pcall(function()
+      local core = engine.core()
+      if not core or type(core.sendGlobalEvent) ~= 'function' then return end
+      core.sendGlobalEvent('IdleOpenMW_Guardian', {
+        action = action,
+        reason = reason,
+        safeSpot = state.guardian.lastSafe,
+        saveDir = settings.saveDir,
+        saveSlot = settings.saveSlot,
+      })
+    end)
+  elseif action == 'retreat' then
+    -- The existing flee goal already handles danger, so this is informational:
+    -- it must not fight the director for control of the character.
+    if state.director then
+      pcall(function() state.director:logLine('Guardian: ' .. reason, 'warn') end)
+    end
+  end
+
+  state.guardian.sinceIntervention = 0
+end
+
 local function update(dt)
   local ok, err = pcall(function()
     ensureInit()
@@ -174,7 +270,10 @@ local function update(dt)
 
       local result = state.director:tick(elapsed, snapshot)
       state.executor:submit(result.commands)
-    end
+
+      -- Run after the director so a rescue lands in the same frame; the guardian
+      -- may override what the brain just asked for (see scripts/idle/guardian.lua).
+      guardianTick(snapshot)    end
 
     state.executor:update(dt, simulationTime())
   end)
@@ -355,6 +454,19 @@ local function onDialogueResponse(event)
   pcall(function() state.director:onDialogue(event) end)
 end
 
+--- The GLOBAL warden (scripts/idleWarden.lua) reports back after a rescue. Drop
+--- any fight/flee state, because the character has moved and that plan is stale.
+local function onGuardianApplied(event)
+  state.guardian.sinceIntervention = 0
+  if not state.director then return end
+  pcall(function()
+    state.director:clearDirectives()
+    state.director:logLine(
+      ('Guardian: %s %s'):format(event.action, event.ok and 'succeeded' or 'failed'),
+      event.ok and 'good' or 'bad')
+  end)
+end
+
 return {
   engineHandlers = {
     onUpdate = update,
@@ -364,6 +476,7 @@ return {
   },
   eventHandlers = {
     DialogueResponse = onDialogueResponse,
+    IdleOpenMW_GuardianApplied = onGuardianApplied,
   },
   -- the console HUD drives the brain through this
   interfaceName = 'IdleOpenMW',

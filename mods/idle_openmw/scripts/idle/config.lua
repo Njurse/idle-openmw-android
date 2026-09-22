@@ -107,6 +107,38 @@ M.defaults = {
     autoTravel = false,
   },
 
+  -- "Don't let them die at work." Policy is in scripts/idle/guardian.lua; the
+  -- acting half lives in scripts/idleWarden.lua, a GLOBAL script, because
+  -- GameObject:teleport and menu.loadGame are global-only (docs/openmw-lua-api.md
+  -- §10). Detection happens in our PLAYER script and is passed over by event.
+  guardian = {
+    enabled = true,
+
+    -- Cheating, but the only thing that reliably keeps an unattended run alive:
+    -- top the pool up before it can reach zero. Set false for an honest run.
+    preventDeath = true,
+    criticalHealthFraction = 0.15,   -- intervene at or below this
+    retreatHealthFraction = 0.35,    -- stop fighting and withdraw at or below this
+    healTo = 0.75,                   -- restored to this fraction of maximum
+    cooldown = 30,                   -- sim seconds between interventions (anti-thrash)
+
+    -- What to do if death happens anyway (a one-shot, a trap, a fall).
+    --   'respawn' (default) -- teleport back into the last settlement we were
+    --                         safe in and revive, then keep playing
+    --   'reload'            -- menu.loadGame(saveDir, saveSlot)
+    --   'none'              -- do nothing; let the engine do what it does
+    onDeath = 'respawn',
+    saveSlot = nil,                  -- required for onDeath = 'reload'
+    safeHealthFraction = 0.6,        -- only remember a town as "safe" while above this
+
+    -- In MANUAL mode the human is present and the game should behave like
+    -- vanilla, death included. Set true to be rescued even while you are driving.
+    activeInManual = false,
+
+    -- for onDeath = 'reload': menu.loadGame(directory, slotName) -- both strings
+    saveDir = nil,
+  },
+
   sensing = {
     scanRadius = 4096,          -- engine units within which actors are considered
 

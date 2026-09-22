@@ -249,3 +249,89 @@ describe('runtime.idleDirector', function()
     end)
   end)
 end)
+
+describe('runtime.idleDirector guardian wiring', function()
+  local mocks = require('tests.mocks.openmw')
+
+  local function withScript(spec, fn)
+    local env = mocks.install(spec)
+    package.loaded['scripts/idleDirector'] = nil
+    local ok, handlers = pcall(require, 'scripts/idleDirector')
+    if not ok then
+      mocks.uninstall()
+      error(handlers, 0)
+    end
+    local passed, err = pcall(fn, env, handlers)
+    mocks.uninstall()
+    if not passed then error(err, 0) end
+  end
+
+  local SPEC = {
+    classId = 'warrior', position = { x = 0, y = 0, z = 0 }, rotation = 0,
+    -- an exterior with a name and no " Region" suffix => a settlement
+    cell = { name = 'Balmora', isExterior = true },
+    gold = 400, capacity = 400, skills = { longblade = 64 },
+  }
+
+  local function tick(handlers, times)
+    for _ = 1, (times or 1) do
+      handlers.engineHandlers.onUpdate(2.5)
+    end
+  end
+
+  local function rescues(env)
+    local out = {}
+    for _, event in ipairs(env._globalEvents or {}) do
+      if event.name == 'IdleOpenMW_Guardian' then out[#out + 1] = event.data end
+    end
+    return out
+  end
+
+  it('tops up a critically wounded character rather than letting them die', function()
+    withScript(SPEC, function(env, handlers)
+      tick(handlers, 1)                      -- healthy tick: remembers the town
+      env._pools.health.current = 10         -- 10% < criticalHealthFraction 0.15
+      tick(handlers, 1)
+      assert.equals(env._pools.health.current, 75)   -- restored to healTo
+      -- healing is done locally: it must NOT need the global script
+      assert.equals(#rescues(env), 0)
+    end)
+  end)
+
+  it('asks the global warden to respawn a dead character in the last town', function()
+    withScript(SPEC, function(env, handlers)
+      tick(handlers, 1)
+      env._pools.health.current = 0
+      tick(handlers, 1)
+      local events = rescues(env)
+      assert.equals(#events, 1)
+      assert.equals(events[1].action, 'respawn')
+      assert.equals(events[1].safeSpot.name, 'Balmora')
+      assert.is_true(events[1].safeSpot.position ~= nil)
+    end)
+  end)
+
+  it('does not rescue a dead character with no town to return to', function()
+    withScript(SPEC, function(env, handlers)
+      -- wilderness: nothing is remembered, so there is nowhere to respawn
+      env._modules['openmw.self'].cell = { name = 'Ashlands Region', isExterior = true }
+      tick(handlers, 1)
+      env._pools.health.current = 0
+      tick(handlers, 1)
+      assert.equals(#rescues(env), 0)
+    end)
+  end)
+
+  it('leaves a MANUAL player alone, dying included', function()
+    withScript(SPEC, function(env, handlers)
+      -- one tick first: the director is built by ensureInit(), and interface
+      -- calls before that are (correctly) no-ops
+      tick(handlers, 1)
+      handlers.interface.setMode('manual')
+      tick(handlers, 1)
+      env._pools.health.current = 0
+      tick(handlers, 1)
+      assert.equals(#rescues(env), 0)
+    end)
+  end)
+end)

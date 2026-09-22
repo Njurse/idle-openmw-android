@@ -14,6 +14,7 @@ return {
   'tests.spec.economy_spec',
   'tests.spec.equipment_spec',
   'tests.spec.goalScoring_spec',
+  'tests.spec.guardian_spec',
   'tests.spec.harness_spec',
   'tests.spec.idleDirector_spec',
   'tests.spec.offlineProgress_spec',

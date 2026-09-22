@@ -3,8 +3,14 @@
 # Format: <flags>: <path>.  Comment lines start with '#' (NOT '--').
 # See docs/openmw-lua-api.md §6 for the verified grammar.
 #
-# Both entries are PLAYER scripts, so `self` is the player character and
-# openmw.ui / openmw.input are available (needed for movement and the HUD).
+# The PLAYER scripts get `self` = the player character, plus openmw.ui /
+# openmw.input (needed for movement and the HUD).
+#
+# idleWarden.lua is a GLOBAL script because the only actions that can rescue an
+# unattended run -- GameObject:teleport and menu.loadGame -- raise "can be called
+# only from a global script". It listens for IdleOpenMW_Guardian events sent by
+# idleDirector.lua.
 
 PLAYER: scripts/idleDirector.lua
 PLAYER: scripts/portraitUI.lua
+GLOBAL: scripts/idleWarden.lua

@@ -445,6 +445,10 @@ function M.env(spec)
   local interfaceCalls = {}
   local uiModesSet = {}
 
+  -- Global events the scripts send. The guardian's two rescue actions
+  -- (teleport / loadGame) go out this way -- see scripts/idleWarden.lua.
+  local globalEvents = {}
+
   local env = {
     self = self,
     world = world,
@@ -463,7 +467,11 @@ function M.env(spec)
       getGameTime = function() return spec.gameTime or 0 end,
       getRealTime = function() return spec.realTime or 0 end,
       getSimulationTimeScale = function() return 1 end,
-      sendGlobalEvent = function() end,
+      -- Recorded, not dropped: the guardian's two rescue actions go out this way
+      -- (see scripts/idleWarden.lua), so tests must be able to see them.
+      sendGlobalEvent = function(name, data)
+        globalEvents[#globalEvents + 1] = { name = name, data = data }
+      end,
     },
     storage = {
       -- A real in-memory section store, so persistence round-trips can be tested.
@@ -522,6 +530,7 @@ function M.env(spec)
     _interfaceCalls = interfaceCalls,
     _uiModesSet = uiModesSet,
     _pools = pools,
+    _globalEvents = globalEvents,
   }
 
   return env
