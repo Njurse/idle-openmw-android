@@ -25,5 +25,7 @@ return {
   'tests.spec.uiLayout_spec',
   'tests.spec.worldsense_spec',
   'tests.spec.uiModel_spec',
+  'tests.spec.settlement_spec',
+  'tests.spec.notify_spec',
   'tests.spec.util_spec',
 }

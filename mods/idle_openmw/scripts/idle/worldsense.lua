@@ -75,6 +75,11 @@ end
 --- @param record the actor's record (for travelDestinations)
 function M.roles(flags, record)
   local roles = { services = M.offersAnyService(flags) }
+  -- every role is explicitly boolean: a consumer can tell "not this role" from
+  -- "no data", and `pairs()` over the table is meaningful rather than sparse
+  for role in pairs(M.ROLE_SERVICES) do
+    roles[role] = false
+  end
   for role, keys in pairs(M.ROLE_SERVICES) do
     for _, key in ipairs(keys) do
       if flags[key] then roles[role] = true break end

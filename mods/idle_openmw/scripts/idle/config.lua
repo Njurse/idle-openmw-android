@@ -131,6 +131,28 @@ M.defaults = {
     questingWeight = 0.6,
   },
 
+  -- Settlements: how the director decides it is in a town, and what it does there.
+  settlement = {
+    -- Exterior cells whose name contains none of this and is not listed in
+    -- wildernessNames are treated as settlements (Morrowind names town cells
+    -- plainly: "Balmora", not "Ascadian Isles Region"). See settlement.lua.
+    crowdThreshold = 3,        -- friendly people nearby that imply a town
+
+    -- Names that must never count as a settlement, whatever the heuristic says.
+    -- The escape hatch for a named cell that is not really a town.
+    wildernessNames = {},
+
+    -- Settle in when we arrive: switch to the 'settled' stance so the character
+    -- potters about locally instead of wandering off, and tell the player.
+    settleOnArrival = true,
+    notifyOnArrival = true,
+
+    -- How long a settled stance lasts before the director resumes adventuring,
+    -- in simulation seconds. 0 means "until told otherwise", which is what you
+    -- want for set-and-forget: it will roam the town all day.
+    settledFor = 0,
+  },
+
   debug = {
     verbose = false,
     seed = 1337,

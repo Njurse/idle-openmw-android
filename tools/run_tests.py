@@ -104,6 +104,31 @@ def lua_str(value: str) -> str:
     return f'"{escaped}"'
 
 
+def lint_specs() -> list[str]:
+    """Catch a spec that can never run.
+
+    A spec file wrapped in `return function() ... end` is a silent hole: the
+    harness `require`s the module, the wrapper is never called, and the file is
+    discovered, loads cleanly, and contributes zero tests. That really happened
+    here (two spec files, 27 tests, no error anywhere), so it is checked
+    statically -- no harness internals needed, works on any Lua flavour.
+    """
+    import re as _re
+    problems: list[str] = []
+    for path in sorted(SPEC_DIR.glob("*_spec.lua")):
+        text = path.read_text(encoding="utf-8", errors="replace")
+        # strip leading comment/blank lines, then look at the first real statement
+        first_statement = _re.sub(r"^(?:\s*--[^\n]*\n|\s*\n)+", "", text).lstrip()
+        if first_statement.startswith("return function"):
+            problems.append(
+                f"{path.name}: wrapped in `return function()` -- the harness never "
+                f"calls the wrapper, so it registers no tests; call describe(...) "
+                f"at the top level instead")
+        elif "describe(" not in text and "it(" not in text:
+            problems.append(f"{path.name}: registers no describe()/it() at all")
+    return problems
+
+
 def run_suite(flavour: str, color: bool, verbose: bool, upstream_stdout=None, only: str | None = None) -> bool:
     specs = discover_specs()
     if only:
@@ -214,6 +239,14 @@ def main(argv=None) -> int:
         return 0 if ok else 1
 
     check_manifest_drift()
+
+    # a spec that can never run is worse than no spec: fail before running
+    lint_problems = lint_specs()
+    if lint_problems:
+        for problem in lint_problems:
+            print(f"  SPEC LINT  {problem}", file=sys.stderr)
+        print(f"\n  {len(lint_problems)} spec file(s) would never run.\n", file=sys.stderr)
+        return 1
 
     flavours = PORTABILITY_FLAVOURS if args.all else [args.flavour]
     results = {}
