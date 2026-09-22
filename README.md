@@ -101,11 +101,13 @@ citation in [docs/openmw-lua-api.md](docs/openmw-lua-api.md) or a test.
 | Inventory: tap an item to Equip / Sell / Drop | ✅ implemented via a pure type→slot mapping |
 | Order the character around while it auto-plays | ✅ implemented (directives) |
 | Full 1000-hour unattended run | ✅ simulated green (`--sim`) |
+| Read the engine's live UI (which window is open) | ✅ implemented (`ui._getUiModeStack` → `idle/uiState.lua`, console "On screen" row) |
+| Do not disturb character creation | ✅ implemented (`types.Player.isCharGenFinished` → `idle/lifecycle.lua` gate) |
 | **Drive the player with AI packages** | ❌ impossible — the engine throws `Can't add AI packages to player` |
 | **Automate the barter / rest / training UI** | ❌ no Lua API; performed directly instead |
 | **Auto-select dialogue topics** | ❌ dialogue is observe-only (no `onInfoGetText`) |
 | Android APK build & portrait un-gating | ⚠️ not done — needs the NDK toolchain and a device, not available on the dev host |
-| Isometric camera | ⚠️ not done — needs OpenMW C++ work |
+| Isometric camera | ✅ implemented as a Lua lock (`openmw.camera`), **off by default**; hiding roofs/ceilings remains engine work ([docs/isometric.md](docs/isometric.md)) |
 | Console cosmetics on real hardware | ⚠️ geometry is tested, pixels are not — needs an on-device pass |
 
 Full reasoning: [docs/limitations.md](docs/limitations.md) and
@@ -137,6 +139,9 @@ mods/idle_openmw/                 the mod you install
     │   ├── directive.lua         user orders ("go shop") with a TTL
     │   ├── uiLayout.lua          console geometry (panel/tabs/rows/regions)
     │   ├── uiModel.lua           console brain: tabs, rows, footers, scrolling
+    │   ├── uiState.lua           engine UI mode -> kind (the live "UI hook")
+    │   ├── lifecycle.lua         menu/chargen/loading/dead/world phase gate
+    │   ├── camera.lua            isometric camera lock (pitch/distance)
     │   ├── activityLog.lua       bounded log
     │   ├── config.lua            every tunable, validated
     │   ├── rng.lua               deterministic seeded RNG
@@ -150,13 +155,13 @@ tests/                            headless, no engine
 ├── harness.lua                   zero-dependency describe/it/expect/assert
 ├── run.lua                       suite entry point
 ├── specs.lua                     fallback manifest
-├── spec/                         401 specs
+├── spec/                         441 specs
 ├── mocks/openmw.lua              a full fake engine
 ├── fixtures/                     classes, states, worlds
 └── sim/headless_sim.lua          1000-game-hour invariant run
 
 tools/run_tests.py                lupa driver (LuaJIT 2.1 by default)
-docs/                             verified API, architecture, deployment, limits
+docs/                             verified API, architecture, deployment, limits, UI/isometric
 ```
 
 ---

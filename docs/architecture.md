@@ -143,6 +143,39 @@ RNG state, counts, dialogue memory, visited cells, and `lastSeen` from
 `ensureInit` applies it on the first `onUpdate`. Catch-up maths is pure
 (`offlineProgress.lua`) and capped by `offline.maxRealHours`.
 
+## Lifecycle, the live UI, and the camera
+
+Three small pure modules sit between the snapshot and the decisions, each with a
+single engine call behind it in `runtime/observer.lua`:
+
+```
+  observer.readLifecycle(env) ──► lifecycle.phase(...)  ──► { menu|loading|chargen|dead|world }
+        types.Player.isCharGenFinished        acting == (phase == 'world')
+                                              │
+  observer.readUi(env) ────────► uiState.fromStack(...) ──► { mode, kind, blocking, label }
+        ui._getUiModeStack()
+                                              │
+  idleDirector.applyCamera(phase) ──► camera.plan(cfg, phase, manual) ──► openmw.camera
+```
+
+- **`idle/lifecycle.lua`** decides whether the director may act at all. During
+  character creation (and the menu / a load screen) `acting` is false, so
+  `director:tick` returns **no commands** and the runtime clears the executor.
+  This is what lets a player actually get through chargen to Seyda Neen.
+  An engine that cannot report char-gen resolves to `world`, so the mod is never
+  locked out.
+- **`idle/uiState.lua`** classifies the engine's current window into a stable
+  vocabulary. It is the honest form of "hook into the UI": Lua can read *which*
+  window is open, not its contents.
+- **`idle/camera.lua`** is a pure plan for the isometric lock; `idleDirector`
+  applies it through `openmw.camera`. Off by default. The *law* is pure and
+  tested; the applying is one guarded block.
+
+The guardian is deliberately **outside** this gate: its whole job is the `dead`
+phase, so it keeps running even when the director is held back.
+
+See `docs/openmw-lua-api.md` §11–§13 and `docs/isometric.md`.
+
 ## World sensing (`idle/worldsense.lua`)
 
 The runtime hands `worldsense` a flat descriptor per nearby actor and gets back a

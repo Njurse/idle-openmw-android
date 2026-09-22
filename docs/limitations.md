@@ -149,7 +149,7 @@ native OpenMW build, and no ability to run the game.
 |---|---|
 | Building the Android APK | Needs the NDK toolchain + a 30–60 min native superbuild; no Gradle/NDK present. |
 | Un-gating portrait orientation | Needs `AndroidManifest.xml` / OSG changes *and* a device to observe the crash the 2020 note warned about. |
-| Isometric camera | Needs OpenMW C++ work (camera/viewport), not Lua. |
+| Isometric camera (hiding roofs) | The angle itself is Lua (`openmw.camera`); hiding overhead roofs/ceilings is engine rendering work — see `docs/isometric.md`. |
 | On-device visual tuning of the HUD | Needs the game running. Geometry is unit-tested; cosmetics are not. |
 | 30-minute thermal/stability soak | Needs the phone. |
 

@@ -71,6 +71,10 @@ What Lua *can* do, and does:
   *data* is largely available.
 - **Observe dialogue** — `DialogueResponse` is a notification, not a hook
   (`docs/openmw-lua-api.md` §7). It tells us what was said, not what is on screen.
+- **Read which window is open** — `ui._getUiModeStack()`
+  (`docs/openmw-lua-api.md` §11.2). This is the live "UI hook": we cannot read a
+  window's *contents*, but we can read *which* window is up, including
+  `MainMenu`, `Dialogue` and the whole `Chargen*` family.
 
 ## So what does "hooking into the UI" actually mean here?
 
@@ -78,7 +82,10 @@ Being precise about it, because the phrase covers three different things:
 
 1. **Reposition / restyle** the real windows → `.layout` overrides (done, above).
 2. **Mirror content** in our own console → read the data, render it ourselves.
-   Partly built: the console already shows dialogue topics, the pack, the log.
+   **Built** (`scripts/runtime/observer.lua` + `scripts/idle/uiModel.lua`): the
+   console shows dialogue topics, the pack, the log, *and* a live "On screen" row
+   naming the window the engine currently has open
+   (`scripts/idle/uiState.lua`, read from `ui._getUiModeStack`).
 3. **Add controls** to an engine window → only `ui.registerSettingsPage` exists.
    There is no general widget-injection API.
 
@@ -120,3 +127,10 @@ whole-file rewrite cannot pass again. The tool also refuses a layout with no
   last run of the tool. Re-run it after an engine update.
 - Nothing here has been seen on a device. The geometry is arithmetic and tested;
   the pixels are not.
+
+## Related
+
+- **Reading which window is open** (the live UI hook, and the character-creation
+  gate that keeps the mod out of chargen) — `docs/openmw-lua-api.md` §11 and §13.
+- **The isometric camera** — a Lua toggle, not an engine patch, with a named
+  engine-side limit for hiding roofs — `docs/isometric.md`.

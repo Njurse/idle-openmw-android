@@ -13,7 +13,7 @@ Status key: ✅ done and verified · 🟡 partial · ⛔ blocked on environment 
 | Phase | Plan's task | Deliverable | Status |
 |---|---|---|---|
 | 1 | Fork `xyzz/openmw-android`, baseline build | Working APK | ⛔ needs NDK + Linux; no Android toolchain on the dev host |
-| 2 | Port the OpenNevermind camera / isometric lock | Isometric camera | ⛔ needs OpenMW C++ work |
+| 2 | Port the OpenNevermind camera / isometric lock | Isometric camera | 🟡 the angle is a Lua `openmw.camera` lock (off by default); hiding roofs/ceilings still needs engine work (`docs/isometric.md`) |
 | 3 | Portrait manifest + OSG viewport | Portrait game activity | ⛔ needs a desktop build + a device to test the crash risk |
 | 4 | Pure Lua idle director (stat crunch, weights, goals) | Lua scripts + unit tests | ✅ 14 core modules, unit-tested |
 | 5 | Mock engine APIs, integration tests | Mock test suite | ✅ `tests/mocks/openmw.lua` + `runtime_spec.lua` |

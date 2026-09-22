@@ -376,3 +376,121 @@ return { eventHandlers = eventHandlers }
 
 An unknown action is *logged*, not ignored: silence would hide a bug in the
 caller.
+
+## 11. The UI from Lua — read the *modes*, mirror the *content*
+
+The question "can Lua hook into the UI (dialogue, inventory, main menu)?" has
+three different answers, and conflating them is how a plan goes wrong. The
+data-layer half (moving the real windows) is `docs/ui-overhaul.md`; this is the
+Lua half.
+
+### 11.1 Lua cannot read the engine's widgets
+
+`ui.getElements` is documented, in its own source, as returning only Elements
+this Lua context created (`files/lua_api/openmw/ui.lua`):
+
+> Returns currently rendered **Lua UI root Elements** in this Lua context. …
+> **It does not return native engine UI widgets** or child layouts that are not
+> separate Elements.
+
+So the dialogue topics, inventory rows and menu entries that the engine draws are
+**invisible** to Lua, and cannot be moved by it either. Anything that renders
+those is our own window, built with `ui.create`.
+
+### 11.2 What Lua *can* read: the live UI mode stack
+
+The window manager's current `GuiMode` stack is exposed to a PLAYER script as an
+underscore-internal, but real, call (`apps/openmw/mwlua/uibindings.cpp:276`):
+
+```lua
+local stack = require('openmw.ui')._getUiModeStack()  -- { 'Interface', 'Dialogue' }
+```
+
+Newest mode last. The names are the `modeToName` table at `uibindings.cpp:33` —
+`MainMenu`, `Dialogue`, `Interface`, `Container`, `Barter`, `Journal`,
+`ChargenName`…`ChargenClassReview`, `Loading`, and so on. Related internals:
+
+| Call | Citation | Gives |
+| --- | --- | --- |
+| `ui._getUiModeStack()` | `uibindings.cpp:276` | the open modes, newest last |
+| `ui._getAllUiModes()` | `uibindings.cpp:270` | the full mode vocabulary |
+| `ui._isWindowVisible(id)` | `uibindings.cpp:325` | is a named window up |
+| `ui._getAllWindowIds()` / `ui._getAllowedWindows(mode)` | `uibindings.cpp:308,314` | window ids |
+
+`scripts/idle/uiState.lua` is the pure classifier over that stack; `_getUiModeStack`
+is what `scripts/runtime/observer.lua:readUi` calls. The console shows the result
+as its "On screen" row. This is the honest meaning of "hooking into the UI": we do
+not read the pixels, we read *which window the engine has open*.
+
+There is also a public, supported shim: `scripts/omw/ui.lua` builds
+`interfaces.UI.MODE`, and `interfaces.UI.setMode(mode, options)` is what the
+console's launchers use to open a real window. `observer.readUi` falls back to
+`interfaces.UI.getMode()` when the internal hook is missing.
+
+### 11.3 The one supported way to appear *inside* an engine window
+
+`ui.registerSettingsPage` (`uibindings.cpp:246`) adds a panel to the Scripts tab
+of the settings screen. It is the only widget-injection API. There is no general
+"add a control to the inventory window".
+
+### 11.4 Reading the underlying data instead of the window
+
+What we cannot render we can still *mirror*, because the data behind the windows
+is largely exposed: `types.Actor.inventory`, `types.Player.journal`,
+`types.Player.quests`, `types.Actor.stats.dynamic.*`. The console is built
+entirely from that (see `scripts/idle/uiModel.lua`). Dialogue is the exception —
+observe-only (§4).
+
+## 12. The camera — `openmw.camera` is a PLAYER package
+
+This one contradicts the plan outright. `docs/plan-reconciliation.md` filed the
+isometric camera under "needs OpenMW C++ work"; it does not. `openmw.camera` is
+handed to a PLAYER script (`apps/openmw/mwlua/luabindings.cpp:73`), so the camera
+is a Lua-controllable surface.
+
+From `apps/openmw/mwlua/camerabindings.cpp`:
+
+| Call | Line | Note |
+| --- | --- | --- |
+| `camera.MODE` | `:29` | `Static, FirstPerson, ThirdPerson, Vanity, Preview` |
+| `camera.getMode()` / `setMode(mode[, force])` | `:33,:38` | |
+| `camera.setPitch/setYaw/setRoll(rad)` | `:52-:62` | **forced** |
+| `camera.setStaticPosition(pos)` | `:45` | **Static mode only — throws otherwise** (`mwrender/camera.cpp:337`) |
+| `camera.setPreferredThirdPersonDistance(u)` | `:73` | |
+| `camera.setProjectionOffset(v2)` | `:66` | |
+
+The forced setters are the important detail: `Camera::setPitch(angle, force)`
+sets `mLockPitch` when forced (`apps/openmw/mwrender/camera.cpp:320`), after which
+the game's own look controls stop moving the angle. One forced set **latches** the
+angle — which is exactly the "lock" an idle game wants, and why
+`scripts/idle/camera.lua` exists. It is off by default and toggleable from the
+Setup tab.
+
+The camera *cannot* hide the world's roofs and ceilings, though. See
+`docs/isometric.md` for the honest limit.
+
+## 13. Character creation and the game lifecycle
+
+A PLAYER script ticks the moment a game is loaded — **including during character
+creation**, when the engine is asking the human to choose a race, class and
+birthsign. A mod that "helped" there would fight the chargen windows and the
+player would never reach Seyda Neen.
+
+The definitive flag is exposed (`apps/openmw/mwlua/types/player.cpp:438`; doc at
+`files/lua_api/openmw/types.lua:1322`):
+
+```lua
+require('openmw.types').Player.isCharGenFinished(player)  -- boolean
+```
+
+It is literally `getGlobalFloat("chargenstate") == -1`. The global is set to `1`
+on a new game and `-1` afterwards (`apps/openmw/mwworld/worldimp.cpp:290-293`).
+While it is `false` the character is still being created; the main menu code
+itself uses the same check (`mwgui/mainmenu.cpp:321`).
+
+Belt and braces: the `Chargen*` UI modes (§11.2) are a second signal, so even an
+engine without the flag is caught. `scripts/idle/lifecycle.lua` folds both into a
+phase (`menu` / `loading` / `chargen` / `dead` / `world`), and the director emits
+no commands outside `world`. An *unknown* flag resolves to `world`, so a missing
+call can never lock the mod out of playing.
+
