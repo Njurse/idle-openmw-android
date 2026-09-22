@@ -170,7 +170,7 @@ tests/                            headless, no engine
 └── sim/headless_sim.lua          1000-game-hour invariant run
 
 tools/run_tests.py                lupa driver (LuaJIT 2.1 by default)
-docs/                             verified API, architecture, deployment, limits, UI/isometric, theme
+docs/                             API, architecture, console, theme, tap-to-move, …
 ```
 
 ---
@@ -240,6 +240,23 @@ calls the engine: it takes plain tables in and returns an ordered command batch
 `scripts/runtime/*` and is injected as an `env` table, which is why the whole
 decision layer — and the adapter — can be exercised headlessly against
 `tests/mocks/openmw.lua`. See [docs/architecture.md](docs/architecture.md).
+
+## Docs
+
+| Doc | What |
+| --- | --- |
+| [docs/openmw-lua-api.md](docs/openmw-lua-api.md) | the verified engine API, §0–§13, every claim with a `file:line` |
+| [docs/architecture.md](docs/architecture.md) | the layers, the snapshot contract, the pipeline |
+| [docs/console.md](docs/console.md) | every tab, order, option and gesture in the phone console |
+| [docs/theme.md](docs/theme.md) | the Morrowind palette, the font question, the preview tool |
+| [docs/tap-to-move.md](docs/tap-to-move.md) | tapping the world: raycast → walk / enter / talk |
+| [docs/dialogue.md](docs/dialogue.md) | dialogue topics, and the one thing Lua cannot do |
+| [docs/isometric.md](docs/isometric.md) | the camera lock, and why roofs stay visible |
+| [docs/observability.md](docs/observability.md) | the decision trace and the test/observability tools |
+| [docs/ui-overhaul.md](docs/ui-overhaul.md) | moving Morrowind's own windows (data, not Lua) |
+| [docs/deployment.md](docs/deployment.md) | desktop + Android install, and the first run |
+| [docs/android.md](docs/android.md) | the emulator, data staging, the `.omwscripts` wall |
+| [docs/limitations.md](docs/limitations.md) / [docs/plan-reconciliation.md](docs/plan-reconciliation.md) | what is not done, and where the plan was wrong |
 
 ## Development notes
 
