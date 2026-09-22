@@ -335,3 +335,99 @@ describe('runtime.idleDirector guardian wiring', function()
     end)
   end)
 end)
+
+describe('runtime.idleDirector lifecycle + camera wiring', function()
+  local mocks = require('tests.mocks.openmw')
+  local observer = require('scripts.runtime.observer')
+
+  local function withScript(spec, fn)
+    local env = mocks.install(spec)
+    package.loaded['scripts.idleDirector'] = nil
+    local ok, handlers = pcall(require, 'scripts.idleDirector')
+    if not ok then mocks.uninstall(); error(handlers, 0) end
+    local passed, err = pcall(fn, env, handlers)
+    mocks.uninstall()
+    if not passed then error(err, 0) end
+  end
+
+  --- A minimal, quiet in-world spec; `extra` overrides fields.
+  local function base(extra)
+    local spec = {
+      classId = 'warrior', position = { x = 0, y = 0, z = 0 }, rotation = 0,
+      cell = { name = 'Seyda Neen', isExterior = true },
+      gold = 100, capacity = 400, actors = {}, inventory = {},
+      charGenFinished = true,
+    }
+    for k, v in pairs(extra or {}) do spec[k] = v end
+    return spec
+  end
+
+  local function tick(handlers, times, dt)
+    for _ = 1, (times or 1) do handlers.engineHandlers.onUpdate(dt or 2.5) end
+  end
+
+  it("reports the engine's live UI stack on the panel", function()
+    local env = mocks.install({ uiModes = { 'Interface', 'Dialogue' } })
+    local ui = observer.readUi(env)
+    mocks.uninstall()
+    assert.equals(ui.mode, 'Dialogue')
+    assert.equals(ui.kind, 'dialogue')
+  end)
+
+  it('falls back to interfaces.UI.getMode when the internal hook is absent', function()
+    local env = mocks.install({})
+    env.ui._getUiModeStack = nil
+    env.interfaces.UI.getMode = function() return 'Journal' end
+    local ui = observer.readUi(env)
+    mocks.uninstall()
+    assert.equals(ui.mode, 'Journal')
+    assert.equals(ui.kind, 'journal')
+  end)
+
+  it('does not drive the character while character creation is unfinished', function()
+    withScript(base({ charGenFinished = false, uiModes = { 'ChargenRace' } }),
+      function(env, handlers)
+        tick(handlers, 3)
+        local status = handlers.interface.status()
+        assert.equals(status.goal, 'chargen')
+        assert.is_false(status.acting)
+        assert.equals(status.phase, 'chargen')
+        -- nothing steers the character: the input script is not overridden and
+        -- no movement is commanded
+        assert.not_equals(env.self.controls.movement or 0, 1)
+      end)
+  end)
+
+  it('acts normally once character creation is finished', function()
+    withScript(base({ charGenFinished = true }), function(env, handlers)
+      tick(handlers, 3)
+      local status = handlers.interface.status()
+      assert.is_true(status.acting)
+      assert.equals(status.phase, 'world')
+    end)
+  end)
+
+  it('locks the isometric camera in the world when enabled', function()
+    withScript(base({}), function(env, handlers)
+      env.storage.playerSection('IdleOpenMW'):set('config', { camera = { isometric = true } })
+      tick(handlers, 3)
+      local sawMode, sawPitch, sawDistance = false, false, false
+      for _, call in ipairs(env._cameraCalls) do
+        if call[1] == 'setMode' then sawMode = true end
+        if call[1] == 'setPitch' then sawPitch = true end
+        if call[1] == 'setDistance' then sawDistance = true end
+      end
+      assert.is_true(sawMode)
+      assert.is_true(sawPitch)
+      assert.is_true(sawDistance)
+    end)
+  end)
+
+  it('leaves the camera alone during character creation', function()
+    withScript(base({ charGenFinished = false }), function(env, handlers)
+      env.storage.playerSection('IdleOpenMW'):set('config', { camera = { isometric = true } })
+      tick(handlers, 3)
+      assert.equals(#env._cameraCalls, 0)
+    end)
+  end)
+end)

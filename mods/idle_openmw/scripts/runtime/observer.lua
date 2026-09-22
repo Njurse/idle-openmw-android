@@ -19,6 +19,8 @@ local economy = require('scripts.idle.economy')
 local combat = require('scripts.idle.combat')
 local equipment = require('scripts.idle.equipment')
 local worldsense = require('scripts.idle.worldsense')
+local uiState = require('scripts.idle.uiState')
+local lifecycle = require('scripts.idle.lifecycle')
 
 local M = {}
 
@@ -364,6 +366,67 @@ function M.scanWorld(env, opts, player)
   }
 end
 
+--- Read the engine's *live* UI mode stack and classify it.
+---
+--- This is the real "UI hook": `ui._getUiModeStack()` returns the window
+--- manager's current GuiMode stack (apps/openmw/mwlua/uibindings.cpp:276). We
+--- fall back to `interfaces.UI.getMode()` when the internal hook is absent, so
+--- an engine without it degrades to "we know one mode" rather than guessing.
+--- See scripts/idle/uiState.lua for the vocabulary.
+function M.readUi(env)
+  local stack
+
+  local ui = env.ui
+  if ui then
+    local raw = safe(ui._getUiModeStack)
+    if type(raw) == 'table' then
+      stack = {}
+      for i = 1, #raw do
+        if type(raw[i]) == 'string' and raw[i] ~= '' then stack[#stack + 1] = raw[i] end
+      end
+      if #stack == 0 then stack = nil end
+    end
+  end
+
+  local fallback
+  if not stack then
+    local interfaces = env.interfaces
+    local Ui = interfaces and interfaces.UI
+    local mode = Ui and safe(Ui.getMode, Ui)
+    if type(mode) == 'string' and mode ~= '' then fallback = mode end
+  end
+
+  return uiState.fromStack(stack, fallback)
+end
+
+--- Read the signals scripts/idle/lifecycle.lua needs to place us in the game's
+--- life: whether character creation is finished and whether the actor is dead.
+---
+--- `types.Player.isCharGenFinished` (apps/openmw/mwlua/types/player.cpp:438) is
+--- the definitive "has the player been released into the world" flag; nil means
+--- the engine did not expose it, and lifecycle.lua treats unknown as "in world"
+--- so the mod is never locked out.
+function M.readLifecycle(env)
+  local self = env.self or {}
+  local actor = self.object or self
+
+  local finished
+  local Player = env.types and env.types.Player
+  if Player and type(Player.isCharGenFinished) == 'function' then
+    local value = safe(Player.isCharGenFinished, actor)
+    if type(value) == 'boolean' then finished = value end
+  end
+
+  local health = safe(function() return env.types.Actor.stats.dynamic.health(actor) end)
+  local dead = type(health) == 'table' and health.current ~= nil and health.current <= 0
+
+  return {
+    playerExists = actor ~= nil,
+    charGenFinished = finished,
+    dead = dead and true or false,
+  }
+end
+
 --- Recent journal entries (newest last), for the console's Talk tab.
 function M.readJournal(env, actor)
   local out = {}
@@ -472,7 +535,15 @@ function M.build(env, opts)
     time.real = safe(env.core.getRealTime)
   end
 
-  return { player = player, world = world, time = time }
+  -- Where are we in the game's life, and what does the engine have on screen?
+  -- The lifecycle phase gates the director (scripts/idle/lifecycle.lua): during
+  -- character creation and the menu it must not touch the character.
+  local ui = M.readUi(env)
+  local life = M.readLifecycle(env)
+  life.uiKind = ui.kind
+  local phase = lifecycle.phase(life)
+
+  return { player = player, world = world, time = time, ui = ui, lifecycle = life, phase = phase }
 end
 
 return M

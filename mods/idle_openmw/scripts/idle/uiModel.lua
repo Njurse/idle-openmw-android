@@ -78,6 +78,8 @@ M.OPTIONS = {
     choices = { 0.25, 0.5, 1.0, 2.0 }, label = 'Console refresh (s)' },
   { key = 'startMode', kind = 'choice', path = { 'ui', 'startMode' },
     choices = { 'auto', 'directive', 'manual' }, label = 'Mode on load' },
+  { key = 'isometric', kind = 'boolean', path = { 'camera', 'isometric' },
+    label = 'Isometric camera' },
 }
 
 --- Read an option's current value out of a config by its path.
@@ -305,6 +307,21 @@ local function infoRows(panel)
 
   rows[#rows + 1] = row({ id = 'mode', kind = 'info', label = 'Mode',
     detail = ('%s — %s'):format(M.modeLabel(panel.mode), M.MODE_HINT[panel.mode] or '') })
+
+  -- Why the bot may be doing nothing: it is not in the world yet (character
+  -- creation, the menu, a load screen) -- see scripts/idle/lifecycle.lua.
+  local phase = panel.phase
+  if phase and phase.id and phase.id ~= 'world' then
+    rows[#rows + 1] = row({ id = 'phase', kind = 'info', label = 'Holding',
+      detail = ('%s — %s'):format(tostring(phase.label or phase.id), tostring(phase.note or '')) })
+  end
+  -- What the engine currently has open (read from ui._getUiModeStack; see
+  -- scripts/idle/uiState.lua). This is the "hook into the UI" the player sees.
+  local ui = panel.ui
+  if ui and ui.mode then
+    rows[#rows + 1] = row({ id = 'ui', kind = 'info', label = 'On screen',
+      detail = tostring(ui.label or ui.mode) })
+  end
   rows[#rows + 1] = row({ id = 'goal', kind = 'info', label = 'Goal',
     detail = ('%s%s'):format(tostring(status.goal or 'idle'),
       status.reason and ('  (' .. status.reason .. ')') or '') })

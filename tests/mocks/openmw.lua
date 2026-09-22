@@ -227,6 +227,7 @@ function M.env(spec)
   }
 
   local actor = { recordId = spec.recordId or 'player' }
+
   local controls = {
     movement = 0, sideMovement = 0, yawChange = 0, pitchChange = 0,
     run = false, sneak = false, jump = false,
@@ -359,6 +360,15 @@ function M.env(spec)
     addTopic = function() end,
   }
 
+  -- types.Player.isCharGenFinished (apps/openmw/mwlua/types/player.cpp:438): the
+  -- definitive "has the player been released into the world" flag. Default true
+  -- so ordinary specs are in the world; pass charGenFinished = false to model a
+  -- character still being created (scripts/idle/lifecycle.lua).
+  types.Player.isCharGenFinished = function()
+    if spec.charGenFinished == nil then return true end
+    return spec.charGenFinished == true
+  end
+
   -- ---- nearby ------------------------------------------------------------
   -- `nearby.actors` is a list of GameObjects in the real API, so the mock hands
   -- back real objects too -- not a convenience wrapper with fields like
@@ -387,6 +397,9 @@ function M.env(spec)
     content = function(list) return list end,
     showMessage = function() end,
     printToConsole = function() end,
+    -- The real live-UI hook: the window manager's GuiMode stack
+    -- (apps/openmw/mwlua/uibindings.cpp:276). Array of mode names, newest last.
+    _getUiModeStack = function() return spec.uiModes or {} end,
     create = function(layout)
       local element = { layout = layout, updates = 0, destroyed = false }
       function element:update() self.updates = self.updates + 1 end
@@ -394,6 +407,22 @@ function M.env(spec)
       createdElements[#createdElements + 1] = element
       return element
     end,
+  }
+
+  -- ---- camera ------------------------------------------------------------
+  -- Faithful to apps/openmw/mwlua/camerabindings.cpp: modes + the setters the
+  -- isometric lock uses. Calls are recorded so specs can assert on them.
+  local cameraCalls = {}
+  local cameraMock = {
+    MODE = { Static = 0, FirstPerson = 1, ThirdPerson = 2, Vanity = 3, Preview = 4 },
+    setMode = function(mode) cameraCalls[#cameraCalls + 1] = { 'setMode', mode } end,
+    setPitch = function(value) cameraCalls[#cameraCalls + 1] = { 'setPitch', value } end,
+    setYaw = function(value) cameraCalls[#cameraCalls + 1] = { 'setYaw', value } end,
+    setRoll = function(value) cameraCalls[#cameraCalls + 1] = { 'setRoll', value } end,
+    setPreferredThirdPersonDistance = function(value)
+      cameraCalls[#cameraCalls + 1] = { 'setDistance', value }
+    end,
+    getMode = function() return 2 end,
   }
 
   local createdObjects = {}
@@ -513,6 +542,7 @@ function M.env(spec)
     },
     input = { KEY = { L = 38 } },
     ui = uiMock,
+    camera = cameraMock,
     -- Optional escape hatches, mirroring what observer.scanWorld accepts as
     -- opts.isHostile / opts.servicesOf. They are NOT real engine fields, so they
     -- are absent by default: the default classification must go through the real
@@ -529,6 +559,8 @@ function M.env(spec)
     _equipmentBySlot = function() return equipmentBySlot end,
     _interfaceCalls = interfaceCalls,
     _uiModesSet = uiModesSet,
+    _cameraCalls = cameraCalls,
+    _setUiModes = function(modes) spec.uiModes = modes end,
     _pools = pools,
     _globalEvents = globalEvents,
   }
@@ -554,6 +586,7 @@ function M.install(spec)
     ['openmw.interfaces'] = env.interfaces,
     ['openmw.input'] = env.input,
     ['openmw.ui'] = env.ui,
+    ['openmw.camera'] = env.camera,
   }
   for name, value in pairs(modules) do
     package.loaded[name] = nil

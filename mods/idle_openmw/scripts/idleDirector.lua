@@ -29,6 +29,7 @@ local uiModel = require('scripts.idle.uiModel')
 local offlineProgress = require('scripts.idle.offlineProgress')
 local guardianMod = require('scripts.idle.guardian')
 local settlementMod = require('scripts.idle.settlement')
+local cameraMod = require('scripts.idle.camera')
 
 local self = engine.self()
 
@@ -99,6 +100,35 @@ local function applyControlOverride()
   if not controls or type(controls.overrideMovementControls) ~= 'function' then return end
   local manual = state.director ~= nil and state.director:isManual()
   pcall(controls.overrideMovementControls, not manual)
+end
+
+--- Lock the camera to an isometric view, if the player asked for it.
+--- `openmw.camera` is available to PLAYER scripts (apps/openmw/mwlua/
+--- luabindings.cpp:73). A forced setPitch/setYaw latches the angle
+--- (mwrender/camera.cpp:320), which is exactly the "lock" an idle game wants.
+--- The decision of *whether* to lock lives in scripts/idle/camera.lua; this is
+--- only the applying half, and it is a no-op outside the world.
+local function applyCamera(phaseId)
+  local cam = engine.camera()
+  if not cam then return end
+
+  local plan = cameraMod.plan({
+    cfg = state.cfg.camera or {},
+    phase = phaseId,
+    manual = state.director ~= nil and state.director:isManual(),
+  })
+  if not plan.apply then return end
+
+  pcall(function()
+    if type(cam.setMode) == 'function' and cam.MODE and cam.MODE.ThirdPerson ~= nil then
+      cam.setMode(cam.MODE.ThirdPerson)
+    end
+    if type(cam.setPitch) == 'function' then cam.setPitch(plan.pitch) end
+    if type(cam.setPreferredThirdPersonDistance) == 'function' then
+      cam.setPreferredThirdPersonDistance(plan.distance)
+    end
+    if plan.yaw and type(cam.setYaw) == 'function' then cam.setYaw(plan.yaw) end
+  end)
 end
 
 --- Ensure the brain exists. Called from onUpdate only: it touches `openmw.nearby`
@@ -266,16 +296,34 @@ local function update(dt)
         visitedCells = state.director.visited,
       })
       state.snapshot = snapshot
-      state.director:markVisited(snapshot.player.cell and snapshot.player.cell.name)
+
+      -- Character creation, the main menu and the load screen are not ours to
+      -- drive: while we are not in the world, hold every command and let the
+      -- engine's own flow run (scripts/idle/lifecycle.lua).
+      local acting = snapshot.phase == nil or snapshot.phase.acting == true
+      if acting then
+        state.director:markVisited(snapshot.player.cell and snapshot.player.cell.name)
+      end
 
       local result = state.director:tick(elapsed, snapshot)
-      state.executor:submit(result.commands)
 
-      -- Run after the director so a rescue lands in the same frame; the guardian
-      -- may override what the brain just asked for (see scripts/idle/guardian.lua).
-      guardianTick(snapshot)    end
+      if acting then
+        state.executor:submit(result.commands)
+      else
+        -- Character creation / menu / load screen: hold everything, and make sure
+        -- no stale command keeps steering the character (see lifecycle.lua).
+        state.executor:clear()
+      end
+
+      -- The guardian runs regardless of phase: its whole job is death and
+      -- critical health, which is exactly the 'dead' phase the director is held
+      -- back in. Run after the director so a rescue lands in the same frame; it
+      -- may override what the brain just asked for (scripts/idle/guardian.lua).
+      guardianTick(snapshot)
+    end
 
     state.executor:update(dt, simulationTime())
+    applyCamera(state.snapshot and state.snapshot.phase and state.snapshot.phase.id)
   end)
 
   if not ok then
@@ -301,6 +349,10 @@ local function panel()
     status = fromDirector.status,
     mode = fromDirector.mode,
     directive = fromDirector.directive,
+    -- Live: the engine's current UI right now, so the "On screen" row keeps up
+    -- with what the player just opened (the snapshot is only rebuilt on the tick).
+    ui = observer.readUi(env),
+    phase = fromDirector.phase,
     dialogue = fromDirector.dialogue,
     topics = fromDirector.topics,
     log = fromDirector.log,

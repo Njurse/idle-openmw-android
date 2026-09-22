@@ -202,6 +202,21 @@ M.defaults = {
     -- 'auto'    -- fully self-playing (default)
     startMode = 'auto',
   },
+
+  -- The idle camera. An isometric lock is possible from Lua alone
+  -- (openmw.camera is exposed to PLAYER scripts -- see scripts/idle/camera.lua),
+  -- so this is a runtime feature, not an engine patch.
+  --
+  -- OFF by default: a forced pitch/yaw latches and is not something to spring on
+  -- a first run, and the exact angle is a taste that wants a real screen to
+  -- judge. Flip `isometric` in the console's Setup tab (or here) to try it.
+  camera = {
+    isometric = false,
+    pitch = -0.6109,    -- radians; ~ -35 deg, the classic 2:1 iso tilt
+    distance = 640,     -- third-person distance in engine units
+    yaw = nil,          -- radians for a fully-fixed heading; nil = follow the actor
+    inManual = false,   -- keep the lock even while the human is driving
+  },
 }
 
 --- Deep-merge user overrides over the defaults.
@@ -290,6 +305,16 @@ function M.validate(cfg)
   if cfg.sensing.questingWeight ~= nil then
     clampProblem(problems, 'sensing.questingWeight', cfg.sensing.questingWeight, 0, 1)
     cfg.sensing.questingWeight = util.clamp(cfg.sensing.questingWeight, 0, 1)
+  end
+
+  cfg.camera = cfg.camera or util.deepCopy(M.defaults.camera)
+  if cfg.camera.pitch ~= nil then
+    clampProblem(problems, 'camera.pitch', cfg.camera.pitch, -1.5707, 1.5707)
+    cfg.camera.pitch = util.clamp(cfg.camera.pitch, -1.5707, 1.5707)
+  end
+  if cfg.camera.distance ~= nil then
+    clampProblem(problems, 'camera.distance', cfg.camera.distance, 64, 8192)
+    cfg.camera.distance = util.clamp(cfg.camera.distance, 64, 8192)
   end
 
   cfg.weightOverrides = cfg.weightOverrides or util.deepCopy(M.defaults.weightOverrides)

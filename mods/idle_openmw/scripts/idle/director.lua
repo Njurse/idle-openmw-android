@@ -54,6 +54,7 @@ local directive = require('scripts.idle.directive')
 local activityLog = require('scripts.idle.activityLog')
 local offlineProgress = require('scripts.idle.offlineProgress')
 local worldsense = require('scripts.idle.worldsense')
+local lifecycle = require('scripts.idle.lifecycle')
 
 local M = {}
 
@@ -324,6 +325,22 @@ function Director:tick(dt, snapshot)
   local natural, ranked, naturalRow = goalScoring.select(view, self.weights, world, self.cfg)
   self.ranked = ranked
 
+  -- Where are we in the game's life? During character creation, the main menu or
+  -- a load screen the director must not touch the character at all: emitting
+  -- movement/act commands there fights the engine's own chargen flow and can
+  -- strand the player before Seyda Neen (scripts/idle/lifecycle.lua).
+  local phase = snapshot.phase or lifecycle.describe('world')
+  self.phase = phase
+  self.ui = snapshot.ui
+
+  if not phase.acting then
+    self.goal = phase.id
+    self.row = { id = phase.id, score = 0, need = 0, opportunity = 0, risk = 0,
+                 aptitude = 0, bias = 0, reason = phase.note or phase.label }
+    self.commands = {}
+    return { goal = self.goal, commands = {}, status = self:status() }
+  end
+
   -- A user directive overrides the director's own choice -- except when the
   -- character is in immediate danger, where safety always wins.
   local pending = self.directives:peek(self.time)
@@ -421,6 +438,12 @@ function Director:status()
     reason = self.row and self.row.reason or nil,
     directive = self:currentDirective() and self:currentDirective().id or nil,
     mode = self.mode,
+    phase = self.phase and self.phase.id or nil,
+    phaseLabel = self.phase and self.phase.label or nil,
+    acting = self.phase ~= nil and self.phase.acting == true,
+    uiMode = self.ui and self.ui.mode or nil,
+    uiKind = self.ui and self.ui.kind or nil,
+    uiLabel = self.ui and self.ui.label or nil,
     level = view.level,
     gold = view.gold or 0,
     healthFraction = view.healthFraction or 1,
@@ -443,6 +466,11 @@ function Director:panelData()
     status = self:status(),
     mode = self.mode,
     directive = self:currentDirective() and self:currentDirective().id or nil,
+    -- Where we are in the game's life, and what the engine has on screen. The
+    -- console shows this so the player can tell "the bot is idle" from "the bot
+    -- is holding fire because you are still creating a character".
+    phase = self.phase,
+    ui = self.ui,
     dialogue = self.dialogueEvents,
     topics = self.memory:knownTopics(),
     log = self.log:recent(60),

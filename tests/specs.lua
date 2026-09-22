@@ -24,9 +24,12 @@ return {
   'tests.spec.runtime_spec',
   'tests.spec.statCrunch_spec',
   'tests.spec.uiLayout_spec',
+  'tests.spec.uiState_spec',
   'tests.spec.worldsense_spec',
   'tests.spec.uiModel_spec',
   'tests.spec.settlement_spec',
   'tests.spec.notify_spec',
   'tests.spec.util_spec',
+  'tests.spec.lifecycle_spec',
+  'tests.spec.camera_spec',
 }
