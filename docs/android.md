@@ -256,3 +256,103 @@ sits below a portrait game surface and hosts our own menu.
 That is the natural next phase, and it is *not* Lua work: it is the Android shell
 plus one patch layer. It is the right way to make "rotate to portrait, put our
 menu underneath" survive the next build.
+
+---
+
+# Where this stopped, and exactly what is needed
+
+## Correcting Finding C (twice)
+
+Two follow-up experiments narrowed it, and both contradict the confident version
+above, so here is the accurate state.
+
+**The space in "Data Files" is not the cause.** Reproduced with a space-free path:
+
+```
+Cannot load file: /storage/emulated/0/omwmod/idle_openmw.omwscripts
+```
+
+**And this build does have script support.** `buildscripts/CMakeLists.txt` has
+
+```cmake
+ExternalProject_Add(luajit  URL https://luajit.org/download/LuaJIT-${LUAJIT_VERSION}.tar.gz ...)
+...
+set(OPENMW_DEPS_ANDROID ... DEPENDS boost openal osg mygui ffmpeg sdl2 bullet lz4 luajit)
+```
+
+So LuaJIT is compiled in and OpenMW depends on it. `.omwscripts` *should* load.
+It does not, and the engine reports it at the **file** level ("Cannot load file"),
+not as a parse error — which points at content/VFS resolution for a mod-provided
+manifest in this 0.48 build, rather than at missing script support.
+
+Remaining hypotheses, in the order worth testing:
+
+1. **0.48 predates `.omwscripts` outside the engine's own VFS.** The port ships
+   `resources/vfs/builtin.omwscripts` as a *resource*, not as a mod. Worth testing
+   by dropping the manifest into that VFS directory and referencing it as content.
+2. **The port's OpenMW commit** (`e92fb245…`, per the 0.48.0-46 release notes) may
+   predate the loader path that mods use.
+3. Patching the port is the guaranteed fix, and needs the build below.
+
+## Why the build cannot start on this machine yet
+
+The port's build system is **Linux-only**, by construction:
+
+```bash
+# buildscripts/include/download-ndk.sh
+curl "https://dl.google.com/android/repository/android-ndk-${NDK_VERSION}-linux-x86_64.zip"
+# buildscripts/include/setup-ndk.sh
+pushd toolchain/ndk/toolchains/llvm/prebuilt/linux-x86_64/bin
+```
+
+The NDK version is pinned in `buildscripts/include/version.sh`:
+
+```
+NDK_VERSION="r21e"  ANDROID_API="21"
+```
+
+NDK r21e does ship Windows host binaries, so the pin is not itself the problem —
+the *scripts* are (Linux NDK zip, `prebuilt/linux-x86_64`, `bash -c`, `pushd`,
+`sed -i`, and a `patches/` tree of Unix diffs). Getting this to build means
+either:
+
+- **WSL2 with a distro** — the straightforward route. It is **not installed**:
+  `wsl --status`, `--version` and `--list` all print the usage banner, i.e. only
+  the inbox stub is present, and `Microsoft-Windows-Subsystem-Linux` /
+  `VirtualMachinePlatform` are not enabled. Enabling them **needs Administrator
+  and normally a reboot** — which is why it was not done automatically. This is
+  the one step that needs you.
+- **A Linux VM or container** (Docker is not installed either).
+- **Porting the build scripts to Windows + NDK r21e-win** — possible, but it means
+  rewriting the dependency superbuild, and it would diverge from upstream.
+
+## The good news: the port already has a patch layer
+
+`buildscripts/patches/` is exactly the mechanism the framework request asked for:
+
+```
+bullet-fix-cmake.patch   mygui-dont-set-debug-postfix.patch
+clang-ccache.sh          sdl2-android-120hz-gyroscope.patch
+gas-preprocessor.pl      openmw/   osg/   gl4es/
+```
+
+Patches are applied during the build, so they survive an upstream refresh by
+construction. The work for portrait + our menu belongs there:
+
+| Change | Where |
+|---|---|
+| Portrait orientation | the port's `AndroidManifest.xml` (`android:screenOrientation`) + SDL window flags |
+| Cutout / gesture-bar insets | `android:windowLayoutInDisplayCutoutMode`, plus inset handling in the activity |
+| `omwscripts` in the Mods list | `mods/ModsCollection.kt` — add `"omwscripts"` to the plugin extensions array |
+| Our menu hosted below the game | a native view under the SDL surface, or a second activity holding a portrait surface |
+
+## What is verified and durable regardless
+
+None of the above invalidates the platform work, which is done and reproducible
+from the scripts in `tools/android/`:
+
+- the AVD, image and page-size choices are correct and boot;
+- the data stager produces the tree the launcher demands (root + `Morrowind.ini`);
+- the launcher is configured reproducibly (`ui-drive.py`);
+- the engine runs on the device and renders;
+- and the mod is one `content=` line away from loading on any engine that supports it.
