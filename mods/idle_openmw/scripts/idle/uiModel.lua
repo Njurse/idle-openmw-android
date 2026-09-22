@@ -489,6 +489,29 @@ local function talkRows(panel)
     end
   end
 
+  -- The topics the player has *unlocked* (types.Player.journal().topics). Tapping
+  -- one walks to the nearest NPC and opens the dialogue window; the topic itself
+  -- has to be picked in the game's own window -- Lua has no hook for selecting a
+  -- dialogue topic (docs/dialogue.md).
+  local known = panel.journalTopics or {}
+  if #known > 0 then
+    rows[#rows + 1] = row({ id = 'known-header', kind = 'heading', label = 'Topics you know' })
+    for i = 1, math.min(12, #known) do
+      local topic = known[i]
+      rows[#rows + 1] = row({
+        id = 'known:' .. tostring(topic.topic),
+        kind = 'action',
+        label = '  ' .. tostring(topic.topic),
+        detail = (topic.lines and topic.lines > 0) and ('%d lines'):format(topic.lines) or nil,
+        action = 'order',
+        payload = { id = 'talk' },
+        selectable = false,
+      })
+    end
+    rows[#rows + 1] = row({ id = 'known-note', kind = 'heading',
+      label = 'Tap a topic to walk over and open the dialogue' })
+  end
+
   local quests = panel.quests or {}
   if #quests > 0 then
     rows[#rows + 1] = row({ id = 'quests-header', kind = 'heading', label = 'Quests' })

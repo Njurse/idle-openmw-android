@@ -447,6 +447,25 @@ describe('runtime.openmw adapter', function()
         local panel = observer.readPanel(env, {})
         expect(panel.journal):toEqualDeep({})
         expect(panel.quests):toEqualDeep({})
+        expect(panel.journalTopics):toEqualDeep({})
+      end)
+    end)
+
+    it('reads the unlocked dialogue topics, sorted, with line counts', function()
+      withEnv({
+        journalTopics = {
+          Background = { entries = { 'a', 'b', 'c' } },
+          ['my trade'] = { entries = {} },
+          Vivec = { entries = { 'x' } },
+        },
+      }, function(env)
+        local panel = observer.readPanel(env, {})
+        assert.equals(#panel.journalTopics, 3)
+        assert.equals(panel.journalTopics[1].topic, 'Background')
+        assert.equals(panel.journalTopics[1].lines, 3)
+        assert.equals(panel.journalTopics[2].topic, 'Vivec')
+        assert.equals(panel.journalTopics[3].topic, 'my trade')
+        assert.equals(panel.journalTopics[3].lines, 0)
       end)
     end)
   end)

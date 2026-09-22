@@ -447,6 +447,33 @@ function M.readJournal(env, actor)
   return out
 end
 
+--- The conversation topics the player has accumulated, sorted by name.
+---
+--- `types.Player.journal(player).topics` is a **map** topicName -> PlayerJournalTopic,
+--- each holding the lines heard for it (types.lua:1383). This is the closest the
+--- engine gets to "the dialogue options you have unlocked": what you can *say* to
+--- an NPC. (We cannot pick one for you -- selecting a topic is a UI action Lua
+--- has no hook for -- but the console lists them, and tapping one walks you over
+--- and opens the real dialogue window. See docs/dialogue.md.)
+function M.readJournalTopics(env, actor)
+  local out = {}
+  local Player = env.types and env.types.Player
+  if not Player or type(Player.journal) ~= 'function' then return out end
+  local journal = safe(Player.journal, actor)
+  if type(journal) ~= 'table' or type(journal.topics) ~= 'table' then return out end
+
+  for name, topic in pairs(journal.topics) do
+    if type(name) == 'string' and name ~= '' then
+      local lines = 0
+      local entries = type(topic) == 'table' and topic.entries or nil
+      if type(entries) == 'table' then lines = #entries end
+      out[#out + 1] = { topic = name, lines = lines }
+    end
+  end
+  table.sort(out, function(a, b) return a.topic < b.topic end)
+  return out
+end
+
 --- Started, unfinished quests, sorted by id (deterministic).
 function M.readQuests(env, actor)
   local out = {}
@@ -507,6 +534,7 @@ function M.readPanel(env, opts)
     },
     inventory = inventory,
     journal = M.readJournal(env, actor),
+    journalTopics = M.readJournalTopics(env, actor),
     quests = M.readQuests(env, actor),
   }
 end
