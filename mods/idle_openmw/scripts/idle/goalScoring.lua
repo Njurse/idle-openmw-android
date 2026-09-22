@@ -21,6 +21,10 @@ local M = {}
 
 M.RISK_SCALE = 2.0
 
+--: Autonomous roaming bumps, applied to the `explore` goal when
+--: `behaviour.roam` is on (see M.scoreAll).
+M.ROAM = { bias = 1.0, opportunityFloor = 0.35 }
+
 -- ---------------------------------------------------------------------------
 -- small accessors over the world snapshot
 -- ---------------------------------------------------------------------------
@@ -228,6 +232,17 @@ function M.rank(statView, weights, world, cfg)
     local aptitude = M.aptitude(goal, weights, statView.capability)
     local bias = (cfg.goalBias and cfg.goalBias[goal.id]) or 1.0
     local riskWeight = goal.riskWeight or 1.0
+
+    -- Autonomous roaming (behaviour.roam): when nothing more pressing needs
+    -- doing, prefer to *wander* over standing still. `explore` normally scores
+    -- zero once the ground is known (its opportunity comes from "unexplored"),
+    -- so roaming floors both its bias and its opportunity -- enough to beat
+    -- `idle` (need 0.05) in a quiet moment, never enough to override survive /
+    -- heal / fight, which carry far larger need * bias.
+    if goal.id == 'explore' and cfg.behaviour and cfg.behaviour.roam then
+      bias = math.max(bias, M.ROAM.bias)
+      opportunity = math.max(opportunity, M.ROAM.opportunityFloor)
+    end
 
     local raw = bias * aptitude * need * opportunity * (1 + (cfg.levelScaling or 0) * level)
     local score = raw - riskWeight * risk * M.RISK_SCALE

@@ -105,6 +105,12 @@ M.defaults = {
     -- starves training and trading. The console lists destinations so you can
     -- order a journey deliberately; this only controls the autonomous case.
     autoTravel = false,
+
+    -- Autonomous roaming: when nothing more pressing needs doing, wander the
+    -- area instead of standing still. OFF by default (like autoTravel): it moves
+    -- the character without being asked. Turn it on from the console's Setup tab
+    -- to let the bot explore on its own between orders.
+    roam = false,
   },
 
   -- "Don't let them die at work." Policy is in scripts/idle/guardian.lua; the

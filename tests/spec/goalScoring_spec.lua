@@ -166,4 +166,32 @@ describe('idle.goalScoring', function()
     local b = gs.rank(view, weights, worlds.town(), cfg)
     for i = 1, #a do assert.equals(a[i].id, b[i].id) end
   end)
+
+  describe('autonomous roaming (behaviour.roam)', function()
+    local function chooseWith(config, world)
+      local view = sc.compute(states.warrior(), classes.warrior)
+      return gs.select(view, cp.buildWeights(classes.warrior), world, config)
+    end
+
+    local roaming = configMod.new({ behaviour = { roam = true } })
+    local quiet = worlds.empty()  -- a known, empty area: nothing to do
+
+    it('stands still (idle) by default', function()
+      assert.equals(chooseWith(cfg, quiet), 'idle')
+    end)
+
+    it('wanders instead once roaming is on', function()
+      assert.equals(chooseWith(roaming, quiet), 'explore')
+    end)
+
+    it('still flees while roaming -- safety beats wandering', function()
+      assert.equals(chooseWith(roaming, worlds.dangerous()), 'flee')
+    end)
+
+    it('still survives while roaming', function()
+      local hurt = states.warrior({ health = { current = 5, base = 120, max = 120 } })
+      local view = sc.compute(hurt, classes.warrior)
+      assert.equals(gs.select(view, cp.buildWeights(classes.warrior), quiet, roaming), 'survive')
+    end)
+  end)
 end)

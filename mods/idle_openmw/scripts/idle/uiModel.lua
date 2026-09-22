@@ -70,6 +70,8 @@ M.OPTIONS = {
     label = 'Simulated actions' },
   { key = 'autoTravel', kind = 'boolean', path = { 'behaviour', 'autoTravel' },
     label = 'Travel on its own' },
+  { key = 'roam', kind = 'boolean', path = { 'behaviour', 'roam' },
+    label = 'Roam on its own' },
   { key = 'npcFightHostility', kind = 'boolean', path = { 'sensing', 'npcFightHostility' },
     label = 'Attack hostile NPCs' },
   { key = 'creaturesAreHostile', kind = 'boolean', path = { 'sensing', 'creaturesAreHostile' },
