@@ -261,38 +261,44 @@ menu underneath" survive the next build.
 
 # Where this stopped, and exactly what is needed
 
-## Correcting Finding C (twice)
+## Finding C (settled) — the engine predates `.omwscripts` itself
 
-Two follow-up experiments narrowed it, and both contradict the confident version
-above, so here is the accurate state.
+My first claim was right, my hedge was wrong, and now there is proof rather than
+confidence. `.omwscripts` support arrived with **OpenMW 0.48.0**, and this APK is
+older than that release by two years:
 
-**The space in "Data Files" is not the cause.** Reproduced with a space-free path:
+| Fact | Value |
+|---|---|
+| `omw_release_0.48.0-46.apk` published | **2021-07-18** |
+| OpenMW **0.48.0** released | **2023-07-22** |
+| `files/data/builtin.omwscripts` at `openmw-0.47.0` | **absent** (`files/data` 404s) |
+| `files/data/builtin.omwscripts` at `openmw-0.48.0` | **present** |
+| `.omwscripts` entries inside the APK | **0** |
 
-```
-Cannot load file: /storage/emulated/0/omwmod/idle_openmw.omwscripts
-```
+The port's "0.48.0-46" is the **port's own** version numbering, not OpenMW's. The
+engine inside is a July 2021 master snapshot, which is *before* the feature
+existed. That is also why the APK's `assets/libopenmw/resources/vfs/` holds
+`openmw_aux/util.lua` but no `builtin.omwscripts` — there was nothing to ship.
 
-**And this build does have script support.** `buildscripts/CMakeLists.txt` has
+So every file-level explanation is ruled out, each by experiment:
 
-```cmake
-ExternalProject_Add(luajit  URL https://luajit.org/download/LuaJIT-${LUAJIT_VERSION}.tar.gz ...)
-...
-set(OPENMW_DEPS_ANDROID ... DEPENDS boost openal osg mygui ffmpeg sdl2 bullet lz4 luajit)
-```
+| Hypothesis | Verdict |
+|---|---|
+| Wrong folder selected (data dir vs root) | ruled out — root works, `check()` passes |
+| File permissions | ruled out — identical to `Morrowind.esm`, which loads |
+| The space in "Data Files" | **ruled out by experiment** — same failure at `/storage/emulated/0/omwmod/` |
+| Lua missing from the build | ruled out — `ExternalProject_Add(luajit)`; but that is *Lua*, not the `.omwscripts` loader |
+| Data-dir/VFS resolution | consistent with everything, but moot: the loader does not exist in this build |
 
-So LuaJIT is compiled in and OpenMW depends on it. `.omwscripts` *should* load.
-It does not, and the engine reports it at the **file** level ("Cannot load file"),
-not as a parse error — which points at content/VFS resolution for a mod-provided
-manifest in this 0.48 build, rather than at missing script support.
+**Consequence: no configuration change can make this APK load the mod.** It needs
+an engine built from OpenMW ≥ 0.48 with the port's Android changes on top — which
+is exactly the build described below. It also means the "patch the launcher's
+extensions array" idea, on its own, would not have been enough: the launcher would
+list the file and the engine would still refuse it.
 
-Remaining hypotheses, in the order worth testing:
-
-1. **0.48 predates `.omwscripts` outside the engine's own VFS.** The port ships
-   `resources/vfs/builtin.omwscripts` as a *resource*, not as a mod. Worth testing
-   by dropping the manifest into that VFS directory and referencing it as content.
-2. **The port's OpenMW commit** (`e92fb245…`, per the 0.48.0-46 release notes) may
-   predate the loader path that mods use.
-3. Patching the port is the guaranteed fix, and needs the build below.
+The practical upshot, and worth saying plainly: **desktop OpenMW runs this mod
+today** (`python tools/android/gamedata.py --print-cfg`), and the emulator work
+is banked for the day a modern engine is built.
 
 ## Why the build cannot start on this machine yet
 
