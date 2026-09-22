@@ -1,6 +1,20 @@
 # --- research / upstream clones (never committed) ---
 /.research/
 
+# --- Morrowind game data (proprietary; ~600 MB). Staged locally so the Android
+# --- deploy step has something to push. NEVER commit this. ---
+/gamedata/
+
+# --- android build workspace (NDK output, APKs, AVD scratch) ---
+/android/build/
+/android/out/
+/build/
+*.keystore
+
+# --- scratch logs from one-off investigations ---
+.esm_search*.log
+.game_hunt.log
+
 # --- agent/tool session metadata (not part of the project) ---
 /.reasonix/
 
