@@ -24,6 +24,11 @@ M.GOAL_FOR = {
   quest = 'quest',
   travel = 'travel',
   explore = 'explore',
+  -- Force a "world action" from the console's Order tab.
+  wait = 'idle',        -- stand still until the TTL lapses
+  stop = 'idle',
+  roam = 'explore',     -- wander the area (same thing explore already does)
+  go_town = 'go_town',  -- travel service if there is one, else walk to town
 }
 
 M.DEFAULT_TTL = 120 -- simulated seconds a directive stays in force

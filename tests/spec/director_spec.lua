@@ -173,6 +173,27 @@ describe('idle.director', function()
         assert.is_true(util.any(commands, function(c) return c.type == 'activate' end))
       end
     end)
+
+    it('sends you to a travel service for go_town when one is near', function()
+      local world = worlds.town()
+      world.nearest.travel = { name = 'Silt Strider', position = { x = 400, y = 0, z = 0 } }
+      local commands = plan('go_town', world)
+      assert.is_true(util.any(commands, function(c)
+        return c.type == 'activate' and c.kind == 'travel'
+      end))
+    end)
+
+    it('walks to town on foot when there is no travel service', function()
+      local commands = plan('go_town', worlds.town())
+      assert.is_true(util.any(commands, function(c)
+        return c.type == 'activate' and c.kind == 'shop'
+      end))
+    end)
+
+    it('wanders for go_town in the middle of nowhere', function()
+      local commands = plan('go_town', worlds.empty())
+      assert.equals(commands[1].type, 'wander')
+    end)
   end)
 
   describe('helpers', function()

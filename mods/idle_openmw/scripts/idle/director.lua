@@ -184,6 +184,24 @@ function M.planCommands(goalId, statView, world, snapshot, cfg, ctx)
   elseif goalId == 'explore' then
     commands[#commands + 1] = { type = 'wander', radius = 1500 }
 
+  elseif goalId == 'go_town' then
+    -- "Take me somewhere with people." Prefer a service that relocates you (silt
+    -- strider / boat / guild guide -- its window lists the destinations), else
+    -- walk to the nearest town-ish fixture. Directive-only: it is never scored.
+    local nearest = (world and world.nearest) or {}
+    if nearest.travel then
+      moveThenActivate('travel', 'travel', false)
+    else
+      local townKey = nearest.shop and 'shop'
+        or (nearest.healer and 'healer')
+        or (nearest.trainer and 'trainer')
+      if townKey then
+        moveThenActivate(townKey, townKey, false)
+      else
+        commands[#commands + 1] = { type = 'wander', radius = 3000 }
+      end
+    end
+
   elseif goalId == 'idle' then
     commands[#commands + 1] = { type = 'stop' }
 

@@ -8,6 +8,11 @@ describe('idle.directive', function()
     assert.is_true(directive.isKnown('rest'))
     assert.is_false(directive.isKnown('conquer-the-world'))
     assert.is_true(#directive.ids() >= 6)
+    -- world actions the console offers
+    assert.equals(directive.GOAL_FOR.wait, 'idle')
+    assert.equals(directive.GOAL_FOR.roam, 'explore')
+    assert.equals(directive.GOAL_FOR.go_town, 'go_town')
+    assert.is_true(directive.isKnown('go_town'))
   end)
 
   it('rejects unknown directives', function()

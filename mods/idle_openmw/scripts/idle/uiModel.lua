@@ -61,6 +61,10 @@ M.ORDERS = {
   { id = 'quest', label = 'Do a quest' },
   { id = 'travel', label = 'Travel' },
   { id = 'explore', label = 'Explore' },
+  -- "World actions": keep the character in place, or move it deliberately.
+  { id = 'wait', label = 'Wait / stop' },
+  { id = 'roam', label = 'Roam the area' },
+  { id = 'go_town', label = 'Go to town' },
 }
 
 --- Options the player can cycle from the Setup tab. Each is a dotted path into
