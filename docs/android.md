@@ -137,3 +137,122 @@ python tools/android/gamedata.py --print-cfg ./gamedata   # paste into your user
 
 That is worth doing *before* wrestling the emulator: it separates "the mod is
 broken" from "the 2021 APK on a 2026 emulator is grumpy".
+
+---
+
+# Verified on the emulator (what actually happened)
+
+Everything below was observed on a real virtual device, not inferred. The
+milestones are listed in the order they were reached, with the evidence.
+
+| # | Milestone | Evidence |
+|---|---|---|
+| 1 | Virtual device boots, right shape for OpenMW | `Android 14 (API 34)`, `abi=x86_64`, `PAGE_SIZE=4096` |
+| 2 | OpenMW 0.48 installs and **renders** | screenshot 1080x2340, 270 distinct colours, grey/white launcher UI |
+| 3 | The port accepts the game data | Setup shows `Game files → /storage/emulated/0/Morrowind`, no error |
+| 4 | The **engine runs** | OpenAL context created, `openmw.cfg` (66 KB) + `openmw.base.cfg` generated |
+| 5 | Our mod enters the content list | regenerated config contains `content=idle_openmw.omwscripts` |
+
+## Finding A — the launcher needs the install ROOT, not `Data Files`
+
+The first attempt pointed "Game files" at `.../Morrowind/Data Files` and got:
+
+> **Error locating data files** — *"Please select a directory which contains both
+> the \"Morrowind.ini\" file and the \"Data Files\" directory."*
+
+From the port's source (`app/src/main/java/file/GameInstaller.kt`):
+
+```kotlin
+fun check(): Boolean {
+    if (!dir.exists() || !dir.isDirectory) return false
+    return findCaseInsensitive(INI_NAME) != null     // morrowind.ini
+        && findCaseInsensitive(DATA_NAME) != null    // "Data Files"
+}
+```
+
+It then **parses that ini** (`convertIni`) to generate `openmw.cfg`. So
+`Morrowind.ini` is not optional, and it belongs beside `Data Files`, not inside
+it. `tools/android/gamedata.py` now stages exactly that tree, and its unit tests
+cover the case-insensitivity the launcher uses.
+
+## Finding B — this launcher cannot register `.omwscripts` at all
+
+`app/src/main/java/mods/ModsCollection.kt`:
+
+```kotlin
+private var extensions: Array<String> = if (type == ModType.Resource)
+    arrayOf("bsa")
+else
+    arrayOf("esm", "esp", "omwaddon", "omwgame")
+```
+
+`.omwscripts` is **not** in that list, and the scan is a non-recursive
+`File(dataFiles).listFiles()`. So the Mods screen can never show our manifest,
+and the only way in is to inject the `content=` line by hand.
+
+`openmw.cfg` is **regenerated from scratch on every launch**:
+
+```kotlin
+var output = base + "\n" + fallback + "\n"     // base = openmw.base.cfg, read verbatim
+plugins.mods.filter { it.enabled }.forEach { output += "content=${it.filename}\n" }
+File(Constants.OPENMW_CFG).writeText(output)
+```
+
+Hand-editing `openmw.cfg` is therefore pointless; `openmw.base.cfg` is the durable
+hook, and that is what `run-on-emulator.sh` writes to.
+
+## Finding C — and the engine still cannot load the file
+
+With the line injected, OpenMW failed at startup with a dialog (which is easy to
+miss — the process stays alive behind it, so the app **looks** like it started):
+
+```
+OpenMW: Fatal error
+Cannot load file: /storage/emulated/0/Morrowind/Data Files/idle_openmw.omwscripts
+```
+
+The isolating test: **remove the line and the error disappears** and the engine
+runs on. So the location is perfectly readable (`Morrowind.esm` loads from that
+same directory) — **this OpenMW 0.48 build cannot load `.omwscripts` content.**
+
+That is a hard incompatibility between our manifest format and this 2021 APK, not
+a configuration mistake. Options, in order of preference:
+
+1. **Build OpenMW ≥ 0.49 for Android** (the `.omwscripts` support and the Lua API
+   this mod is written against). Needs the NDK + a Unix toolchain — see below.
+2. **Ship a legacy `.esp`-free fallback**: register the mod through a content type
+   the launcher *does* accept. `omwaddon`/`omwgame` are recognised extensions, but
+   they are record files, not script manifests, so this means generating a stub
+   addon that carries no records — workable but a hack.
+3. **Patch the launcher** to add `omwscripts` to its extensions array and rebuild
+   the APK (small change; still needs the Android build).
+
+## Finding D — the game renders sideways (confirmed)
+
+```
+framebuffer  : 2340x1080        (the device is portrait)
+mBounds      : Rect(0, 0 - 2340, 1080)
+mAppBounds   : Rect(136, 0 - 2340, 1014)
+mRotation    : ROTATION_90
+```
+
+OpenMW forces landscape, so on a phone it is sideways, and the system applies the
+cutout/nav inset on the *left* (`mAppBounds.x = 136`) because it thinks it is
+landscape. Fixing this is C++/manifest work in the port, not Lua:
+
+- set portrait in the port's `AndroidManifest.xml` activity config;
+- stop SDL forcing a landscape mode (the port sets it for the SDLWindow);
+- honour `displayCutout` + `navigationBars` insets for the top and the gesture bar.
+
+## Finding E — the architecture this wants (the framework request)
+
+The changes above are all *port-level* edits, and they will need to be re-applied
+whenever the port is rebuilt. So they should live in one place rather than being
+scattered: a thin **`android/patch/` layer** — a small set of documented,
+idempotent patches (manifest, orientation, insets, the mod-registration fix)
+applied by script after any upstream refresh, plus a **native host view** that
+sits below a portrait game surface and hosts our own menu.
+
+That is the natural next phase, and it is *not* Lua work: it is the Android shell
+plus one patch layer. It is the right way to make "rotate to portrait, put our
+menu underneath" survive the next build.

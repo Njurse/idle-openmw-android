@@ -15,13 +15,21 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 import gamedata  # noqa: E402
 
 
-def make_install(root: Path, names=gamedata.REQUIRED_FILES, data_name="Data Files") -> Path:
-    """Build a fake Morrowind install with the given files."""
-    data = root / "Morrowind" / data_name
+def make_install(root: Path, names=gamedata.REQUIRED_FILES, data_name="Data Files",
+                 ini: bool = True, ini_name: str = "Morrowind.ini") -> Path:
+    """Build a fake Morrowind install with the given files.
+
+    The root gets a Morrowind.ini because OpenMW-Android requires one beside
+    "Data Files" -- an install without it is not selectable on a device.
+    """
+    install = root / "Morrowind"
+    data = install / data_name
     data.mkdir(parents=True, exist_ok=True)
     for index, name in enumerate(names):
         (data / name).write_bytes(b"x" * (index + 1))
-    return root / "Morrowind"
+    if ini:
+        (install / ini_name).write_text("[Game Files]\nGameFile0=Morrowind.esm\n", encoding="utf-8")
+    return install
 
 
 class DataDirTest(unittest.TestCase):
@@ -138,17 +146,55 @@ class SteamLibraryTest(unittest.TestCase):
         self.assertEqual(gamedata.steam_library_roots(Path("nope")), [])
 
 
+class ValidateInstallTest(unittest.TestCase):
+    """The check OpenMW-Android performs, and whose failure reads
+    "Error locating data files" on the device."""
+
+    def test_ok_with_ini_and_data_files(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            report = gamedata.validate_install(make_install(Path(tmp)))
+            self.assertTrue(report["ok"])
+            self.assertEqual(report["missing"], [])
+            self.assertIsNotNone(report["ini"])
+
+    def test_missing_ini_is_reported_first(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            report = gamedata.validate_install(make_install(Path(tmp), ini=False))
+            self.assertFalse(report["ok"])
+            self.assertEqual(report["missing"][0], "Morrowind.ini")
+            self.assertIsNone(report["ini"])
+
+    def test_ini_match_is_case_insensitive(self):
+        # the launcher matches case-insensitively (GameInstaller.findCaseInsensitive)
+        with tempfile.TemporaryDirectory() as tmp:
+            report = gamedata.validate_install(make_install(Path(tmp), ini_name="morrowind.INI"))
+            self.assertTrue(report["ok"])
+
+    def test_a_data_files_dir_without_an_ini_fails(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            install = make_install(Path(tmp), ini=False)
+            report = gamedata.validate_install(install / "Data Files")
+            self.assertFalse(report["ok"])
+
+    def test_find_root_file_is_case_insensitive(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            install = make_install(Path(tmp), ini_name="MORROWIND.ini")
+            self.assertEqual(gamedata.find_root_file(install, "Morrowind.ini").name, "MORROWIND.ini")
+            self.assertIsNone(gamedata.find_root_file(install, "nope") )
+
+
 class OpenmwCfgTest(unittest.TestCase):
-    def test_emits_data_and_content_lines(self):
-        cfg = gamedata.openmw_cfg_fragment(Path("C:/Games/Morrowind/Data Files"))
+    def test_emits_both_data_dirs_and_content(self):
+        cfg = gamedata.openmw_cfg_fragment(Path("C:/Games/Morrowind"))
         self.assertIn('data="C:/Games/Morrowind/Data Files"', cfg)
+        self.assertIn('data="C:/Games/Morrowind/Mods/idle_openmw"', cfg)
         for name in gamedata.CONTENT_LOAD_ORDER:
             self.assertIn(f"content={name}", cfg)
+        self.assertIn("content=idle_openmw.omwscripts", cfg)
 
     def test_backslashes_become_forward_slashes(self):
-        cfg = gamedata.openmw_cfg_fragment(Path(r"C:\Games\Morrowind\Data Files"))
+        cfg = gamedata.openmw_cfg_fragment(Path(r"C:\Games\Morrowind"))
         self.assertIn('data="C:/Games/Morrowind/Data Files"', cfg)
-        self.assertNotIn("\\", cfg.split("data=")[1].splitlines()[0])
 
     def test_load_order_is_morrowind_then_official_expansions(self):
         self.assertEqual(gamedata.CONTENT_LOAD_ORDER,
@@ -156,12 +202,18 @@ class OpenmwCfgTest(unittest.TestCase):
 
 
 class ImportTest(unittest.TestCase):
-    def test_plan_lists_every_required_file(self):
+    def test_plan_reproduces_the_device_layout(self):
         with tempfile.TemporaryDirectory() as tmp:
             install = make_install(Path(tmp))
-            pairs = gamedata.plan_import(install, Path(tmp) / "staged")
-            self.assertEqual(len(pairs), len(gamedata.REQUIRED_FILES))
-            self.assertTrue(all(dst.parent == Path(tmp) / "staged" for _, dst in pairs))
+            staged = Path(tmp) / "staged"
+            pairs = gamedata.plan_import(install, staged)
+            # the ini at the root, the masters under "Data Files"
+            self.assertEqual(len(pairs), len(gamedata.REQUIRED_FILES) + 1)
+            self.assertIn((gamedata.find_root_file(install, "Morrowind.ini"),
+                           staged / "Morrowind.ini"), pairs)
+            self.assertTrue(all(
+                dst.parent == staged / "Data Files"
+                for src, dst in pairs if dst.name != "Morrowind.ini"))
 
     def test_plan_rejects_a_directory_without_data_files(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -172,14 +224,17 @@ class ImportTest(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             install = make_install(Path(tmp))
             dest = Path(tmp) / "staged"
+            expected = len(gamedata.REQUIRED_FILES) + 1
 
             first = gamedata.import_data(install, dest)
-            self.assertEqual(len(first["copied"]), len(gamedata.REQUIRED_FILES))
+            self.assertEqual(len(first["copied"]), expected)
             self.assertEqual(first["skipped"], [])
+            self.assertTrue((dest / "Morrowind.ini").is_file())
+            self.assertTrue((dest / "Data Files" / "Morrowind.esm").is_file())
 
             second = gamedata.import_data(install, dest)
             self.assertEqual(second["copied"], [])
-            self.assertEqual(len(second["skipped"]), len(gamedata.REQUIRED_FILES))
+            self.assertEqual(len(second["skipped"]), expected)
 
     def test_import_redoes_a_truncated_file(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -188,12 +243,13 @@ class ImportTest(unittest.TestCase):
             gamedata.import_data(install, dest)
 
             # simulate a half-finished copy from a previous run
-            victim = dest / "Morrowind.esm"
+            victim = dest / "Data Files" / "Morrowind.esm"
             victim.write_bytes(b"")
 
             again = gamedata.import_data(install, dest)
             self.assertIn("Morrowind.esm", again["copied"])
-            self.assertEqual(victim.stat().st_size, (gamedata.data_dir_of(install) / "Morrowind.esm").stat().st_size)
+            self.assertEqual(victim.stat().st_size,
+                             (gamedata.data_dir_of(install) / "Morrowind.esm").stat().st_size)
 
 
 class ManifestTest(unittest.TestCase):

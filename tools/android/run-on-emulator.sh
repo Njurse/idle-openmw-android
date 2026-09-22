@@ -14,6 +14,19 @@
 
 set -euo pipefail
 
+# MSYS (Git Bash) rewrites arguments that look like Unix paths into Windows ones,
+# so `adb shell mkdir -p /storage/emulated/0/Morrowind` becomes
+# `mkdir -p C:/Program Files/...` and fails with "Read-only file system".
+#
+# The fix has to be one-sided: device paths must reach adb untouched, but local
+# paths passed to adb.exe (a Windows binary) must be Windows paths. So we disable
+# conversion globally and convert the LOCAL paths ourselves with winpath().
+export MSYS_NO_PATHCONV=1
+
+# A Windows path for a local file, as adb.exe requires. Falls back to the input
+# when cygpath is unavailable (e.g. running under WSL).
+winpath() { cygpath -w "$1" 2>/dev/null || printf '%s' "$1"; }
+
 AVD_NAME="${AVD_NAME:-idle_openmw}"
 PKG="${PKG:-is.xyz.omw_nightly}"
 DEVICE_ROOT="${DEVICE_ROOT:-/storage/emulated/0/Morrowind}"
@@ -77,31 +90,76 @@ MSG
   exit 1
 fi
 say "installing $(basename "$APK")"
-"$ADB" install -r -g "$APK"
+"$ADB" install -r -g "$(winpath "$APK")"
 
 # ---------------------------------------------------------------------------
 # 3. the game data
 # ---------------------------------------------------------------------------
 DATA_DIR="$REPO/gamedata"
-if [ ! -f "$DATA_DIR/Morrowind.esm" ]; then
-  echo "No staged game data. Run: python tools/android/gamedata.py --import" >&2
+if [ ! -f "$DATA_DIR/Data Files/Morrowind.esm" ] || [ ! -f "$DATA_DIR/Morrowind.ini" ]; then
+  echo "Staged game data is incomplete or missing." >&2
+  echo "Run: python tools/android/gamedata.py --import" >&2
   exit 1
 fi
 
-say "pushing Morrowind data to '$DEVICE_ROOT/Data Files' (this takes a minute)"
-"$ADB" shell mkdir -p "'$DEVICE_ROOT/Data Files'" "'$DEVICE_ROOT/Mods'"
-for f in "$DATA_DIR"/*.esm "$DATA_DIR"/*.bsa; do
-  [ -f "$f" ] || continue
-  echo "  $(basename "$f")"
-  "$ADB" push "$f" "$DEVICE_ROOT/Data Files/" >/dev/null
-done
+# The port's launcher requires a folder holding BOTH Morrowind.ini AND "Data
+# Files" (GameInstaller.check()), and it parses that ini to generate openmw.cfg.
+# So we push the staged tree as-is, root included.
+say "pushing the game tree to '$DEVICE_ROOT' (this takes a minute)"
+"$ADB" shell mkdir -p "'$DEVICE_ROOT'"
+"$ADB" push "$(winpath "$DATA_DIR/Data Files")" "$DEVICE_ROOT/" >/dev/null
+echo "  Data Files/ (6 files)"
+"$ADB" push "$(winpath "$DATA_DIR/Morrowind.ini")" "$DEVICE_ROOT/" >/dev/null
+echo "  Morrowind.ini"
 
 # ---------------------------------------------------------------------------
 # 4. the mod
 # ---------------------------------------------------------------------------
-say "pushing the mod to '$DEVICE_ROOT/Mods/idle_openmw'"
-"$ADB" shell rm -rf "'$DEVICE_ROOT/Mods/idle_openmw'"
-"$ADB" push "$REPO/mods/idle_openmw" "$DEVICE_ROOT/Mods/" >/dev/null
+# The launcher scans mods from the **Data Files** directory and only recognises
+# plugins with the extensions esm/esp/omwaddon/omwgame (mods/ModsCollection.kt).
+# `.omwscripts` is NOT among them, so the mod cannot be registered through the
+# Mods UI on this 2021 build. Two consequences:
+#
+#   * the manifest and its scripts/ tree must live INSIDE Data Files, so the
+#     data directory already covers them; and
+#   * the `content=` line has to be injected into openmw.base.cfg, which the
+#     launcher reads verbatim and re-concatenates into openmw.cfg on every
+#     launch. Editing openmw.cfg directly does not survive a launch.
+#
+# This needs root (the config lives in app-private storage); `adb root` works on
+# a google_apis image but not on a playstore one. See docs/android.md.
+say "installing the mod into '$DEVICE_ROOT/Data Files'"
+"$ADB" push "$(winpath "$REPO/mods/idle_openmw/idle_openmw.omwscripts")" \
+       "$DEVICE_ROOT/Data Files/" >/dev/null
+"$ADB" push "$(winpath "$REPO/mods/idle_openmw/scripts")" \
+       "$DEVICE_ROOT/Data Files/" >/dev/null
+echo "  idle_openmw.omwscripts + scripts/"
+
+say "injecting the content line into openmw.base.cfg"
+APP_DIR="/data/data/${PKG}/files/config"
+BASE_CFG="$APP_DIR/openmw.base.cfg"
+# OPT-IN, because on this OpenMW 0.48 build the engine then dies at startup with
+# "Cannot load file: .../idle_openmw.omwscripts" -- .omwscripts content is not
+# loadable by the 2021 APK (see docs/android.md, Finding C). Injecting it is
+# correct for a newer engine; on 0.48 it breaks the launch. So: off by default.
+if [ "${INJECT_CONTENT:-0}" != "1" ]; then
+  echo "  SKIPPED (set INJECT_CONTENT=1 to enable)."
+  echo "  The 2021 APK cannot load .omwscripts; see docs/android.md Finding C."
+  echo "  The mod's files are installed, so a newer engine will pick them up."
+elif "$ADB" shell "[ -f $BASE_CFG ]" 2>/dev/null; then
+  if "$ADB" shell "grep -q idle_openmw.omwscripts $BASE_CFG" 2>/dev/null; then
+    echo "  already present"
+  else
+    "$ADB" shell "printf 'data=\"$DEVICE_ROOT/Data Files\"\ncontent=idle_openmw.omwscripts\n' >> $BASE_CFG"
+    echo "  appended"
+  fi
+else
+  echo "  SKIPPED: $BASE_CFG not found."
+  echo "  Launch the game once with the data folder configured, then re-run this"
+  echo "  script, or add these lines to the user openmw.cfg by hand:"
+  echo "      data=\"$DEVICE_ROOT/Data Files\""
+  echo "      content=idle_openmw.omwscripts"
+fi
 
 # the exact cfg lines the device needs, written next to the data for reference
 cat > "$DATA_DIR/openmw.cfg.android" <<EOF
@@ -114,7 +172,7 @@ content=Tribunal.esm
 content=Bloodmoon.esm
 content=idle_openmw.omwscripts
 EOF
-"$ADB" push "$DATA_DIR/openmw.cfg.android" "$DEVICE_ROOT/" >/dev/null
+"$ADB" push "$(winpath "$DATA_DIR/openmw.cfg.android")" "$DEVICE_ROOT/" >/dev/null
 say "wrote $DEVICE_ROOT/openmw.cfg.android"
 
 # ---------------------------------------------------------------------------
