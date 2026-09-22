@@ -32,4 +32,5 @@ return {
   'tests.spec.util_spec',
   'tests.spec.lifecycle_spec',
   'tests.spec.camera_spec',
+  'tests.spec.theme_spec',
 }

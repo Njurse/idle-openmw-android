@@ -201,6 +201,11 @@ M.defaults = {
     -- 'directive' -- auto-play, but your orders take precedence
     -- 'auto'    -- fully self-playing (default)
     startMode = 'auto',
+
+    -- The console palette (scripts/idle/theme.lua). 'morrowind' uses the game's
+    -- own GMST font colours (tan 202,165,96 / parchment 223,201,159 / health red
+    -- 200,60,30 …); 'plain' is a high-contrast alternative for a bright screen.
+    theme = 'morrowind',
   },
 
   -- The idle camera. An isometric lock is possible from Lua alone

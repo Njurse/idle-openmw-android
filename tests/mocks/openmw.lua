@@ -496,6 +496,10 @@ function M.env(spec)
       getGameTime = function() return spec.gameTime or 0 end,
       getRealTime = function() return spec.realTime or 0 end,
       getSimulationTimeScale = function() return 1 end,
+      -- Morrowind's font colours are exposed as "r,g,b" strings
+      -- (files/openmw.cfg fallback=FontColor_color_*). Absent by default so the
+      -- theme falls back to its shipped palette, exactly as on a bare engine.
+      getGMST = function(name) return spec.gmst and spec.gmst[name] or nil end,
       -- Recorded, not dropped: the guardian's two rescue actions go out this way
       -- (see scripts/idleWarden.lua), so tests must be able to see them.
       sendGlobalEvent = function(name, data)

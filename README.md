@@ -102,6 +102,7 @@ citation in [docs/openmw-lua-api.md](docs/openmw-lua-api.md) or a test.
 | Order the character around while it auto-plays | ✅ implemented (directives) |
 | Full 1000-hour unattended run | ✅ simulated green (`--sim`) |
 | Read the engine's live UI (which window is open) | ✅ implemented (`ui._getUiModeStack` → `idle/uiState.lua`, console "On screen" row) |
+| Morrowind-styled console | ✅ colours adopted from the game's own GMSTs (`idle/theme.lua`); the font is already Morrowind's (`MysticCards`) |
 | Do not disturb character creation | ✅ implemented (`types.Player.isCharGenFinished` → `idle/lifecycle.lua` gate) |
 | **Drive the player with AI packages** | ❌ impossible — the engine throws `Can't add AI packages to player` |
 | **Automate the barter / rest / training UI** | ❌ no Lua API; performed directly instead |
@@ -140,6 +141,7 @@ mods/idle_openmw/                 the mod you install
     │   ├── uiLayout.lua          console geometry (panel/tabs/rows/regions)
     │   ├── uiModel.lua           console brain: tabs, rows, footers, scrolling
     │   ├── uiState.lua           engine UI mode -> kind (the live "UI hook")
+    │   ├── theme.lua             Morrowind UI palette (roles -> colours)
     │   ├── lifecycle.lua         menu/chargen/loading/dead/world phase gate
     │   ├── camera.lua            isometric camera lock (pitch/distance)
     │   ├── activityLog.lua       bounded log
@@ -161,7 +163,7 @@ tests/                            headless, no engine
 └── sim/headless_sim.lua          1000-game-hour invariant run
 
 tools/run_tests.py                lupa driver (LuaJIT 2.1 by default)
-docs/                             verified API, architecture, deployment, limits, UI/isometric
+docs/                             verified API, architecture, deployment, limits, UI/isometric, theme
 ```
 
 ---

@@ -35,6 +35,7 @@ local engine = require('scripts.runtime.engine')
 local uiLayout = require('scripts.idle.uiLayout')
 local uiModel = require('scripts.idle.uiModel')
 local util = require('scripts.idle.util')
+local themeMod = require('scripts.idle.theme')
 
 local ui = engine.ui()
 local engines = engine.util()
@@ -60,6 +61,7 @@ local state = {
   -- in the director (see docs/limitations.md section 3).
   collapsed = false,
   hidden = false,
+  theme = nil,
 }
 
 -- ---------------------------------------------------------------------------
@@ -80,6 +82,27 @@ local function rgb(r, g, b)
 end
 
 local function vec2(x, y) return engines.vector2(x, y) end
+
+--- A theme role (see scripts/idle/theme.lua) as an engine colour.
+local function roleColour(role)
+  local c = role and themeMod.colour(state.theme, role)
+  if not c then return nil end
+  return rgb(c.r, c.g, c.b)
+end
+
+--- The colour a list row wants: its kind/level, or the selection highlight.
+local function rowColour(row, selected)
+  local c = selected and themeMod.colour(state.theme, 'rowSelected')
+  c = c or themeMod.rowColour(state.theme, row)
+  if not c then return nil end
+  return rgb(c.r, c.g, c.b)
+end
+
+local function setColour(element, colour)
+  if not element or not colour then return end
+  element.layout.props.textColor = colour
+  element:update()
+end
 
 local function usable()
   if state.disabled then return false end
@@ -245,6 +268,18 @@ local function build()
     if ok and value then startMode = value end
   end
 
+  -- The palette. Prefer the game's *live* Morrowind colours via core.getGMST;
+  -- fall back to the shipped ones (scripts/idle/theme.lua).
+  local core = engine.core()
+  local getGmst = nil
+  if core and type(core.getGMST) == 'function' then
+    getGmst = function(name)
+      local ok, value = pcall(core.getGMST, name)
+      if ok then return value end
+    end
+  end
+  state.theme = themeMod.load(cfg and cfg.ui and cfg.ui.theme, getGmst)
+
   local screen = nil
   if ui.screenSize then
     local ok, size = pcall(ui.screenSize)
@@ -269,18 +304,18 @@ local function build()
   -- --- top strip (four text rows + a mode button) ---
   local stripHeight = math.floor(20 * scale)
   local strip = {
-    { key = 'mode', size = 15 * textScale, colour = rgb(1.0, 0.85, 0.40), template = 'textHeader' },
-    { key = 'goal', size = 13 * textScale, colour = rgb(0.95, 0.95, 0.95), template = 'textNormal' },
-    { key = 'pools', size = 12 * textScale, colour = rgb(0.80, 0.92, 0.80), template = 'textNormal' },
-    { key = 'gold', size = 12 * textScale, colour = rgb(0.92, 0.86, 0.52), template = 'textNormal' },
-    { key = 'log', size = 11 * textScale, colour = rgb(0.72, 0.72, 0.72), template = 'textNormal' },
+    { key = 'mode', size = 15 * textScale, role = 'mode', template = 'textHeader' },
+    { key = 'goal', size = 13 * textScale, role = 'goal', template = 'textNormal' },
+    { key = 'pools', size = 12 * textScale, role = 'pools', template = 'textNormal' },
+    { key = 'gold', size = 12 * textScale, role = 'gold', template = 'textNormal' },
+    { key = 'log', size = 11 * textScale, role = 'log', template = 'textNormal' },
   }
   state.elements.top = {}
   for index, row in ipairs(strip) do
     state.elements.top[row.key] = createElement({
       x = layout.base.margin, y = layout.base.safeTop + (index - 1) * stripHeight,
       width = layout.screen.width - layout.base.margin * 2, height = stripHeight,
-      size = row.size, color = row.colour, template = row.template,
+      size = row.size, color = roleColour(row.role), template = row.template,
       onTap = row.key == 'mode' and onModeTap or nil,
     })
   end
@@ -299,7 +334,7 @@ local function build()
     local tabId = tab.id
     state.elements.tabs[tabId] = createElement({
       x = tab.x, y = tab.y, width = tab.width, height = tab.height,
-      text = tab.label, size = 12 * textScale, color = rgb(0.9, 0.9, 0.9),
+      text = tab.label, size = 12 * textScale, color = roleColour('tabIdle'),
       template = 'textNormal',
       onTap = function() onTabTap(tabId) end,
     })
@@ -313,7 +348,7 @@ local function build()
     state.elements.rows[index] = createElement({
       x = rect.x + math.floor(4 * scale), y = rect.y,
       width = rect.width - math.floor(8 * scale), height = rect.height,
-      size = 11 * textScale, template = 'textNormal',
+      size = 11 * textScale, color = roleColour('row'), template = 'textNormal',
       onTap = function() onRowTap(index) end,
     })
   end
@@ -322,13 +357,13 @@ local function build()
   state.elements.scrollUp = createElement({
     x = layout.list.up.x, y = layout.list.up.y,
     width = layout.list.up.width, height = layout.list.up.height,
-    text = '^', size = 14 * textScale, color = rgb(0.9, 0.9, 0.6), template = 'textNormal',
+    text = '^', size = 14 * textScale, color = roleColour('scroll'), template = 'textNormal',
     onTap = function() onScroll(-3) end,
   })
   state.elements.scrollDown = createElement({
     x = layout.list.down.x, y = layout.list.down.y,
     width = layout.list.down.width, height = layout.list.down.height,
-    text = 'v', size = 14 * textScale, color = rgb(0.9, 0.9, 0.6), template = 'textNormal',
+    text = 'v', size = 14 * textScale, color = roleColour('scroll'), template = 'textNormal',
     onTap = function() onScroll(3) end,
   })
 
@@ -338,7 +373,7 @@ local function build()
     state.elements.page = createElement({
       x = layout.page.x + math.floor(6 * scale), y = layout.page.y,
       width = layout.page.width - math.floor(12 * scale), height = layout.page.height,
-      text = '', size = 10 * textScale, color = rgb(0.75, 0.75, 0.75), template = 'textNormal',
+      text = '', size = 10 * textScale, color = roleColour('page'), template = 'textNormal',
     })
   end
 
@@ -348,7 +383,7 @@ local function build()
   for index, rect in ipairs(layout.footer) do
     state.elements.footer[index] = createElement({
       x = rect.x + 2, y = rect.y, width = rect.width - 4, height = rect.height,
-      text = '', size = 12 * textScale, color = rgb(1, 1, 1), template = 'textHeader',
+      text = '', size = 12 * textScale, color = roleColour('footer'), template = 'textHeader',
       onTap = function() onFooterTap(index) end,
     })
   end
@@ -399,10 +434,12 @@ local function render()
       tostring(lastLog.message)))
     or 'starting up…')
 
-  -- tabs (highlight the active one)
+  -- tabs (highlight the active one, in the theme's colours)
   for _, tab in ipairs(view.tabs) do
     local element = state.elements.tabs[tab.id]
-    setText(element, (tab.id == view.tab and '[' .. tab.label .. ']' or tab.label))
+    local active = (tab.id == view.tab)
+    setText(element, (active and '[' .. tab.label .. ']' or tab.label))
+    setColour(element, roleColour(active and 'tabActive' or 'tabIdle'))
   end
 
   -- rows
@@ -415,6 +452,8 @@ local function render()
       local absolute = view.offset + index
       local marker = (absolute == view.selection) and '>' or ' '
       setText(element, marker .. ' ' .. uiModel.formatRow(row))
+      -- colour by kind/level, with the selection picked out (scripts/idle/theme.lua)
+      setColour(element, rowColour(row, absolute == view.selection))
     end
   end
 

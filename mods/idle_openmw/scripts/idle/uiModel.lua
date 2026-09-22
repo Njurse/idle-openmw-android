@@ -80,6 +80,8 @@ M.OPTIONS = {
     choices = { 'auto', 'directive', 'manual' }, label = 'Mode on load' },
   { key = 'isometric', kind = 'boolean', path = { 'camera', 'isometric' },
     label = 'Isometric camera' },
+  { key = 'theme', kind = 'choice', path = { 'ui', 'theme' },
+    choices = { 'morrowind', 'plain' }, label = 'Console colours' },
 }
 
 --- Read an option's current value out of a config by its path.
