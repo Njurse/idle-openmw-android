@@ -89,6 +89,8 @@ M.OPTIONS = {
     label = 'Isometric camera' },
   { key = 'theme', kind = 'choice', path = { 'ui', 'theme' },
     choices = { 'morrowind', 'plain' }, label = 'Console colours' },
+  { key = 'tapToMove', kind = 'boolean', path = { 'ui', 'tapToMove' },
+    label = 'Tap the world to move' },
 }
 
 --- Read an option's current value out of a config by its path.

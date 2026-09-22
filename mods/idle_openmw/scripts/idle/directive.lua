@@ -29,6 +29,8 @@ M.GOAL_FOR = {
   stop = 'idle',
   roam = 'explore',     -- wander the area (same thing explore already does)
   go_town = 'go_town',  -- travel service if there is one, else walk to town
+  -- Tap-to-move: the payload carries the destination (and target) the tap chose.
+  walk_to = 'walk_to',
 }
 
 M.DEFAULT_TTL = 120 -- simulated seconds a directive stays in force

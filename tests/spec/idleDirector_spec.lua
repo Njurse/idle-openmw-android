@@ -441,4 +441,48 @@ describe('runtime.idleDirector lifecycle + camera wiring', function()
       assert.equals(#env._cameraCalls, 0)
     end)
   end)
+
+  it('turns a screen tap into a walk_to order', function()
+    withScript(base({
+      cameraPosition = { x = 0, y = 0, z = 0 },
+      cameraDirection = { x = 1, y = 0, z = 0 },
+      rayHit = { hitPos = { x = 600, y = 0, z = 0 }, hitObject = nil },
+    }), function(env, handlers)
+      tick(handlers, 2)
+      local ok = handlers.interface.act('walk_to', { x = 540, y = 1170 })
+      assert.is_true(ok)
+      tick(handlers, 2, 2.5)
+      assert.equals(handlers.interface.status().goal, 'walk_to')
+    end)
+  end)
+
+  it('walks to a door you tap and enters it', function()
+    withScript(base({
+      cameraPosition = { x = 0, y = 0, z = 0 },
+      cameraDirection = { x = 1, y = 0, z = 0 },
+    }), function(env, handlers)
+      tick(handlers, 2)
+      env._setRayHit({
+        hitPos = { x = 500, y = 0, z = 0 },
+        hitObject = { recordId = 'census door', type = env.types.Door },
+      })
+      assert.is_true(handlers.interface.act('walk_to', { x = 540, y = 1170 }))
+      tick(handlers, 2, 2.5)
+      assert.equals(handlers.interface.status().goal, 'walk_to')
+      -- the order's label names what we tapped
+      local panel = handlers.interface.panel()
+      assert.is_true(panel.log ~= nil)
+    end)
+  end)
+
+  it('does nothing when the tap hits nothing', function()
+    withScript(base({
+      cameraPosition = { x = 0, y = 0, z = 0 },
+      cameraDirection = { x = 1, y = 0, z = 0 },
+    }), function(env, handlers)
+      tick(handlers, 2)
+      env._setRayHit(nil)   -- a ray into the sky
+      assert.is_false(handlers.interface.act('walk_to', { x = 540, y = 200 }))
+    end)
+  end)
 end)

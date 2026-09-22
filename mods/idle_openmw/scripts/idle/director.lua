@@ -206,6 +206,20 @@ function M.planCommands(goalId, statView, world, snapshot, cfg, ctx)
   elseif goalId == 'idle' then
     commands[#commands + 1] = { type = 'stop' }
 
+  elseif goalId == 'walk_to' then
+    -- Tap-to-move: the *runtime* did the raycast and put the decision on the
+    -- directive payload (scripts/idle/tapMove.lua). Emit the walk, and the
+    -- interaction when the tap landed on something you can use.
+    local intent = ctx.directive and ctx.directive.payload
+    if type(intent) == 'table' and intent.dest then
+      commands[#commands + 1] = { type = 'move', dest = intent.dest, run = intent.run == true }
+      if intent.target then
+        commands[#commands + 1] = { type = 'activate', kind = intent.kind, target = intent.target }
+      end
+    else
+      commands[#commands + 1] = { type = 'stop' }
+    end
+
   elseif goalId == 'manual' then
     -- the player has the controls; emit nothing at all
     return {}
@@ -408,6 +422,9 @@ function Director:tick(dt, snapshot)
   local commands = M.planCommands(self.goal, view, world, snapshot, self.cfg, {
     classDef = self.classDef,
     desired = self.desired,
+    -- The directive in force, so a goal whose behaviour depends on it (walk_to)
+    -- can read it (scripts/idle/tapMove.lua).
+    directive = pending,
   })
   self.commands = commands
   self.counters.commands = self.counters.commands + #commands

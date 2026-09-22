@@ -194,6 +194,27 @@ describe('idle.director', function()
       local commands = plan('go_town', worlds.empty())
       assert.equals(commands[1].type, 'wander')
     end)
+
+    it('walks where you tapped, and activates what you tapped on', function()
+      local state = states.warrior({ position = { x = 0, y = 0, z = 0 } })
+      local world = worlds.empty()
+      local intent = { kind = 'enter', dest = { x = 100, y = 0, z = 0 }, target = { name = 'door' } }
+      local commands = directorMod.planCommands('walk_to', view(state), world,
+        snapshot(state, world), cfg,
+        { classDef = classes.warrior, directive = { payload = intent } })
+      assert.equals(commands[1].type, 'move')
+      assert.equals(commands[1].dest.x, 100)
+      assert.equals(commands[2].type, 'activate')
+      assert.equals(commands[2].kind, 'enter')
+    end)
+
+    it('stops when a walk_to directive carries no destination', function()
+      local state = states.warrior({ position = { x = 0, y = 0, z = 0 } })
+      local world = worlds.empty()
+      local commands = directorMod.planCommands('walk_to', view(state), world,
+        snapshot(state, world), cfg, { classDef = classes.warrior, directive = { payload = nil } })
+      assert.equals(commands[1].type, 'stop')
+    end)
   end)
 
   describe('helpers', function()

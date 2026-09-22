@@ -35,4 +35,5 @@ return {
   'tests.spec.theme_spec',
   'tests.spec.firstRun_spec',
   'tests.spec.trace_spec',
+  'tests.spec.tapMove_spec',
 }

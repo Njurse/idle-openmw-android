@@ -224,6 +224,11 @@ function M.env(spec)
     Player = {},
     NPC = {},
     Creature = {},
+    -- Distinct sentinels so tap-to-move's pick classification is testable
+    -- (idleDirector.classifyPick compares object.type against these).
+    Door = { __name = 'Door' },
+    Activator = { __name = 'Activator' },
+    Container = { __name = 'Container' },
   }
 
   local actor = { recordId = spec.recordId or 'player' }
@@ -423,6 +428,12 @@ function M.env(spec)
       cameraCalls[#cameraCalls + 1] = { 'setDistance', value }
     end,
     getMode = function() return 2 end,
+    -- Picking (camerabindings.cpp:103). Specs drive tap-to-move by setting
+    -- spec.cameraDirection / spec.cameraPosition, and nearby.castRay's result.
+    getPosition = function() return point(spec.cameraPosition or spec.position) end,
+    viewportToWorldVector = function()
+      return point(spec.cameraDirection or { x = 0, y = 1, z = 0 })
+    end,
   }
 
   local createdObjects = {}
@@ -456,6 +467,13 @@ function M.env(spec)
     containers = nearbyContainers,
     doors = {}, activators = {}, items = {},
     FIND_PATH_STATUS = FIND_PATH_STATUS,
+    COLLISION_TYPE = { Default = 1, Camera = 2, VisualOnly = 3 },
+    -- Ray picking for tap-to-move. Specs set spec.rayHit = { hitPos, hitObject }.
+    castRay = function()
+      local hit = spec.rayHit
+      if not hit then return { hit = false } end
+      return { hit = true, hitPos = point(hit.hitPos), hitObject = hit.hitObject }
+    end,
     --- Faithful to the real API: returns TWO values (status, points).
     findPath = function(from, to)
       local points = {}
@@ -565,6 +583,7 @@ function M.env(spec)
     _uiModesSet = uiModesSet,
     _cameraCalls = cameraCalls,
     _setUiModes = function(modes) spec.uiModes = modes end,
+    _setRayHit = function(hit) spec.rayHit = hit end,
     _pools = pools,
     _globalEvents = globalEvents,
   }

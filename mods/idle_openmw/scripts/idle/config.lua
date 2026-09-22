@@ -212,6 +212,11 @@ M.defaults = {
     -- own GMST font colours (tan 202,165,96 / parchment 223,201,159 / health red
     -- 200,60,30 …); 'plain' is a high-contrast alternative for a bright screen.
     theme = 'morrowind',
+
+    -- Tap the world to walk there, enter a door, or talk to an NPC. The renderer
+    -- forwards the screen point; the runtime raycasts (docs/tap-to-move.md).
+    tapToMove = true,
+    tapReach = 4096,   -- engine units a tap can reach
   },
 
   -- The idle camera. An isometric lock is possible from Lua alone

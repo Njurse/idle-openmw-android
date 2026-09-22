@@ -30,6 +30,7 @@ local offlineProgress = require('scripts.idle.offlineProgress')
 local guardianMod = require('scripts.idle.guardian')
 local settlementMod = require('scripts.idle.settlement')
 local cameraMod = require('scripts.idle.camera')
+local tapMove = require('scripts.idle.tapMove')
 
 local self = engine.self()
 
@@ -135,6 +136,65 @@ local function applyCamera(phaseId)
     end
     if plan.yaw and type(cam.setYaw) == 'function' then cam.setYaw(plan.yaw) end
   end)
+end
+
+--- What kind of thing did we hit? (types table identity, not record names.)
+local function classifyPick(object, types)
+  if not object or not types then return 'world' end
+  local objectType = object.type
+  if objectType == nil then return 'world' end
+  if objectType == types.Door then return 'door' end
+  if objectType == types.NPC or objectType == types.Creature then return 'actor' end
+  if objectType == types.Container then return 'container' end
+  if objectType == types.Activator then return 'activator' end
+  if types.Item and objectType == types.Item then return 'item' end
+  return 'world'
+end
+
+--- Turn a normalized screen point (0..1, top-left origin) into a world "pick".
+---
+---   camera.viewportToWorldVector(pos) -> direction through the pixel
+---   nearby.castRay(from, from + dir*R) -> { hit, hitPos, hitObject }
+---
+--- (docs/openmw-lua-api.md §12). Returns nil if the engine cannot do the pick --
+--- it must never throw, since it runs on a tap.
+local function pickAt(nx, ny)
+  local cam = engine.camera()
+  local nearby = engine.nearby()
+  local utilEngine = engine.util()
+  if not (cam and nearby and utilEngine) then return nil end
+  if type(cam.viewportToWorldVector) ~= 'function' or type(cam.getPosition) ~= 'function' then return nil end
+  if type(nearby.castRay) ~= 'function' then return nil end
+  if type(utilEngine.vector2) ~= 'function' or type(utilEngine.vector3) ~= 'function' then return nil end
+
+  local okDir, dir = pcall(cam.viewportToWorldVector, utilEngine.vector2(nx, ny))
+  if not okDir or type(dir) ~= 'table' then return nil end
+  local okPos, from = pcall(cam.getPosition)
+  if not okPos or type(from) ~= 'table' then return nil end
+
+  local reach = (state.cfg and state.cfg.ui and state.cfg.ui.tapReach) or 4096
+  local to = utilEngine.vector3(from.x + dir.x * reach, from.y + dir.y * reach, from.z + dir.z * reach)
+
+  local okCast, result = pcall(nearby.castRay, from, to, { ignore = self and self.object or nil })
+  if not okCast or type(result) ~= 'table' or not result.hit then return nil end
+  local hitPos = result.hitPos
+  if type(hitPos) ~= 'table' then return nil end
+
+  local name
+  if result.hitObject and type(result.hitObject.recordId) == 'string' then
+    name = result.hitObject.recordId
+  end
+
+  local dx, dy, dz = hitPos.x - from.x, hitPos.y - from.y, hitPos.z - from.z
+  return {
+    hit = true,
+    position = { x = hitPos.x, y = hitPos.y, z = hitPos.z },
+    distance = math.sqrt(dx * dx + dy * dy + dz * dz),
+    kind = classifyPick(result.hitObject, engine.types()),
+    id = name,
+    name = name,
+    object = result.hitObject,
+  }
 end
 
 --- Ensure the brain exists. Called from onUpdate only: it touches `openmw.nearby`
@@ -411,6 +471,36 @@ end
 function ACTIONS.order(payload)
   if not (payload and payload.id) then return false end
   return state.director:pushDirective(payload.id) ~= nil
+end
+
+--- Tap-to-move. The renderer passes the raw screen point; WE do the raycast.
+--- Keeping the pick here (not in portraitUI) means the UI stays a renderer and
+--- the engine maths stays in the runtime (docs/tap-to-move.md).
+function ACTIONS.walk_to(payload)
+  if not (payload and type(payload.x) == 'number' and type(payload.y) == 'number') then return false end
+  if not state.director then return false end
+
+  -- normalize against the screen size (mouse events give absolute pixels)
+  local nx, ny = payload.x, payload.y
+  local ui = engine.ui()
+  if ui and type(ui.screenSize) == 'function' then
+    local ok, size = pcall(ui.screenSize)
+    if ok and type(size) == 'table' and type(size.x) == 'number' and size.x > 0 and size.y > 0 then
+      nx, ny = payload.x / size.x, payload.y / size.y
+    end
+  end
+
+  local pick = pickAt(nx, ny)
+  local player = state.snapshot and state.snapshot.player or nil
+  local intent = tapMove.intent(pick, player, state.cfg and state.cfg.ui)
+
+  if intent.kind == 'none' then
+    state.director:logLine('Tap: ' .. tostring(intent.reason or 'nothing there'), 'info')
+    return false
+  end
+  state.director:pushDirective('walk_to', intent)
+  state.director:logLine('Tap: ' .. tapMove.describe(intent), 'info')
+  return true
 end
 
 function ACTIONS.talk_nearest() return state.director:pushDirective('talk') ~= nil end

@@ -12,7 +12,7 @@ describe('runtime.portraitUI', function()
       mode = 'auto', tabs = uiModel.TABS, footer = uiModel.footerFor(tab), footerRows = 2,
     })
     local page = console.page and 1 or 0
-    return 5 + 2 + page + #uiModel.TABS + console.pageSize + 2 + #console.footer
+    return 5 + 3 + page + #uiModel.TABS + console.pageSize + 2 + #console.footer
   end
 
   --- Load the HUD script fresh against a mocked engine.
@@ -286,10 +286,13 @@ describe('runtime.portraitUI', function()
   describe('collapsing the console', function()
     --- The console's background is its tallest live element.
     local function panelElement(env)
+      -- the console's box: the tallest element that uses a MWUI template (the
+      -- tap-to-move layer is a bare full-screen Widget with no template)
       local best
       for _, element in ipairs(liveElements(env)) do
         local size = element.layout.props.size
-        if size and (not best or size.y > best.layout.props.size.y) then best = element end
+        if size and element.layout.template
+          and (not best or size.y > best.layout.props.size.y) then best = element end
       end
       return best
     end

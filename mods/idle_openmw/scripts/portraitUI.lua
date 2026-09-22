@@ -62,6 +62,7 @@ local state = {
   collapsed = false,
   hidden = false,
   theme = nil,
+  tapToMove = true,
 }
 
 -- ---------------------------------------------------------------------------
@@ -130,6 +131,12 @@ local function createElement(opts)
   if opts.onTap and async and type(async.callback) == 'function' then
     layout.events = { mouseClick = async.callback(opts.onTap) }
   end
+  -- `mouseRelease` is the event that carries a POSITION (mouseClick gives none;
+  -- components/lua_ui/widget.cpp:546 vs :566). Tap-to-move needs the coordinate.
+  if opts.onRelease and async and type(async.callback) == 'function' then
+    layout.events = layout.events or {}
+    layout.events.mouseRelease = async.callback(opts.onRelease)
+  end
   -- our rect props deliberately override template defaults; silence the warnings
   return ui.create(layout, { noWarnUnused = true })
 end
@@ -164,6 +171,7 @@ local function destroyElements()
   if state.elements.scrollDown then destroyAll({ state.elements.scrollDown }) end
   if state.elements.panel then destroyAll({ state.elements.panel }) end
   if state.elements.status then destroyAll({ state.elements.status }) end
+  if state.elements.tap then destroyAll({ state.elements.tap }) end
 end
 
 --- Drop the current widgets so the next update rebuilds from scratch.
@@ -253,6 +261,18 @@ end
 -- build (once per resolution)
 -- ---------------------------------------------------------------------------
 
+--- The world was tapped: hand the screen point to the runtime, which raycasts
+--- and decides (docs/tap-to-move.md). The renderer deliberately does no engine
+--- maths -- mouseRelease gives an absolute pixel position
+--- (components/lua_ui/widget.cpp:566).
+local function onGameTap(event)
+  local api = idle()
+  if not (api and type(api.act) == 'function') then return end
+  local position = event and event.position
+  if type(position) ~= 'table' then return end
+  pcall(api.act, 'walk_to', { x = position.x, y = position.y })
+end
+
 local function build()
   local api = idle()
 
@@ -301,6 +321,19 @@ local function build()
 
   local scale = layout.base.scale
   local textScale = layout.base.textScale
+
+  -- --- tap-to-move layer (full screen, UNDER everything) ---
+  -- A tap on the world walks you there / enters the door / talks to the NPC. It
+  -- must be created FIRST so the console's own widgets (created below) sit on top
+  -- of it and keep their own taps. Ignored by pointer events in MANUAL mode so the
+  -- game's own controls stay usable (see render()).
+  state.tapToMove = not (cfg and cfg.ui and cfg.ui.tapToMove == false)
+  state.elements.tap = createElement({
+    x = 0, y = 0, width = layout.screen.width, height = layout.screen.height,
+    size = 10, type = ui.TYPE.Widget,
+    ignorePointerEvents = not state.tapToMove,
+    onRelease = onGameTap,
+  })
 
   -- --- status bar background ---
   -- uiLayout gives us `layout.status` (top of the screen, under the notch) but
@@ -487,6 +520,17 @@ local function render()
       offset = view.offset,
       pageSize = state.layout.pageSize,
     }))
+  end
+
+  -- Tap-to-move: the full-screen layer must NOT swallow input when the human is
+  -- driving (MANUAL) or when the option is off -- otherwise the game's own touch
+  -- controls never see the tap (docs/tap-to-move.md).
+  if state.elements.tap then
+    local ignoring = not (state.tapToMove and view.mode ~= 'manual')
+    if state.elements.tap.layout.props.ignorePointerEvents ~= ignoring then
+      state.elements.tap.layout.props.ignorePointerEvents = ignoring
+      state.elements.tap:update()
+    end
   end
 end
 
