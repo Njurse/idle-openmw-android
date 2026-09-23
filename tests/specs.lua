@@ -38,4 +38,5 @@ return {
   'tests.spec.tapMove_spec',
   'tests.spec.capabilities_spec',
   'tests.spec.userdata_spec',
+  'tests.spec.jumper_spec',
 }
