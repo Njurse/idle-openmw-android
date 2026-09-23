@@ -92,6 +92,8 @@ function M.format(data)
   end
 
   if data.blocked ~= nil then add('blocked', tostring(data.blocked)) end
+  if data.blockedCause then add('blocked by', tostring(data.blockedCause)
+    .. (data.blockedMode and (' (' .. tostring(data.blockedMode) .. ')') or '')) end
   if data.hint then add('hint', tostring(data.hint)) end
   if data.snapshot then add('snapshot', tostring(data.snapshot)) end
   if data.lifecycle then add('lifecycle', tostring(data.lifecycle)) end

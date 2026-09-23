@@ -88,4 +88,90 @@ describe('idle.uiState', function()
       assert.equals(#state.stack, 1)
     end)
   end)
+
+  -- The engine hands the mode stack back as USERDATA, not a table. A `type(stack) == 'table'`
+  -- test is therefore FALSE for a real window -- which is how a report came to say "screen ->
+  -- empty" while a Dialogue window was open and the world was paused. These pin the reader
+  -- that replaced it.
+  describe('stackOf', function()
+    -- newproxy exists in LuaJIT and 5.1, not in 5.4 -- the repo's established guard
+    local hasNewproxy = type(newproxy) == 'function'
+
+    it('is empty for nil, and for anything that is not a stack', function()
+      assert.equals(#uiState.stackOf(nil), 0)
+      assert.equals(#uiState.stackOf(7), 0)
+      assert.equals(#uiState.stackOf('Dialogue'), 0)
+      assert.equals(#uiState.stackOf({}), 0)
+    end)
+
+    it('copies a plain list of names', function()
+      local modes = uiState.stackOf({ 'Dialogue', 'Inventory' })
+      assert.equals(#modes, 2)
+      assert.equals(modes[1], 'Dialogue')
+      assert.equals(modes[2], 'Inventory')
+    end)
+
+    it('skips junk without losing the real modes', function()
+      local modes = uiState.stackOf({ 7, 'Inventory', '', false, 'Dialogue' })
+      assert.equals(#modes, 2)
+      assert.equals(modes[1], 'Inventory')
+      assert.equals(modes[2], 'Dialogue')
+    end)
+
+    it('reads a USERDATA stack -- the case a table test gets wrong', function()
+      if not hasNewproxy then return end
+      local proxy = newproxy(true)
+      local meta = getmetatable(proxy)
+      -- a userdata list: length plus indexed reads, exactly how the engine's list behaves
+      local hidden = { 'Dialogue' }
+      meta.__len = function() return #hidden end
+      meta.__index = function(_, key) return hidden[key] end
+      assert.equals(#uiState.stackOf(proxy), 1)
+      assert.equals(uiState.stackOf(proxy)[1], 'Dialogue')
+      -- and the table test, for contrast: this is what the old code asked
+      assert.is_true(type(proxy) ~= 'table')
+    end)
+
+    it('survives a stack that throws when read', function()
+      if not hasNewproxy then return end
+      local proxy = newproxy(true)
+      local meta = getmetatable(proxy)
+      meta.__len = function() error('engine exploded') end
+      assert.equals(#uiState.stackOf(proxy), 0)
+    end)
+  end)
+
+  -- TWO causes of a stopped world, which need different remedies. Telling them apart is the
+  -- whole point: a mode can be closed by the mod, a message box cannot even be seen from Lua.
+  describe('blocking', function()
+    it('is not blocked when the world is running', function()
+      assert.is_false(uiState.blocking(false, {}).blocked)
+      assert.is_false(uiState.blocking(nil, {}).blocked)
+      -- even with a window open: an open window does not imply a stopped world
+      assert.is_false(uiState.blocking(false, { 'Dialogue' }).blocked)
+    end)
+
+    it('blames the open mode when one is on the stack', function()
+      local state = uiState.blocking(true, { 'Inventory', 'Dialogue' })
+      assert.is_true(state.blocked)
+      assert.equals(state.cause, 'menu')
+      assert.equals(state.mode, 'Dialogue')
+      assert.is_true(type(state.hint) == 'string' and #state.hint > 0)
+    end)
+
+    it('blames a message box when nothing is open -- the case the stack cannot see', function()
+      local state = uiState.blocking(true, {})
+      assert.is_true(state.blocked)
+      assert.equals(state.cause, 'messageBox')
+      assert.is_nil(state.mode)
+      -- the hint has to say that only the host can clear it, because that is the actual remedy
+      assert.is_true(state.hint:find('host') ~= nil)
+    end)
+
+    it('treats a paused world with no stack at all as a message box', function()
+      local state = uiState.blocking(true, nil)
+      assert.is_true(state.blocked)
+      assert.equals(state.cause, 'messageBox')
+    end)
+  end)
 end)

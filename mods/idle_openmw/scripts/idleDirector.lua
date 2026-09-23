@@ -33,6 +33,7 @@ local cameraMod = require('scripts.idle.camera')
 local tapMove = require('scripts.idle.tapMove')
 local capabilitiesMod = require('scripts.runtime.capabilities')
 local narrationMod = require('scripts.idle.narration')
+local uiStateMod = require('scripts.idle.uiState')
 local uiReportMod = require('scripts.idle.uiReport')
 local bridgeMod = require('scripts.idle.bridge')
 local hudMod = require('scripts.idle.hud')
@@ -232,8 +233,10 @@ local function gatherUiReport()
   do -- the engine's open windows
     local ui = engine.ui()
     if ui and type(ui._getUiModeStack) == 'function' then
-      local ok, stack = pcall(ui._getUiModeStack)
-      data.uiModes = ok and stack or ('error: ' .. tostring(stack))
+      -- through the ONE reader: the raw value is engine userdata, and treating it as a table
+      -- made this report say "empty" while a window was open
+      local ok, raw = pcall(ui._getUiModeStack)
+      data.uiModes = ok and uiStateMod.stackOf(raw) or ('error: ' .. tostring(raw))
     else
       data.uiModes = 'no _getUiModeStack'
     end
@@ -270,15 +273,11 @@ local function gatherUiReport()
     -- modes, so the mode stack is empty while a modal stops the world. Say so, because Lua
     -- cannot click a native widget -- the host has to, and it has to know when.
     do
-      local modes = data.uiModes
-      local noModal = type(modes) == 'table' and #modes == 0
-      if data.paused == true and noModal then
-        data.blocked = true
-        data.hint = 'world is paused with no window open: a message box is up. '
-          .. 'Any key or click dismisses it (the engine gives Lua no way to click it).'
-      else
-        data.blocked = false
-      end
+      local state = uiStateMod.blocking(data.paused, data.uiModes)
+      data.blocked = state.blocked
+      data.hint = state.hint
+      data.blockedCause = state.cause
+      data.blockedMode = state.mode
     end
     data.ticking = state.lastDt and state.lastDt > 0
     -- the FLAG's value, not the capability: reporting features.charGenFlag said "true"
@@ -947,9 +946,15 @@ local function update(dt)
       local raw = 'no-api'
       if ui and type(ui._getUiModeStack) == 'function' then
         local okStack, stack = pcall(ui._getUiModeStack)
-        if not okStack then raw = 'error'
-        elseif type(stack) ~= 'table' or #stack == 0 then raw = 'empty'
-        else raw = table.concat(stack, ',') end
+        if not okStack then
+          raw = 'error'
+        else
+          -- M.stackOf, not `type(stack) == 'table'`: the engine hands back userdata, so the
+          -- old test called a real window "empty" -- the trace lied about the one thing it
+          -- exists to show
+          local modes = uiStateMod.stackOf(stack)
+          raw = #modes == 0 and 'empty' or table.concat(modes, ',')
+        end
       end
       if raw ~= state.lastUiKey then
         state.lastUiKey = raw
@@ -967,11 +972,16 @@ local function update(dt)
         if okStack and type(stack) == 'table' then modes = stack end
       end
       local paused = engine.isWorldPaused()
-      local blocked = (paused == true) and (modes ~= nil) and (#modes == 0)
-      if blocked ~= state.wasBlocked then
-        state.wasBlocked = blocked
-        print('idle-openmw: ' .. (blocked and 'BLOCKED (a message box is up: send a key or a click)'
-          or 'unblocked'))
+      local state_ = uiStateMod.blocking(paused, modes or {})
+      if state_.blocked ~= state.wasBlocked or state_.cause ~= state.blockedCause then
+        state.wasBlocked = state_.blocked
+        state.blockedCause = state_.cause
+        if state_.blocked then
+          print('idle-openmw: BLOCKED (' .. tostring(state_.cause) .. ') '
+            .. tostring(state_.hint or ''))
+        else
+          print('idle-openmw: unblocked')
+        end
       end
     end
 

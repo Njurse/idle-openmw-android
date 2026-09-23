@@ -496,6 +496,56 @@ There is also a public, supported shim: `scripts/omw/ui.lua` builds
 console's launchers use to open a real window. `observer.readUi` falls back to
 `interfaces.UI.getMode()` when the internal hook is missing.
 
+**Corrections from a later audit** (the source is the grep in *Finding the engine's
+own screens*, below — these replace earlier notes that called the UI read-only):
+
+| Fact | Consequence |
+| --- | --- |
+| `interfaces.UI` is the **game's own Lua module**, not a thin shim. It offers `setMode`, `addMode`, `removeMode`, `getMode` and `setPauseOnMode`. | The mod can *open and close* real windows, and can **stop one from pausing the world**. "We cannot control the UI" is wrong and has been removed. |
+| `ui._getUiModeStack()` returns engine **userdata**, not a Lua table. | A `type(stack) == 'table'` test is FALSE for a real window. That mistake made the console's report read `screen -> empty` *while* a Dialogue window was open — i.e. it lied about the one thing it exists to show. Always read it through `uiState.stackOf`. |
+| Morrowind's **message boxes are not UI modes**. | They never appear on the stack, yet they pause the world. A paused world with an empty stack is a message box. |
+| Lua **cannot click a native widget** (no `ui.getElements` for engine-created elements). | A message box has to be dismissed by the **host** (`tools/dev/desktop/dismiss.py` sends a key). Modes, by contrast, the mod can close itself. |
+
+So there are **two causes of a stopped world**, and they need different remedies.
+`uiState.blocking(paused, stack)` is the single place that tells them apart
+(`cause = 'menu'` vs `cause = 'messageBox'`), because a report that only says
+"paused" leaves the caller with nothing to act on.
+
+### 11.2.1 The real surface of `interfaces.UI` — read it, don't guess
+
+All of `interfaces.UI` lives in **`resources/vfs/scripts/omw/ui.lua`** in the engine
+install (0.51.0). Verified lines:
+
+| Member | Line | Gives |
+| --- | --- | --- |
+| `MODE` | `:7`, `:179` | the full vocabulary, from `ui._getAllUiModes()`, wrapped in `util.makeStrictReadOnly` |
+| `getMode()` | `:207` | the top of the stack (`modeStack[#modeStack]`), `nil` when nothing is open |
+| `setMode(mode, options)` | `:217` | drop all modes, then open one (`setMode()` with no argument drops them all) |
+| `addMode(mode, options)` | `:226` | open without dropping (`addMode('Barter', {target = actor})`) |
+| `removeMode(mode)` | `:231` | close |
+| `setPauseOnMode(mode, shouldPause)` | `:237` | **stop a window from pausing the world** (`modePause[mode]`) |
+| `isWindowVisible(name)` | `:158` | is a named window up |
+| `onUiModeChanged(changedByLua, arg)` | `:102` | engine handler: fires on every stack change |
+| `onUiModeChangedEvent(data)` | `:139` | event form; `data.newMode` / `data.oldMode` (e.g. `:145`) |
+
+Two consequences worth acting on:
+
+1. **The UI is reactive, not just pollable.** `onUiModeChanged` exists as a player
+   engine handler (`:102`), so noticing that a window opened or closed does not need
+   to be a per-frame poll — a preference once the poll is measured as a cost.
+2. **`setPauseOnMode` is the escape hatch for our own windows.** Anything the mod
+   opens can be made not to pause the game, which is the difference between "the
+   console is an overlay" and "the console stops the idle engine".
+
+Mode names should still be checked against `MODE` (or `modeToName`,
+`uibindings.cpp:33`) rather than assumed:
+
+```bash
+grep -n "MODE\|removeMode\|setPauseOnMode" "F:/Games/OpenMW-0.51/resources/vfs/scripts/omw/ui.lua"
+```
+
+
+
 ### 11.3 The one supported way to appear *inside* an engine window
 
 `ui.registerSettingsPage` (`uibindings.cpp:246`) adds a panel to the Scripts tab

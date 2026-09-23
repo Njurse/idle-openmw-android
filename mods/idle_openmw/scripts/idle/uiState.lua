@@ -111,6 +111,64 @@ function M.label(mode, kind)
   return M.LABEL[kind] or mode or M.LABEL.world
 end
 
+--- Copy an engine mode stack into a plain list of strings.
+---
+--- The stack comes back as engine USERDATA, not a Lua table (measured on 0.51), so
+--- `type(stack) == 'table'` is FALSE for a perfectly good stack -- and a caller that checks it
+--- reports "nothing is open" while a window is open and the world is paused. One reader, used
+--- by the observer, the report and the trace, so that mistake can only be made once.
+--- @param raw any the return of ui._getUiModeStack()
+--- @return table list of mode names (empty when there is none)
+function M.stackOf(raw)
+  local out = {}
+  if not util.isObject(raw) then return out end
+  local ok = pcall(function()
+    for index = 1, #raw do
+      local mode = raw[index]
+      if type(mode) == 'string' and mode ~= '' then out[#out + 1] = mode end
+    end
+  end)
+  if not ok then return {} end
+  return out
+end
+
+--- Why is the world stopped?
+---
+--- TWO distinct causes, and they need different remedies, which is why "the world is paused"
+--- was so hard to act on:
+---
+---   * `cause = 'menu'` -- a mode IS open. Visible on the stack, and the mod can close it
+---     itself (`interfaces.UI.removeMode`/`setMode`, the game's own Lua module).
+---   * `cause = 'messageBox'` -- the stack is EMPTY and the world is still paused. Morrowind's
+---     messages are not UI modes, so the stack cannot see them, and Lua cannot click a native
+---     widget: the HOST has to dismiss it (tools/dev/desktop/dismiss.py).
+---
+--- @param paused boolean|nil from core.isWorldPaused()
+--- @param stack table the list from M.stackOf
+--- @return table { blocked, cause, mode?, hint? }
+function M.blocking(paused, stack)
+  if paused ~= true then return { blocked = false } end
+  local list = type(stack) == 'table' and stack or {}
+
+  if #list == 0 then
+    return {
+      blocked = true,
+      cause = 'messageBox',
+      hint = 'paused with no window open: a message box is up. A key or a click dismisses it, '
+        .. 'and only the host can send one (the engine gives Lua no way to click a widget).',
+    }
+  end
+
+  local top = list[#list]
+  return {
+    blocked = true,
+    cause = 'menu',
+    mode = top,
+    hint = 'paused by an open window: ' .. tostring(top)
+      .. '. The mod can close it, or set it not to pause the game.',
+  }
+end
+
 --- Classify a single mode name. `nil` means "nothing is open" == the world.
 function M.classify(mode)
   local kind = M.kindOf(mode)
@@ -129,12 +187,8 @@ end
 --- `fallback` is used only when the stack is empty -- the older
 --- `interfaces.UI.getMode()` string on an engine whose internal hook is missing.
 function M.fromStack(stack, fallback)
-  local copy = {}
-  if util.isObject(stack) then
-    for i = 1, #stack do
-      if type(stack[i]) == 'string' and stack[i] ~= '' then copy[#copy + 1] = stack[i] end
-    end
-  end
+  -- a plain list may be handed in, or the raw engine value; M.stackOf copes with both
+  local copy = M.stackOf(stack)
 
   local top = copy[#copy]
   if not top and type(fallback) == 'string' and fallback ~= '' then top = fallback end
