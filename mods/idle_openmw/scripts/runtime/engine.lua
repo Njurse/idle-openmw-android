@@ -95,11 +95,25 @@ end
 --- Wall-clock seconds. `os.time()` is available under OpenMW's LuaJIT and is the
 --- only axis that measures time-since-last-play (core.getRealTime() resets each
 --- launch). See docs/openmw-lua-api.md §8.
+--- Seconds, for measuring intervals.
+---
+--- NEVER returns nil. It did, when the sandbox has no `os.time` (OpenMW's Lua is
+--- sandboxed), and callers that subtracted the result threw "attempt to perform
+--- arithmetic on a nil value" -- ON EVERY FRAME, inside the update body, which silently
+--- stopped the whole director. A clock that returns nothing is a trap; a clock that
+--- returns a counter is merely imprecise, and imprecise is recoverable.
 function M.wallClock()
   if type(os) == 'table' and type(os.time) == 'function' then
-    return os.time()
+    local ok, seconds = pcall(os.time)
+    if ok and type(seconds) == 'number' then return seconds end
   end
-  return nil
+  M.clockTicks = (M.clockTicks or 0) + 1
+  return M.clockTicks
+end
+
+--- True when the wall clock above is real time rather than a fallback counter.
+function M.hasRealClock()
+  return type(os) == 'table' and type(os.time) == 'function'
 end
 
 --- Persisted per-script storage section (survives save/load).

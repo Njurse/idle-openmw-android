@@ -88,6 +88,8 @@ function M.format(data)
     add('lua elements', tostring(elements or 'unavailable'))
   end
 
+  if data.snapshot then add('snapshot', tostring(data.snapshot)) end
+  if data.lifecycle then add('lifecycle', tostring(data.lifecycle)) end
   if data.capabilities then add('capabilities', tostring(data.capabilities)) end
   if data.note then add('note', tostring(data.note)) end
   return table.concat(lines, '\n')

@@ -89,12 +89,28 @@ end
 local function vec2(x, y) return engines.vector2(x, y) end
 
 --- A theme role (see scripts/idle/theme.lua) as an engine colour.
+--- Is this something we can actually paint with? A colour table is only usable if its
+--- components are real numbers. A table of zeros is BLACK, not nil -- and the earlier
+--- nil-only guard let exactly that through, which is why the narration drew as black text
+--- on a dark screen instead of cream.
+local function usable(c)
+  return type(c) == 'table'
+    and type(c.r) == 'number' and type(c.g) == 'number' and type(c.b) == 'number'
+    and (c.r + c.g + c.b) > 0
+end
+
 local function roleColour(role)
   local c = role and state.theme and themeMod.colour(state.theme, role)
-  -- NEVER nil. A nil text colour becomes MyGUI's black default, so a missing theme or an
-  -- unknown role renders as invisible text on a dark HUD instead of as an error. Cream is
-  -- the floor, because that is what has to be readable over the game.
-  if not c then c = themeMod.FALLBACK end
+  if not usable(c) then
+    -- Fall back LOUDLY in the log once: a missing theme entry should not be a silent
+    -- black-on-black, it should be visible here and coloured cream on screen.
+    if not state.colourDiag then
+      state.colourDiag = true
+      pcall(print, 'idle-openmw: colour for role ' .. tostring(role)
+        .. ' unusable (' .. tostring(c and c.r) .. '); using cream')
+    end
+    c = themeMod.FALLBACK
+  end
   return rgb(c.r, c.g, c.b)
 end
 
@@ -588,9 +604,34 @@ end
 --- (scripts/runtime/engine.lua readTextFile -> scripts/idle/narration.lua choose).
 local function updateNarration()
   local api = idle()
-  if not api or type(api.narration) ~= 'function' then return end
+  if not api then
+    if not state.narrationDiag1 then
+      state.narrationDiag1 = true
+      pcall(print, 'idle-openmw: narration: no interface (interfaces.IdleOpenMW missing)')
+    end
+    return
+  end
+  if type(api.narration) ~= 'function' then
+    if not state.narrationDiag2 then
+      state.narrationDiag2 = true
+      pcall(print, 'idle-openmw: narration: interface has no narration() -- stale script?')
+    end
+    return
+  end
   local okText, text = pcall(api.narration)
-  if not okText then return end
+  if not okText then
+    -- Say WHY, once. Silently returning left the narration invisible with no explanation,
+    -- which is the kind of failure this whole session has been about.
+    if not state.narrationDiag3 then
+      state.narrationDiag3 = true
+      pcall(print, 'idle-openmw: narration: call failed: ' .. tostring(text))
+    end
+    return
+  end
+  if not state.narrationDiag4 then
+    state.narrationDiag4 = true
+    pcall(print, 'idle-openmw: narration: ok, text=' .. tostring(text))
+  end
 
   local changed = state.narration:set(text)
 
@@ -629,7 +670,10 @@ local function updateNarration()
       text = state.narration:get(),
       -- a touch larger than the consoles body text: this is meant to be read at a glance
       size = 16 * base.textScale,
-      color = roleColour('narration'),
+      -- cream, explicitly: the user asked for this by name, and it must be readable over
+      -- a dark game. roleColour('narration') resolves through the theme, which returned a
+      -- black-valued entry once already.
+      color = rgb(themeMod.FALLBACK.r, themeMod.FALLBACK.g, themeMod.FALLBACK.b),
       wordWrap = true, multiline = true, autoSize = false,
       textAlignH = ui.ALIGNMENT and ui.ALIGNMENT.Center or nil,
       textAlignV = ui.ALIGNMENT and ui.ALIGNMENT.Start or nil,

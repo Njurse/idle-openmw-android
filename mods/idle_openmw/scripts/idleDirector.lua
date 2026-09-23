@@ -206,14 +206,13 @@ end
 --- The operator's narration line, from `narration.txt` in the data folder (nil when
 --- absent). Re-read at most every couple of seconds: it is a file, not a hot path.
 local function operatorNarration()
-  -- NOT simulationTime(): that local is declared further down this file, so a reference
-  -- here would resolve to a nil GLOBAL and throw on every call. The wall clock is plenty
-  -- for a two-second cache, and it cannot be shadowed by ordering.
-  local now = engine.wallClock()
-  if state.narrationReadAt and (now - state.narrationReadAt) < 2 then
+  -- Re-read about twice a second. Counted in FRAMES rather than seconds: this is called
+  -- from the UI (which has no dt), and the only clock available is the sandboxed one.
+  local frame = state.frameCount or 0
+  if state.narrationReadFrame and (frame - state.narrationReadFrame) < 30 then
     return state.narrationText
   end
-  state.narrationReadAt = now
+  state.narrationReadFrame = frame
   local ok, text = pcall(engine.readTextFile, 'narration.txt')
   state.narrationText = ok and text or nil
   return state.narrationText
@@ -307,6 +306,15 @@ local function gatherUiReport()
       data.narrationRect = base.narration
     end
     data.capabilities = state.capabilities and capabilitiesMod.describe(state.capabilities)
+    -- Is there a snapshot at all? A nil phase almost always means "no snapshot yet",
+    -- which is a different fault from a wrong phase, and saying so saves a hunt.
+    data.snapshot = state.snapshot and 'yes' or 'nil (never built)'
+    local life = state.snapshot and state.snapshot.lifecycle
+    if life then
+      data.lifecycle = ('playerExists=%s charGenFinished=%s uiKind=%s dead=%s'):format(
+        tostring(life.playerExists), tostring(life.charGenFinished),
+        tostring(life.uiKind), tostring(life.dead))
+    end
   end
   return data
 end
@@ -322,10 +330,12 @@ end
 --- Injecting keystrokes into the running game proved unreliable (the console does not take
 --- them), while READING a file does not: the mod polls it through openmw.vfs. So asking the
 --- running game for something is a matter of writing a line. Nothing here changes gameplay.
-local function pollDevCommand()
-  local now = engine.wallClock()
-  if state.devCommandReadAt and (now - state.devCommandReadAt) < 1 then return end
-  state.devCommandReadAt = now
+local function pollDevCommand(dt)
+  -- Throttled by accumulated dt, NOT by subtracting wall-clock readings: the sandbox has
+  -- no os.time, that subtraction was nil arithmetic, and it threw on every frame.
+  state.devCommandElapsed = (state.devCommandElapsed or 0) + (dt or 0)
+  if state.devCommandElapsed < 1 then return end
+  state.devCommandElapsed = 0
 
   local ok, text = pcall(engine.readTextFile, 'dev_command.txt', 512)
   if not ok or type(text) ~= 'string' then return end
@@ -340,7 +350,7 @@ local function pollDevCommand()
     reportUi()
   elseif command.verb == 'heartbeat' then
     state.heartbeatSeconds = command.seconds or 10
-    state.heartbeatAt = now
+    state.heartbeatElapsed = 0
     print('idle-openmw: heartbeat every ' .. tostring(state.heartbeatSeconds) .. 's')
   elseif command.verb == 'note' then
     state.operatorNote = command.text
@@ -597,11 +607,15 @@ local function update(dt)
     end
 
     -- the dev channel, then any heartbeat the operator asked for
-    pollDevCommand()
+    state.frameCount = (state.frameCount or 0) + 1
+    pollDevCommand(dt)
     if state.heartbeatSeconds and state.heartbeatSeconds > 0 then
-      local now = engine.wallClock()
-      if not state.heartbeatAt or (now - state.heartbeatAt) >= state.heartbeatSeconds then
-        state.heartbeatAt = now
+      -- Accumulate dt rather than comparing wall clocks: the wall-clock version fired on
+      -- EVERY frame (3603 reports in under a minute) and buried the log it was meant to
+      -- make readable.
+      state.heartbeatElapsed = (state.heartbeatElapsed or 0) + dt
+      if state.heartbeatElapsed >= state.heartbeatSeconds then
+        state.heartbeatElapsed = 0
         reportUi()
       end
     end
