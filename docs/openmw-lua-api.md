@@ -13,6 +13,44 @@ or the C++ bindings under `apps/openmw/mwlua/`.
 
 ---
 
+## The supported engine floor (measured, not assumed)
+
+The sections below cite an OpenMW `master` checkout. That is *not* the same engine as
+whatever is installed, and the difference bit us: the only runnable engine here was
+**0.48.0**, which lacks most of the API this mod grew. So the floor is now measured, two
+ways — the engine's own Lua API revision, and a structural probe
+(`tools/dev/desktop/api-probe.sh`, which runs at the main menu so it needs no save).
+
+| Capability | Where the mod uses it | 0.48.0 | 0.51.0 |
+| --- | --- | --- | --- |
+| `core.API_REVISION` | the anchor | present | **129** |
+| `types.Player.isCharGenFinished` | chargen gate (`idle/lifecycle.lua`) | **absent** | present |
+| `ui._getUiModeStack` | the live UI hook (`idle/uiState.lua`) | **absent** | present |
+| `servicesOffered` on records | service detection (`idle/worldsense.lua`) | **absent** | present |
+| `Player.journal().topics` | dialogue topics (`observer.readJournalTopics`) | **absent** | present |
+| `interfaces.Controls.overrideMovementControls` | MANUAL play hands control back | **absent** (no `omw/input` at all) | present |
+| `nearby.castRay` | tap-to-move picking | present | present |
+| `core.getGMST` | Morrowind UI colours (`idle/theme.lua`) | present | present |
+| `ui.registerSettingsPage` | the one widget-injection point | present | present |
+| `MENU:` script context | `tools/dev/desktop/api-probe` | **absent** (`Unknown flag 'MENU'`) | present |
+
+Method: `grep` of each engine's `openmw.exe` string table and its bundled
+`resources/**/scripts/omw/**` Lua, plus the probe run on both. Where a row says
+**absent** it was observed absent, not inferred.
+
+Consequences for readers of this document:
+
+- **Nothing here is safe to assume on an older engine.** Every modern call is
+  pcall-guarded, and `scripts/runtime/capabilities.lua` reports at runtime what this
+  engine actually has, so degradation is visible instead of silent.
+- **The floor is 0.49+** for the full feature set. On 0.48 the mod still loads and runs,
+  but the chargen gate cannot gate, the UI hook cannot report, service detection is
+  blind, dialogue topics are empty, and MANUAL mode cannot hand movement back.
+- The exact **first version** of each capability is *not* verified — only the 0.48/0.51
+  endpoints. Do not write "0.49 added X" on the strength of this table.
+
+---
+
 ## 0. Runtime / version
 
 - `CMakeLists.txt:500` — `option(USE_LUAJIT "Switch Lua/LuaJit (TRUE is highly recommended)" TRUE)`.
@@ -379,6 +417,11 @@ caller.
 
 ## 11. The UI from Lua — read the *modes*, mirror the *content*
 
+> **Availability:** `ui._getUiModeStack` is a *player-context* internal and is
+> **absent in 0.48.0** (measured). `ui.registerSettingsPage` exists in both. See the
+> floor table at the top.
+
+
 The question "can Lua hook into the UI (dialogue, inventory, main menu)?" has
 three different answers, and conflating them is how a plan goes wrong. The
 data-layer half (moving the real windows) is `docs/ui-overhaul.md`; this is the
@@ -443,6 +486,12 @@ observe-only (§4).
 
 ## 12. The camera — `openmw.camera` is a PLAYER package
 
+> **Availability:** the camera package and picking are player-context only, so they
+> cannot be probed from the main menu; `openmw.camera` was verified present in 0.51.0
+> and its binding in 0.48.0 was **not** confirmed. `scripts/runtime/capabilities.lua`
+> reports the real answer at runtime.
+
+
 This one contradicts the plan outright. `docs/plan-reconciliation.md` filed the
 isometric camera under "needs OpenMW C++ work"; it does not. `openmw.camera` is
 handed to a PLAYER script (`apps/openmw/mwlua/luabindings.cpp:73`), so the camera
@@ -470,6 +519,11 @@ The camera *cannot* hide the world's roofs and ceilings, though. See
 `docs/isometric.md` for the honest limit.
 
 ## 13. Character creation and the game lifecycle
+
+> **Availability:** `types.Player.isCharGenFinished` is **absent in 0.48.0** (measured),
+> so on that engine the gate cannot gate. `idle/lifecycle.lua` treats an unknown flag as
+> "in the world" rather than locking the mod out.
+
 
 A PLAYER script ticks the moment a game is loaded — **including during character
 creation**, when the engine is asking the human to choose a race, class and

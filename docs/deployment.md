@@ -2,6 +2,24 @@
 
 ## PC (desktop OpenMW 0.49+)
 
+**Which engine, and why the version matters.** The floor is **0.49+**, measured rather
+than assumed (`docs/openmw-lua-api.md`, "The supported engine floor"). OpenMW 0.48.0 is
+missing:
+
+| Missing in 0.48.0 | So on 0.48 |
+| --- | --- |
+| `types.Player.isCharGenFinished` | no character-creation gate |
+| `ui._getUiModeStack` | no live "what window is open" |
+| `servicesOffered` on records | no shop/trainer/healer detection |
+| `Player.journal().topics` | the Talk tab has no topics |
+| `interfaces.Controls.overrideMovementControls` (the whole `omw/input` suite) | MANUAL mode cannot hand movement back |
+
+The mod still *loads* on 0.48 and does not throw — every modern call is guarded, and
+`scripts/runtime/capabilities.lua` reports what the engine actually has — but the features
+above degrade, and the console's Info tab says so. The dev environment here runs
+**0.51.0** (`tools/dev/desktop/`, `docs/dev-environment.md`).
+
+
 1. Locate your data directory:
    - **Windows:** `%USERPROFILE%\Documents\My Games\OpenMW\`
    - **Linux:** `~/.local/share/openmw/`

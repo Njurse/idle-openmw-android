@@ -115,6 +115,7 @@ citation in [docs/openmw-lua-api.md](docs/openmw-lua-api.md) or a test.
 | **Automate the barter / rest / training UI** | ❌ no Lua API; performed directly instead |
 | **Auto-select dialogue topics** | ❌ dialogue is observe-only (no `onInfoGetText`) |
 | Android APK build & portrait un-gating | ⚠️ not done — needs the NDK toolchain and a device, not available on the dev host |
+| Runs on the installed engine | ⚠️ floor is **OpenMW 0.49+**; 0.48.0 lacks the chargen flag, UI mode stack, services and `omw/input` (measured — see `docs/openmw-lua-api.md`) |
 | Isometric camera | ✅ implemented as a Lua lock (`openmw.camera`), **off by default**; hiding roofs/ceilings remains engine work ([docs/isometric.md](docs/isometric.md)) |
 | Console cosmetics on real hardware | ⚠️ geometry is tested, pixels are not — needs an on-device pass |
 
