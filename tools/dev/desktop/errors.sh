@@ -28,7 +28,11 @@ hits="$(grep -n -i -E "$PATTERN" "$LOG" || true)"
 
 # Distinguish "our content loaded" (good, must be present) from errors.
 loaded="$(grep -c -E 'Loading content file .*idle_openmw\.omwscripts' "$LOG" || true)"
-errors="$(grep -n -i -E 'Lua error|stack traceback|Traceback|attempt to |bad argument|nil value' "$LOG" || true)"
+# Exclude the bridge's own ANSWER channel (`IDLEAPI {...}`) from the error scan: a JSON string may
+# legitimately contain words like "bad argument" -- that is an engine error we are REPORTING, not
+# a Lua error we are dying from. A real Lua traceback never arrives on that channel, so filtering
+# it keeps this scan about the mod's scripts and removes a false positive that hid them.
+errors="$(grep -n -i -E 'Lua error|stack traceback|Traceback|attempt to |bad argument|nil value' "$LOG" | grep -v 'IDLEAPI ' || true)"
 
 echo "== content =="
 if [[ "${loaded:-0}" -ge 1 ]]; then

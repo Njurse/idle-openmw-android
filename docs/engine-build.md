@@ -7,12 +7,15 @@ time.
 
 Three reasons, in the order they started to matter:
 
-1. **Lua cannot see three of the five reasons a world is stopped.**
+1. **Lua cannot see most of the reasons a world is stopped.**
    `apps/openmw/mwworld/datetimemanager.cpp:259` pauses on tags, the console, the
-   post-processor HUD, an interactive message box, or *no game loaded* — and only the first two
-   are readable from Lua (`world.getPausedTags`, `ui.getConsoleMode`). A build we own can expose
-   the rest, which is the difference between the mod reporting `paused: true` and reporting
-   *why*.
+   post-processor HUD, an interactive message box, or *no game loaded* — and only the **pause
+   tags** are readable from Lua, and only from a global script (`world.getPausedTags`). The
+   console's visibility in particular is `WindowManager::isConsoleMode()` =
+   `mConsole->isVisible()` (`windowmanagerimp.cpp:1746`), which Lua cannot read at all
+   (`ui.getConsoleMode()` is the console's *input mode*, not its visibility). A build we own can
+   expose the rest, which is the difference between the mod reporting `paused: true` and
+   reporting *why*.
 2. **Character creation cannot be driven from Lua at all.** The chargen windows are native MyGUI
    widgets, and `ui.getElements` only ever returns Lua-created elements. A fork can give the mod
    a real handle on it (or an honest scripted path through it).
@@ -71,7 +74,8 @@ have been testing against is 0.51.0 and the Lua API revision moves with it (the 
 That matters: every engine finding in `docs/openmw-lua-api.md` was measured on 0.51.0. Anything
 load-bearing gets re-checked against the fork's revision rather than assumed to carry over --
 starting with the things this last session depends on: `interfaces.UI`'s members, the chargen
-flow, `ui.getConsoleMode`, and the pause expression above.
+flow, the console's visibility (`isConsoleMode`, unexposed on 0.51 — the fork is where it *can*
+be exposed), and the pause expression above.
 
 ## Fork patches
 

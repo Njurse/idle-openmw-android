@@ -175,18 +175,22 @@ describe('idle.uiState', function()
       assert.is_true(state.hint:find('host') ~= nil)
     end)
 
-    it('names the console when the console is what is holding the pause', function()
-      -- The console pauses the world and leaves NO tag behind (datetimemanager.cpp:259), so this
-      -- is the one cause that can be stated positively without the tags. It is also the one the
-      -- mod can clear by itself.
-      local state = uiState.blocking(true, {}, { consoleMode = true })
+    it('never claims to detect or close the console', function()
+      -- The console IS a pause cause (datetimemanager.cpp:259), but the cause is
+      -- WindowManager::isConsoleMode() == mConsole->isVisible() (windowmanagerimp.cpp:1746), which
+      -- Lua cannot read -- while ui.getConsoleMode() is the console's INPUT MODE (console.hpp:72),
+      -- a different thing. So with no window open the honest answer is 'unknown', and the hint
+      -- names the console as a candidate the HOST must clear, rather than promising the mod can.
+      local state = uiState.blocking(true, {})
       assert.is_true(state.blocked)
-      assert.equals(state.cause, 'console')
-      assert.is_true(state.hint:find('setConsoleMode') ~= nil)
-      -- and it must not be reported when the console is shut
-      assert.equals(uiState.blocking(true, {}).cause, 'unknown')
+      assert.equals(state.cause, 'unknown')
+      assert.is_true(state.hint:find('console') ~= nil)
+      assert.is_true(state.hint:find('host') ~= nil)
+      -- the removed 'console' cause can no longer be produced, even if a caller passes the old
+      -- option: a stale caller must not resurrect a claim Lua cannot support
+      assert.is_true(uiState.blocking(true, {}, { consoleMode = true }).cause ~= 'console')
       -- and a console that is shut does not mask a window that IS open
-      local withMode = uiState.blocking(true, { 'Dialogue' }, { consoleMode = false })
+      local withMode = uiState.blocking(true, { 'Dialogue' })
       assert.equals(withMode.cause, 'menu')
       assert.equals(withMode.mode, 'Dialogue')
     end)

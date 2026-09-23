@@ -212,6 +212,43 @@ else
   exit 0
 fi
 
+# ---------------------------------------------------------------------------
+# runtime DLLs
+# ---------------------------------------------------------------------------
+# openmw.exe links the vcpkg dependencies dynamically and Ninja does not copy them next to the
+# binary. Running from the build dir then dies before the engine writes a single line to its
+# log -- which is indistinguishable from "the mod is broken", and cost real time once. Copy the
+# runtime DLLs in so the build dir is self-contained and tools/dev/desktop/*.sh can point
+# OMW_EXE straight at it. Skip anything already present (CMake copies a few itself).
+DEPS_BIN="$DEPS_DIR/$DEP_NAME/installed/x64-windows/bin"
+if [[ -d "$DEPS_BIN" ]]; then
+  copied=0
+  # vcpkg puts most runtime DLLs in bin/, but a few -- MyGUIEngine.dll among them -- in
+  # bin/Release/. Copy BOTH, or the engine dies before logging anything.
+  for dir in "$DEPS_BIN" "$DEPS_BIN/Release"; do
+    [[ -d "$dir" ]] || continue
+    for dll in "$dir"/*.dll; do
+      [[ -e "$dll" ]] || continue
+      base="$(basename "$dll")"
+      if [[ ! -f "$BUILD_DIR/build/$base" ]]; then
+        cp "$dll" "$BUILD_DIR/build/" && copied=$((copied + 1))
+      fi
+    done
+  done
+  echo "== copied $copied runtime DLL(s) next to openmw.exe"
+  # OSG loads its image/model readers from a versioned subdirectory that it looks for next to the
+  # binary. Copy that tree too, or the engine logs "Missing OSG plugin ..." and quits peacefully.
+  for plugins in "$DEPS_BIN"/osgPlugins-*; do
+    [[ -d "$plugins" ]] || continue
+    dest="$BUILD_DIR/build/$(basename "$plugins")"
+    if [[ ! -d "$dest" ]]; then
+      cp -r "$plugins" "$dest" && echo "== copied $(basename "$plugins") OSG plugins"
+    fi
+  done
+else
+  echo "!! no deps bin at $DEPS_BIN (the exe may not run from the build dir)" >&2
+fi
+
 EXE="$BUILD_DIR/build/openmw.exe"
 if [[ -f "$EXE" ]]; then
   echo "== built: $EXE"

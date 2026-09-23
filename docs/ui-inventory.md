@@ -110,16 +110,18 @@ capabilities   Lua API revision 129; all required capabilities present
    | Cause | How to tell | Whose remedy |
    | --- | --- | --- |
    | pause **tags** | `world.getPausedTags()` (global script only) | whoever took the tag |
-   | the **console** is open | `ui.getConsoleMode()` | ours: `ui.setConsoleMode(false)` (bridge `ui.closeConsole`) |
+   | the **console** is open | not exposed to Lua: the cause is `WindowManager::isConsoleMode()` = `mConsole->isVisible()` (`windowmanagerimp.cpp:1746`), and `ui.getConsoleMode()` is the console's *input mode* (`console.hpp:72`) — a different thing | the host (the console key) |
    | the **post-processor HUD** is up | not exposed to Lua | the host |
    | an **interactive message box** | not exposed to Lua; shows as *paused with no tags* | the host (Lua cannot click a widget) |
    | **no game loaded** (`State_NoGame`) | `charGenDone` can be true and the cell can be the right one | the launch/flow, not the mod |
 
-   Two of these are readable from Lua and three are not, which is the whole reason
-   `uiState.blocking` reports a *cause* with a hint instead of asserting "message box": a world
-   paused with no tags is equally a message box, a cinematic, or so basic a thing as the game
-   not being started. Measured live: `pause tags = (none); paused = true` -- which is what sent
-   this investigation to that line of C++ in the first place.
+   Only ONE of these is readable from Lua, and only from a global script (the pause tags).
+   Everything else has to be inferred, which is the whole reason `uiState.blocking` reports a
+   *cause* with a hint instead of asserting "message box": a world paused with no tags is equally
+   a message box, the console, a cinematic, or so basic a thing as the game not being started.
+   Measured live: `pause tags = (none); paused = true` -- which is what sent this investigation to
+   that line of C++ in the first place. (An earlier revision claimed the console was the second
+   readable cause and that the mod could close it; both were wrong, and the branch is gone.)
 
 7. **There are TWO causes of a stopped world, and they need different remedies.**
    `cause = 'menu'` (a mode is open: the mod can close it itself with

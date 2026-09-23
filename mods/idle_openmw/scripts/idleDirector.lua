@@ -46,6 +46,31 @@ local uiLayoutMod = require('scripts.idle.uiLayout')
 
 local self = engine.self()
 
+--- The in-game console's INPUT MODE, as a string -- which is NOT "is the console open".
+---
+--- These are two different engine facts, and an earlier revision of this mod conflated them:
+---
+---   * `ui.getConsoleMode()` -> `Console::getConsoleMode()` -> `mConsoleMode`
+---     (apps/openmw/mwlua/uibindings.cpp:123, apps/openmw/mwgui/console.hpp:72). This is the
+---     input-routing mode: empty by default, and when non-empty the console passes typed input
+---     to Lua instead of running mwscript. It says nothing about whether the window is up.
+---   * `WindowManager::isConsoleMode()` -> `mConsole->isVisible()`
+---     (apps/openmw/mwgui/windowmanagerimp.cpp:1746) is the ACTUAL pause cause
+---     (apps/openmw/mwworld/datetimemanager.cpp:259). It is **not exposed to Lua at all**.
+---
+--- So Lua can neither read whether the console is open nor close it, and `setConsoleMode('')`
+--- only resets the input mode -- it never hid the window. The old `ui.closeConsole` bridge method
+--- was built on the conflation and could not have worked; it is gone. Read the value below only
+--- as "what the console will do with typed input", never as a pause cause.
+local function consoleInputMode()
+  local ui = engine.ui()
+  if not (ui and type(ui.getConsoleMode) == 'function') then return nil end
+  local ok, mode = pcall(ui.getConsoleMode)
+  if not ok then return nil end
+  if type(mode) == 'string' and mode ~= '' then return mode end
+  return nil
+end
+
 local state = {
   cfg = nil,
   director = nil,
@@ -277,14 +302,12 @@ local function gatherUiReport()
     -- modes, so the mode stack is empty while a modal stops the world. Say so, because Lua
     -- cannot click a native widget -- the host has to, and it has to know when.
     do
-      -- read the console mode as a positive fact (ui.getConsoleMode), not as a guess: it is the
-      -- one pause cause that leaves NO pause tags behind, so nothing else can explain it
-      data.consoleMode = false
-      if ui and type(ui.getConsoleMode) == 'function' then
-        local okConsole, consoleMode = pcall(ui.getConsoleMode)
-        if okConsole then data.consoleMode = consoleMode == true end
-      end
-      local state = uiStateMod.blocking(data.paused, data.uiModes, { consoleMode = data.consoleMode })
+      -- Report the console's INPUT MODE if set -- deliberately NOT as a pause cause. Whether the
+      -- console window is open is invisible to Lua (see consoleInputMode above), so the
+      -- pause-cause check cannot use it: a console-held pause lands in "unknown" with the console
+      -- named among the candidates, which is the honest answer.
+      data.consoleMode = consoleInputMode()
+      local state = uiStateMod.blocking(data.paused, data.uiModes)
       data.blocked = state.blocked
       data.hint = state.hint
       data.blockedCause = state.cause
@@ -691,26 +714,6 @@ local function bridgeSources()
         fromCell = exit.cellBefore,
         note = 'watch for "idle-openmw: exit ->" lines; OUT when the cell changes',
       }
-    end,
-    --- Close the in-game console, which is a pause cause all by itself.
-    ---
-    --- The engine pauses the world when the console is open (datetimemanager.cpp:259), and that
-    --- pause leaves NO tag behind, so it cannot be cleared with world.unpause -- it has to be
-    --- closed, and closing it is a `ui` call the mod can make. Nothing about this is a cheat:
-    --- the console is our own tool, and leaving it open is what stopped the game.
-    closeConsole = function()
-      local ui = engine.ui()
-      if not (ui and type(ui.setConsoleMode) == 'function') then
-        return { closed = false, reason = 'this build cannot set the console mode' }
-      end
-      local before = nil
-      if type(ui.getConsoleMode) == 'function' then
-        local okGet, mode = pcall(ui.getConsoleMode)
-        if okGet then before = mode == true end
-      end
-      local ok, err = pcall(ui.setConsoleMode, false)
-      if not ok then return { closed = false, reason = tostring(err), wasOpen = before } end
-      return { closed = true, wasOpen = before }
     end,
     --- Ask the warden WHY the world is stopped, and print the answer.
     ---
@@ -1335,15 +1338,7 @@ local function update(dt)
         if okStack and type(stack) == 'table' then modes = stack end
       end
       local paused = engine.isWorldPaused()
-      local consoleOpen = false
-      do
-        local ui = engine.ui()
-        if ui and type(ui.getConsoleMode) == 'function' then
-          local okConsole, mode = pcall(ui.getConsoleMode)
-          if okConsole then consoleOpen = mode == true end
-        end
-      end
-      local state_ = uiStateMod.blocking(paused, modes or {}, { consoleMode = consoleOpen })
+      local state_ = uiStateMod.blocking(paused, modes or {})
       if state_.blocked ~= state.wasBlocked or state_.cause ~= state.blockedCause then
         state.wasBlocked = state_.blocked
         state.blockedCause = state_.cause
