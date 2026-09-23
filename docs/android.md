@@ -553,3 +553,23 @@ ones earlier in this project. That is worth knowing before starting it: the fail
 and additive, not a wall.
 
 The log of this attempt is at `build/android-configure.log` (gitignored).
+
+## Where this stands, and the one follow-up worth naming
+
+**Done and measured on this host:** the emulator boots and is drivable; the device tree is staged;
+the mod runs on desktop today; the NDK cross-compiles; and the Android configure has been taken as
+far as it goes without a dependency tree, with both failures captured.
+
+**The task, in one line:** produce an Android dependency tree (`OPENMW_DEPENDENCIES_DIR`) for a
+modern NDK. Everything else on the engine side follows from it.
+
+**Blocked on something else entirely:** even with a modern APK, unattended play on Android still
+needs character creation to be finishable without a human. The fork must expose
+`CharacterCreation`'s `mCreationStage` to Lua (or provide a scripted path that drives it) — see
+`docs/chargen.md`, which records why: `chargenstate` is set to `-1` by Morrowind's own `CharGen`
+script, and that script only runs while the world is **unpaused**, which is the opposite of the
+state character creation holds. No amount of Lua can break that loop.
+
+So a modern APK alone would still land on the same wall. The two are independent, and the chargen
+hook is the cheaper of the two — it is also the half that would let the desktop path stop relying
+on `--skip-menu=1`, which is how the world is reached today.
