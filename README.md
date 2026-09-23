@@ -274,3 +274,4 @@ decision layer — and the adapter — can be exercised headlessly against
 
 MIT (see [LICENSE](LICENSE)). OpenMW and Morrowind are their own things; this is
 an unaffiliated mod.
+- [The engine <-> host bridge API](docs/bridge-api.md)
