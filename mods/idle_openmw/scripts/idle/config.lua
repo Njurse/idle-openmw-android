@@ -229,6 +229,10 @@ M.defaults = {
     -- engine's default rather than something we can read. (local)
     activateKey = 'Space',
     tapReach = 4096,   -- engine units a tap can reach
+    -- How many entities the mod remembers so a host can name one in a later request
+    -- (scripts/idle/registry.lua). Identity, not state: enough to find the thing again, plus
+    -- the place we last saw it. Bounded because the alternative grows forever.
+    registryCap = 200,
   },
 
   -- The idle camera. An isometric lock is possible from Lua alone

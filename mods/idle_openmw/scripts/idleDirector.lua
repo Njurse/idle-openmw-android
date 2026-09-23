@@ -38,6 +38,7 @@ local uiReportMod = require('scripts.idle.uiReport')
 local bridgeMod = require('scripts.idle.bridge')
 local hudMod = require('scripts.idle.hud')
 local entitiesMod = require('scripts.runtime.entities')
+local registryMod = require('scripts.idle.registry')
 local uiLayoutMod = require('scripts.idle.uiLayout')
 
 local self = engine.self()
@@ -402,8 +403,26 @@ local function playerObject()
   return nil
 end
 
---- The game's UI module: interfaces.UI, which is Lua (scripts/omw/ui.lua), not an engine
---- binding. Reaching it directly is what makes closing a window possible at all.
+--- Remember an entity we have just read, so a host can name it in the next request.
+---
+--- Failures are swallowed on purpose: the registry is a convenience for a host, and a mod that
+--- throws while taking a note is worse than one that forgets. The clock is the frame counter (a
+--- monotonic tick) rather than a wall clock, because a paused game has no wall clock to trust.
+local function remember(entity)
+  if type(entity) ~= 'table' then return entity end
+  if state.registry then
+    pcall(function() state.registry:remember(entity, state.frameCount or 0) end)
+  end
+  return entity
+end
+
+local function rememberAll(list)
+  if type(list) ~= 'table' then return list end
+  if state.registry then
+    pcall(function() state.registry:rememberAll(list, state.frameCount or 0) end)
+  end
+  return list
+end
 local function uiControl()
   local interfaces = engine.interfaces()
   if not interfaces then return nil end
@@ -514,7 +533,7 @@ local function bridgeSources()
     local from = entitiesMod.positionOf(playerObject())
     local read = entitiesMod.read(hitObject, engine.env(), from)
     if read then read.hit = true end
-    return read
+    return remember(read)
   end
 
   --- Nearby things the player could interact with, nearest first.
@@ -527,7 +546,7 @@ local function bridgeSources()
     for _, read in ipairs(nearby) do
       if not read.distance or read.distance <= radius then out[#out + 1] = read end
     end
-    return out
+    return rememberAll(out)
   end
 
   --- The derived on-screen advice.
@@ -563,7 +582,7 @@ local function bridgeSources()
       if not read then return {} end
       -- the player is the reference point, so distance/vertical are meaningless for it
       read.distance, read.vertical = nil, nil
-      return read
+      return remember(read)
     end,
     cell = function()
       local snap = snapshot()
@@ -599,7 +618,43 @@ local function bridgeSources()
         end
         out[read.list] = bucket
       end
+      -- out is grouped by kind, so remember each bucket rather than the map
+      for _, bucket in pairs(out) do rememberAll(bucket) end
       return out
+    end,
+    --- A remembered entity, by the id an earlier response reported.
+    ---
+    --- This is the join between two requests: a host cannot hold an engine object, so the mod
+    --- keeps the little needed to find one again (scripts/idle/registry.lua). What comes back is
+    --- the REMEMBERED record -- identity plus the position we last saw it at -- not a fresh
+    --- read, which is why this method is declared 'free' rather than 'entity': a remembered
+    --- record is honestly a subset, and calling it an entity would be a quiet lie.
+    ---
+    --- An unknown id (forgotten, or evicted) is a MISS and returns nil, with a line in the
+    --- decision trace so a stale reference is visible rather than mysterious.
+    entityGet = function(params)
+      local id = type(params) == 'table' and params.id or nil
+      if type(id) ~= 'string' or id == '' then return nil end
+      local entry = state.registry and state.registry:get(id)
+      if not entry then
+        if state.director and state.director.trace then
+          state.director.trace:add('registry', 'entity.get miss: ' .. id, nil, { id = id })
+        end
+        return nil
+      end
+      return entry
+    end,
+    --- What is currently remembered, most recent first. A host that lost an id can find it
+    --- again without re-reading the cell, and `evicted` says whether anything was dropped.
+    registry = function(params)
+      if not state.registry then return nil end
+      local kind = type(params) == 'table' and params.kind or nil
+      return {
+        cap = state.registry.cap,
+        count = state.registry:count(),
+        evicted = state.registry:evictedCount(),
+        entities = state.registry:list(kind),
+      }
     end,
     quests = function()
       local types = engine.types()
@@ -696,6 +751,10 @@ local function ensureInit()
   if state.director then return end
 
   state.cfg = loadUserConfig()
+  -- The memory of named entities (scripts/idle/registry.lua). A host speaks text and cannot
+  -- hold an engine object, so "the hatch you told me about" has to be something we remember
+  -- between requests. Bounded and LRU, because the alternative is a leak.
+  state.registry = registryMod.new(state.cfg.ui and state.cfg.ui.registryCap or nil)
   local env = engine.env()
 
   -- Ask the engine what it can do, once, and say so. Without this an older engine

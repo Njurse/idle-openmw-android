@@ -50,6 +50,8 @@ An error is always an answer. A bridge that dies on a bad line is not one a host
 | `player` | name, position, cell, level, gold, health, fatigue, magicka |
 | `cell.current` | name, region, exterior flag, grid x/y |
 | `entities.nearby` | actors/doors/activators/containers with distance (`params.radius`) |
+| `entity.get` | a **remembered** entity by `params.id` — see *Naming an entity later* below |
+| `registry` | what the mod currently remembers: `cap`, `count`, `evicted`, `entities` |
 | `quests.active` | started, unfinished quests with their current stage |
 | `journal.topics` | journal topics the player has heard of |
 | `ui` | the UI report: open window, pause, phase, geometry (see ui-inventory.md) |
@@ -60,6 +62,43 @@ An error is always an answer. A bridge that dies on a bad line is not one a host
 
 `action` routes through the director's own directive channel, so a request from a host is the
 same thing as a tap in the console: one path, one set of rules, one set of play modes.
+
+## Naming an entity later
+
+Three requests in a row are the reason this exists:
+
+```
+{"id": 1, "method": "ui.target"}                        -> the hatch, id "1445"
+{"id": 2, "method": "entity.get", "params": {"id": "1445"}}
+{"id": 3, "method": "action", "params": {"goal": "walk_to"}}   (later: entity.activate)
+```
+
+A host speaks text; the engine speaks userdata. So the id in a response refers to something the
+host cannot hold, and there is no way to ask for it again from the response alone. Between
+requests the mod therefore **remembers** the entities it reads
+(`scripts/idle/registry.lua`), keyed by the engine's own unique string (`GameObject.id`), and
+`entity.get` looks one up by that key.
+
+Three rules, because each one is a trap:
+
+1. **Identity, not state.** What comes back is what we remembered: `id`, `kind`, `formId`,
+   `recordId`, `name`, which nearby list it came from, the `position` and `cell` we last saw it
+   in, and `lastSeen`/`seen`. It is **not** a fresh read, so do not treat the remembered
+   `position` as current and do not expect health or inventory. That is also why `entity.get`
+   is declared `returns = "free"` rather than `"entity"`: a remembered record is honestly a
+   subset, and calling it an entity would be a quiet lie.
+2. **A miss is `ok: true` with `result: null`**, not an error. An id can be unknown because it
+   was never read, because it aged out (see 3), or because the host made it up; none of those
+   are a broken call. Every miss also writes a line to the decision trace, so a stale reference
+   is visible in the log instead of mysterious.
+3. **Bounded, least-recently-seen evicted first.** `params.ui.registryCap` (default 200)
+   entities are kept. `registry` reports `cap`, `count`, `evicted` and `entities` (most recent
+   first), so a host can both notice eviction and recover: anything evicted is still reachable
+   by re-reading `entities.nearby` or `ui.interactables`.
+
+That last point is the design rule worth keeping: the registry is a **convenience for hosts,
+never the only way to reach something.** If a host could only act on what it had already been
+told about, forgetting an id would be unrecoverable.
 
 ## Watching instead of asking
 

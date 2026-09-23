@@ -91,3 +91,14 @@ of an empty result it might read as "nothing there".
 - The bridge's `schema` method serves `describe()`, so codegen gets sorted, stable input.
 - Add a field by: declaring it in `schema.lua`, using it in `scripts/idle/entity.lua`, and
   letting the validator fail loudly if a caller forgets.
+
+### Remembered records are not entities
+
+`entity.get` answers from the registry (`scripts/idle/registry.lua`), which keeps a **subset**
+of an entity's fields so a host can name it in a later request. That subset is deliberately not
+a schema kind: it is `id`, `kind`, `formId`, `recordId`, `name`, `list`, the `position` and
+`cell` last seen, plus `firstSeen`/`lastSeen`/`seen`. If it were declared as a kind, a host's
+codegen would treat a stale remembered position as a current one. So the registry's answer is
+declared `free` in the bridge, and the schema makes no promise about it beyond naming its
+fields here. A host that needs the truth re-reads the entity.
+

@@ -46,6 +46,10 @@ M.METHODS = {
     params = {}, returns = 'cell' },
   { name = 'entities.nearby', description = 'Actors and objects near the player, grouped by kind.',
     params = { 'radius (number, optional; default 2048)' }, returns = 'entityMap' },
+  { name = 'entity.get', description = 'A remembered entity by id (a subset: identity + last-seen place, not a fresh read).',
+    params = { 'id (string, required)' }, returns = 'free' },
+  { name = 'registry', description = 'What the mod currently remembers: cap, count, evicted, entities.',
+    params = { 'kind (string, optional)' }, returns = 'free' },
   { name = 'quests.active', description = 'Started, unfinished quests with their current stage.',
     params = {} },
   { name = 'journal.topics', description = 'Journal topics the player has heard of.',
@@ -139,6 +143,8 @@ local SOURCE_METHODS = {
   player = 'player',
   ['cell.current'] = 'cell',
   ['entities.nearby'] = 'entities',
+  ['entity.get'] = 'entityGet',
+  registry = 'registry',
   ['quests.active'] = 'quests',
   ['journal.topics'] = 'topics',
   ui = 'ui',
@@ -150,6 +156,13 @@ local SOURCE_METHODS = {
   ['ui.open'] = 'uiOpen',
   ['ui.pauseOnMode'] = 'uiPauseOnMode',
 }
+
+--- Which dispatch name serves each declared method.
+---
+--- Exposed so the spec can assert the invariant that a DECLARED method is a SERVED method: a
+--- name in M.METHODS with no entry here answers "unknown method" while the self-description
+--- advertises it, which is drift a host would discover the hard way.
+M.SOURCE_METHODS = SOURCE_METHODS
 
 --- @param sources table name -> function(params) -> value
 --- @param options table|nil { onAction = function(goal, ttl) }

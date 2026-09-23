@@ -227,4 +227,56 @@ describe('idle.bridge', function()
       assert.is_nil(envelope.result.cell)
     end)
   end)
+
+  -- A method the self-description advertises but nothing serves is drift: the schema method is
+  -- how a host discovers what it can call, so an unserved name is a promise broken silently.
+  describe('the method table', function()
+    it('serves every method it advertises', function()
+      local locallyHandled = { ping = true, schema = true, action = true }
+      for _, method in ipairs(bridge.METHODS) do
+        if not locallyHandled[method.name] then
+          assert.is_not_nil(bridge.SOURCE_METHODS[method.name],
+            ('%s is advertised but wired to no source'):format(method.name))
+        end
+      end
+    end)
+
+    it('declares each method once', function()
+      local seen = {}
+      for _, method in ipairs(bridge.METHODS) do
+        assert.is_nil(seen[method.name], ('%s is declared twice'):format(method.name))
+        seen[method.name] = true
+      end
+    end)
+
+    it('describes every method, so a host can explain itself to a user', function()
+      for _, method in ipairs(bridge.METHODS) do
+        assert.is_true(type(method.description) == 'string' and #method.description > 0,
+          ('%s has no description'):format(method.name))
+        assert.is_true(type(method.params) == 'table',
+          ('%s has no params list'):format(method.name))
+      end
+    end)
+
+    it('serves the registry methods, and a miss is a nil result rather than an error', function()
+      -- a miss is not a failure: a stale id should come back as "nothing", not as a broken call
+      local b = make({
+        entityGet = function(params) return params and params.id == 'known'
+          and { id = 'known', kind = 'door', name = 'hatch' } or nil end,
+        registry = function() return { cap = 200, count = 1, evicted = 0, entities = {} } end,
+      })
+      local hit = ask(b, { method = 'entity.get', params = { id = 'known' }, id = 1 })
+      assert.is_true(hit.ok)
+      assert.equals(hit.result.name, 'hatch')
+
+      local miss = ask(b, { method = 'entity.get', params = { id = 'stale' }, id = 2 })
+      assert.is_true(miss.ok, 'a miss is not an error')
+      assert.is_nil(miss.result)
+      assert.equals(miss.id, 2)
+
+      local listing = ask(b, { method = 'registry', id = 3 })
+      assert.is_true(listing.ok)
+      assert.equals(listing.result.cap, 200)
+    end)
+  end)
 end)
