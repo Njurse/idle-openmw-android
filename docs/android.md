@@ -442,3 +442,32 @@ what `tools/preview_console.py` exists to substitute for until then.
 
 Evidence frames: `build/device/` (`01-openmw-launch`, `03-boot`, `05-menu`,
 `08-a`/`08-b` the identical pair).
+
+---
+
+## Current status (re-measured)
+
+Checked again on this host, so the next session does not re-derive it:
+
+- **The AVD `idle_openmw` boots in ~35s** (`emulator -avd idle_openmw -no-snapshot-save`,
+  `adb wait-for-device` + `getprop sys.boot_completed`). `adb devices` shows
+  `emulator-5554 device`.
+- **The installed engine is still the 2021 build:** `is.xyz.omw_nightly`,
+  `versionName = 0.48.0-46-nightly`. That "0.48.0-46" is the *port's* numbering; it predates
+  OpenMW's `.omwscripts` support, which is the whole wall above.
+- **The device is already fully staged** from an earlier session:
+  `/storage/emulated/0/Morrowind/{Data Files,Mods/idle_openmw,Morrowind.ini,openmw.cfg.android}`,
+  with `idle_openmw.omwscripts` and the mod's `scripts/` tree present in **both** `Data Files`
+  and `Mods/idle_openmw`.
+- **The NDK is installable on this Windows host.** `sdkmanager --list` offers
+  `ndk;16.1.4479499` … `ndk;<newer>` as side-by-side packages. This corrects the assumption
+  that an Android engine build needs a Linux toolchain: the *NDK itself ships for Windows*.
+  What is genuinely Linux-shaped is `openmw-android`'s **build scripts** (they fetch a
+  `prebuilt/linux-x86_64` tree and drive a CMake superbuild), not the compiler.
+
+**So the next real step is concrete:** with an NDK installed, take the two tracks that
+already exist in this repo and point them at Android instead of x86-windows — the fork
+patches (`tools/dev/engine-build/patches/`) are the same engine either way — and produce an
+APK whose engine is **≥ 0.49** (the mod's floor, `docs/openmw-lua-api.md`) so `.omwscripts`
+loads. Until that APK exists, the emulator can prove the *device and data layout*, and
+desktop OpenMW (or the forked build, `docs/engine-build.md`) is what plays the mod.
