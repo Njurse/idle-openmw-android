@@ -54,9 +54,23 @@ function M.approachAngle(from, to, maxStep)
 end
 
 --- Treat a value as a 3D point. Accepts {x=,y=,z=} or nil.
+--- Read a position as {x,y,z} from a PLAIN TABLE *or* an engine Vector3 USERDATA.
+---
+--- Engine values are userdata (AGENTS.md #7), and `self.position` is exactly such a value.
+--- `type(v) ~= 'table'` therefore returned nil for the ONLY position the runtime actually has,
+--- so every distance in the mod was nil. Nothing raised: the pathfinder's arrival test read
+--- `nil and nil <= tolerance`, fell through its own "path is spent" branch, and reported
+--- `arrived` while standing 4000 units away -- so the character never moved a step. This is the
+--- widest-reaching instance of that trap in the codebase, and it is why the fix belongs here in
+--- the core rather than at any one call site.
 local function point(v)
-  if type(v) ~= 'table' then return nil end
-  return { v.x or 0, v.y or 0, v.z or 0 }
+  if type(v) == 'table' then return { v.x or 0, v.y or 0, v.z or 0 } end
+  if M.isObject(v) then
+    -- pcall: an engine value we cannot read is a reason to report nothing, not to throw
+    local ok, x, y, z = pcall(function() return v.x, v.y, v.z end)
+    if ok and (x ~= nil or y ~= nil or z ~= nil) then return { x or 0, y or 0, z or 0 } end
+  end
+  return nil
 end
 
 --- Squared distance between two {x=,y=,z=} points.
@@ -76,9 +90,9 @@ end
 
 --- Horizontal (XY-plane) distance -- the useful metric for walking.
 function M.planarDistance(a, b)
-  if type(a) ~= 'table' or type(b) ~= 'table' then return nil end
-  local dx = (a.x or 0) - (b.x or 0)
-  local dy = (a.y or 0) - (b.y or 0)
+  local pa, pb = point(a), point(b)
+  if not pa or not pb then return nil end
+  local dx, dy = pa[1] - pb[1], pa[2] - pb[2]
   return math.sqrt(dx * dx + dy * dy)
 end
 
@@ -133,6 +147,9 @@ end
 
 --- Shallow copy.
 function M.copy(t)
+  -- Non-tables are returned as-is rather than raising: `pairs` on an engine Vector3 (userdata)
+  -- is an error, and a copy of a position is most usefully the position.
+  if type(t) ~= 'table' then return t end
   local out = {}
   for k, v in pairs(t) do out[k] = v end
   return out

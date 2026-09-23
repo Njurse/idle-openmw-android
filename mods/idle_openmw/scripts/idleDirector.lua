@@ -350,6 +350,9 @@ local function gatherUiReport()
       data.goalReason = status.reason
       data.directive = status.directive
       data.topGoals = status.topGoals
+      -- The director's own recent lines. Without them the reason a plan went nowhere is only
+      -- visible on the in-game console, which a host reading the bridge cannot see.
+      data.recentLog = status.log
     end
     local executor = state.executor
     if executor then
@@ -360,6 +363,29 @@ local function gatherUiReport()
       data.moveTarget = head and head.dest or nil
       data.routeTarget = executor.route and executor.route.target or nil
       data.routeSnapped = executor.route and executor.route.snapped or nil
+      -- "moving=true and standing still" is a STEERING problem, and yaw is the whole story:
+      -- a yaw the character never converges on means it turns forever and never walks.
+      do
+        -- "moving = true and standing still" is a STEERING problem, and the yaw is the whole
+        -- story: 0.52 hands `self.rotation` back as a Transform userdata rather than an angle, so
+        -- a yaw that is not a number means the character turns on the spot forever.
+        local steer = executor.lastSteer or {}
+        data.selfYaw = steer.yaw
+        data.yawSource = steer.yawSource
+        data.steer = steer
+        local route = executor.route
+        local waypoint = route and route.points and route.points[route.index or 1] or nil
+        if waypoint then
+          data.waypoint = { x = waypoint.x, y = waypoint.y, z = waypoint.z }
+        end
+        data.routeIndex = route and route.index or nil
+        data.routePoints = route and route.points and #route.points or nil
+        -- The override is what stops the engine's own player controls from clearing the values we
+        -- just set. Without it, `movement = 1` is overwritten every frame and nothing moves.
+        local ifaces = engine.interfaces()
+        data.controlsOverride = (ifaces and ifaces.Controls
+          and type(ifaces.Controls.overrideMovementControls) == 'function') and true or false
+      end
     end
     -- the LIVE position, through the ONE reader the rest of the mod uses
     -- (entities.positionOf). NOTE: `self.position` is correct, but `self.object.position` reads
@@ -402,6 +428,36 @@ local function gatherUiReport()
       end
     end
     data.nearbyLists = lists
+  end
+
+  do -- what the brain ASKED FOR on its last tick
+    -- `pending` alone cannot distinguish "the brain asked for nothing" from "the executor
+    -- finished it", and those need opposite fixes.
+    local commands = state.director and state.director.commands
+    if util.isObject(commands) then
+      local types = {}
+      for index = 1, #commands do
+        local command = commands[index]
+        types[#types + 1] = tostring(command and command.type)
+          .. (command and command.kind and ('/' .. tostring(command.kind)) or '')
+      end
+      data.brainCommands = types
+    end
+  end
+
+  do -- what the brain thinks is NEAREST
+    -- A goal plans nothing when its target is missing, and "missing" is invisible from outside:
+    -- `goal=fight, pending=0` looks identical whether the target exists or not.
+    local nearest = state.snapshot and state.snapshot.world and state.snapshot.world.nearest
+    if util.isObject(nearest) then
+      local keys = {}
+      for key, entry in pairs(nearest) do
+        keys[#keys + 1] = ('%s@%s'):format(tostring(key),
+          entry and entry.distance and tostring(math.floor(entry.distance)) or '?')
+      end
+      table.sort(keys)
+      data.nearest = keys
+    end
   end
 
   do -- WHY the model thinks something is hostile
@@ -567,6 +623,47 @@ local function pollDevCommand()
     print('idle-openmw: heartbeat every ' .. tostring(state.heartbeatSeconds) .. 's')
   elseif command.verb == 'note' then
     state.operatorNote = command.text
+  elseif command.verb == 'nav' then
+    -- Measure the nav path the RUNTIME takes, because "No route to move" is the same symptom for
+    -- a bad start point, an unset target and a port that rejected a perfectly good path.
+    local nearby = engine.nearby()
+    local utilEngine = engine.util()
+    local self_ = engine.self()
+    local origin = entitiesMod.positionOf(self_)
+    local route = state.executor and state.executor.route
+    local target = route and route.target or nil
+    if not target then
+      local enemy = state.snapshot and state.snapshot.world and state.snapshot.world.nearest
+        and state.snapshot.world.nearest.enemy
+      target = enemy and enemy.position or nil
+    end
+    local function show(label, value)
+      if not value then return label .. '=nil' end
+      return ('%s=%.0f,%.0f,%.0f'):format(label, value.x or 0, value.y or 0, value.z or 0)
+    end
+    print(('idle-openmw: nav executor=%s route=%s failures=%s repaths=%s'):format(
+      tostring(state.executor ~= nil), tostring(route ~= nil),
+      tostring(route and route.failures), tostring(route and route.repaths)))
+    print('idle-openmw: nav ' .. show('from', origin) .. ' ' .. show('to', target))
+    if nearby and type(nearby.findPath) == 'function' and origin and target and utilEngine then
+      local from = utilEngine.vector3(origin.x, origin.y, origin.z)
+      local to = utilEngine.vector3(target.x, target.y, target.z)
+      local called, status, points = pcall(nearby.findPath, from, to, { destinationTolerance = 32 })
+      print(('idle-openmw: nav raw called=%s status=%s points=%s'):format(
+        tostring(called), tostring(status),
+        tostring(util.isObject(points) and #points or 'n/a')))
+      local called3, status3 = pcall(nearby.findPath, origin, target, { destinationTolerance = 32 })
+      print(('idle-openmw: nav raw-plaintable called=%s status=%s'):format(
+        tostring(called3), tostring(status3)))
+    end
+    if route and route.nav and type(route.nav.findPath) == 'function'
+        and origin and target then
+      local ok, points = route.nav.findPath(origin, target, {})
+      print(('idle-openmw: nav port -> ok=%s points=%s'):format(
+        tostring(ok), tostring(util.isObject(points) and #points or 'n/a')))
+    else
+      print('idle-openmw: nav port MISSING')
+    end
   elseif command.verb == 'economy' then
     -- A live probe of the player -> warden -> engine channel, and the only way an operator can
     -- exercise the economy without a merchant in front of them. The mod's own trades (sell/buy/

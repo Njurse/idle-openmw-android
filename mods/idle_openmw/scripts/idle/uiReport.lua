@@ -131,6 +131,7 @@ function M.parseCommand(text)
   if verb == 'note' then return { verb = 'note', text = rest } end
   if verb == 'camera' then return { verb = 'camera', text = rest } end
   if verb == 'economy' then return { verb = 'economy', text = rest } end
+  if verb == 'nav' then return { verb = 'nav', text = rest } end
   if verb == 'stop' then return { verb = 'stop' } end
   return { verb = 'unknown', text = command }
 end

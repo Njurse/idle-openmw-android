@@ -30,6 +30,11 @@ function M.town()
       shop = { name = 'Arrille', position = { x = 10, y = 0, z = 0 }, distance = 10 },
       trainer = { name = 'Trainer', position = { x = 20, y = 0, z = 0 }, distance = 20 },
       rest = { name = 'Bed', position = { x = 30, y = 0, z = 0 }, distance = 30 },
+      -- A town that advertises `talk`/`quest` opportunities must have someone to talk to:
+      -- without them the director picked `talk`, planned NOTHING, and parked (the defect the
+      -- fall-through in Director:tick now catches). The fixture was hiding it.
+      talk = { name = 'Villager', position = { x = 40, y = 0, z = 0 }, distance = 40 },
+      quest = { name = 'Quest Giver', position = { x = 50, y = 0, z = 0 }, distance = 50 },
     },
   })
 end

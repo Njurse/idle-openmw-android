@@ -78,3 +78,44 @@ stuck timer, or an actor grinding against a wall looks healthy forever.
 door-ahead, flags-on-the-wire); `tests/spec/runtime_spec.lua` drives the executor against the
 mock engine (steering, arrival release, route failure, and opening a door ahead). The 1000-hour
 simulation (`python tools/run_tests.py --sim`) is the invariant net over the whole thing.
+
+## Two engine-value traps that stopped the character walking entirely
+
+Both were found by watching the built engine, and both are instances of AGENTS.md #7. Neither
+raised an error: the mod's frame update is pcall-guarded, and the values involved were *silently*
+nil, so the character simply stood still while every log said `moving = true`.
+
+**1. `util.point` rejected userdata, so every distance was nil.** `self.position` is an engine
+Vector3 *userdata*, and `point()` only accepted a table. Everything downstream of a distance then
+read `nil`, which is where it gets dangerous: `Route:update`'s arrival test is
+`if toTarget and toTarget <= tolerance`, so a nil distance falls *through* the arrival branch and
+lands in "the path is spent" — which returned `arrived`. The route therefore reported success
+4000 units from the target, the executor popped the command, and the character never moved. The
+same nil propagated to steering, to `nearest.*.distance` and to the danger model.
+
+Fixed in `scripts/idle/util.lua` (`point`, `planarDistance`, and `copy`, which raised on userdata
+because `pairs` cannot walk one) rather than at any call site — it is the widest-reaching
+instance of the trap in the codebase.
+
+**2. `self.rotation` is a Transform, not an angle.** On 0.52 it comes back as a *userdata*, and
+the Transform's angles live a level deeper. The executor passed it straight to
+`pathfinder.steering`, so the yaw comparison was meaningless: `shouldMove` stayed false and the
+character turned on the spot forever. `Executor.yawOf` now probes, in order,
+`self.rotation` (number) → `.z` → `.rotation.z` → `camera.getYaw()`, and records which one it
+used in the `ui` report (`yawSource`), so a fallback is never mistaken for a real reading.
+
+## Diagnosing "it will not move" on a live engine
+
+The `ui` report carries what is needed, in the order the questions come up:
+
+| Field | Answers |
+| --- | --- |
+| `brainCommands` | did the brain ask for anything at all? |
+| `nearest` | does the target the goal needs actually exist? |
+| `routeTarget` / `routePoints` / `routeIndex` | is a route live, and where is it? |
+| `steer.yaw` / `steer.yawDelta` / `steer.shouldMove` | is the character refusing to walk, or turning? |
+| `yawSource` | was the yaw real, or a fallback? |
+| `controlsOverride` | can we steer at all, or will the engine clear our controls each frame? |
+
+The `nav` dev verb (`docs/observability.md`) reports the raw `nearby.findPath` status alongside
+what the port made of it, which separates "the navmesh refused" from "we misread the answer".

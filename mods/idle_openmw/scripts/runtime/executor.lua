@@ -106,12 +106,62 @@ function Executor:_releaseControls()
   controls.jump = false
 end
 
+--- The player's facing, in radians.
+---
+--- 0.52 hands `self.rotation` back as a Transform USERDATA, not the angle the older docs
+--- describe. Feeding that userdata to the steering maths produced a nonsense yaw that never
+--- converged, so `shouldMove` was never true and the character turned on the spot forever while
+--- every log said it was moving. `rotation.z` is the yaw; fall back to the camera, then to 0.
+--- @return number
+--- The player's facing, in radians, from whichever source the engine actually provides.
+---
+--- 0.52 hands `self.rotation` back as a Transform USERDATA, not the angle the older docs
+--- describe, and a Transform's angles live one level deeper. Feeding a non-number to the steering
+--- maths produced a yaw that never converged: `shouldMove` stayed false, the character turned on
+--- the spot forever through forty seconds of logs claiming `moving = true`, and each candidate
+--- source had to be probed rather than assumed. Returns the value AND where it came from, so a
+--- host can tell a real reading from a fallback.
+--- @return number, string
+local function yawOf(selfObject)
+  local rotation = nil
+  pcall(function() rotation = selfObject and selfObject.rotation end)
+  if type(rotation) == 'number' then return rotation, 'self.rotation(number)' end
+
+  -- a Vector3-like: `.z` is the yaw
+  local yaw = nil
+  pcall(function() yaw = rotation and rotation.z end)
+  if type(yaw) == 'number' then return yaw, 'self.rotation.z' end
+
+  -- a Transform: its `rotation` field holds the angles (core.lua:169)
+  pcall(function() yaw = rotation and rotation.rotation and rotation.rotation.z end)
+  if type(yaw) == 'number' then return yaw, 'self.rotation.rotation.z' end
+
+  -- the camera faces where the character faces in third person, and is always readable
+  local camera = nil
+  pcall(function() camera = require('openmw.camera') end)
+  pcall(function() yaw = camera and camera.getYaw and camera.getYaw() end)
+  if type(yaw) == 'number' then return yaw, 'camera.getYaw' end
+
+  return 0, 'nothing readable'
+end
+
 function Executor:_steer(position, waypoint, yaw)
   local controls = self:_controls()
   if not controls then return end
   local solution = pathfinder.steering(position, waypoint, yaw, {
     arriveTolerance = self.cfg.behaviour.arriveTolerance,
   })
+  -- Remembered so a host can ask WHY nothing is happening: `moving = true` with a zero distance
+  -- travelled is either a steering refusal or an override the engine never honoured, and the
+  -- two look identical from outside.
+  self.lastSteer = {
+    yaw = yaw,
+    yawSource = self.lastYawSource,
+    yawDelta = solution.yawDelta,
+    distance = solution.distance,
+    shouldMove = solution.shouldMove,
+    arrived = solution.arrived,
+  }
   controls.yawChange = solution.yawChange
   controls.movement = solution.shouldMove and 1 or 0
   controls.run = solution.shouldMove
@@ -398,16 +448,31 @@ end
 -- the update loop
 -- ---------------------------------------------------------------------------
 
+--- Start walking. Returns `true`, or `false` AND WHY.
+---
+--- The reason matters: "No route to move" is the same text for a missing destination, a missing
+--- self object and a path the navmesh could not build, and those need three different fixes.
+--- @return boolean, string|nil
 function Executor:_startMove(command, now)
-  if not self.route or not command.dest then return false end
+  if not self.route then return false, 'no route object' end
+  if not command.dest then return false, 'the command has no destination' end
   local self_ = self.env.self
-  if not self_ then return false end
+  if not self_ then return false, 'no openmw.self in the environment' end
   self.route:setTarget(command.dest, { arriveTolerance = command.arrive })
-  local status = self.route:update(self_.position or { x = 0, y = 0, z = 0 }, now)
+  local here = self_.position or { x = 0, y = 0, z = 0 }
+  local status = self.route:update(here, now)
   if status.status == 'moving' then return true end
   -- do not leave a dead route lingering, or isMoving() would lie
   self.route:clear()
-  return false
+  -- Carry the NUMBERS. "arrived" while standing thousands of units away is only possible if the
+  -- destination we were handed is not where we think it is, and that is invisible otherwise.
+  local function at(point)
+    if not point then return 'nil' end
+    return ('%.0f,%.0f,%.0f'):format(point.x or 0, point.y or 0, point.z or 0)
+  end
+  return false, ('%s (dest %s, here %s, gap %s)'):format(
+    tostring(status.status), at(command.dest), at(here),
+    tostring(util.distance(here, command.dest)))
 end
 
 --- Open a door we are about to walk into.
@@ -457,7 +522,9 @@ function Executor:step(dt, now)
   local status = self.route:update(self_.position or { x = 0, y = 0, z = 0 }, now or 0)
 
   if status.status == 'moving' then
-    self:_steer(self_.position or { x = 0, y = 0, z = 0 }, status.waypoint, self_.rotation or 0)
+    local yaw, yawSource = yawOf(self_)
+    self.lastYawSource = yawSource
+    self:_steer(self_.position or { x = 0, y = 0, z = 0 }, status.waypoint, yaw)
     self:_openDoorsAhead()
   elseif status.status == 'arrived' then
     self:_releaseControls()
@@ -489,8 +556,9 @@ function Executor:update(dt, now)
 
       if BLOCKING[command.type] then
         self:pop()
-        if self:_startMove(command, now) then break end
-        self:log(('No route to %s'):format(command.type), 'warn')
+        local started, why = self:_startMove(command, now)
+        if started then break end
+        self:log(('No route to %s (%s)'):format(command.type, why or 'unknown'), 'warn')
       else
         local replacement = self:_execute(command, now)
         self:pop()

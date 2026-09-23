@@ -59,6 +59,13 @@ local traceMod = require('scripts.idle.trace')
 
 local M = {}
 
+--- Goals that are allowed to produce NO command.
+---
+--- Everything else must either act or hand over: a goal with nothing to act on ('flee' with no
+--- threat, 'fight' with nothing in reach) otherwise parks the character forever while the reason
+--- line still claims it is doing something.
+local PASSIVE_GOALS = { idle = true, manual = true }
+
 -- Which mode the player is in. Mirrored by uiModel.MODES / uiLayout.MODES.
 --   manual    -- the player drives; we emit no commands at all
 --   directive -- auto-play, but queued user orders take precedence
@@ -138,9 +145,12 @@ function M.planCommands(goalId, statView, world, snapshot, cfg, ctx)
   local inventory = player.inventory or {}
 
   local function moveThenActivate(key, kind, run)
+    local nearest = world and world.nearest and world.nearest[key]
+    -- Nothing to act on? Emit NOTHING, so the goal falls through to one that can act (see
+    -- Director:tick). Emitting an attack with a nil target is a command that cannot do anything.
+    if not nearest then return end
     local move = moveToEntity(world, key, run)
     if move then commands[#commands + 1] = move end
-    local nearest = world and world.nearest and world.nearest[key]
     commands[#commands + 1] = { type = 'activate', kind = kind, target = nearest }
   end
 
@@ -172,7 +182,10 @@ function M.planCommands(goalId, statView, world, snapshot, cfg, ctx)
     }
 
   elseif goalId == 'fight' then
-    commands[#commands + 1] = { type = 'activate', kind = 'attack', target = world.nearest and world.nearest.enemy }
+    -- Move INTO reach first. Attacking a creature thousands of units away is a "goal that cannot
+    -- act" wearing a command: the character stands still and swings at air. Measured live in
+    -- Seyda Neen, with the enemy 3000 units off.
+    moveThenActivate('enemy', 'attack', true)
 
   elseif goalId == 'rest' then
     local move = moveToEntity(world, 'rest', false)
@@ -433,6 +446,34 @@ function Director:tick(dt, snapshot)
     chosen, row = natural, naturalRow
   end
 
+  local ctx = {
+    classDef = self.classDef,
+    desired = self.desired,
+    -- The directive in force, so a goal whose behaviour depends on it (walk_to)
+    -- can read it (scripts/idle/tapMove.lua).
+    directive = pending,
+  }
+  local commands = M.planCommands(chosen, view, world, snapshot, self.cfg, ctx)
+
+  -- FALL THROUGH when the chosen goal cannot act.
+  --
+  -- 'flee' with no threat to flee from, or 'fight' with nothing in reach, produces NO command --
+  -- and a goal that produces nothing parks the character while the reason line still claims it is
+  -- doing something. Measured live: the director sat on `fight` in Seyda Neen and never moved.
+  -- Only genuinely passive goals are allowed to be empty.
+  if #commands == 0 and not PASSIVE_GOALS[chosen] then
+    for _, entry in ipairs(self.ranked or {}) do
+      if entry.id ~= chosen and not PASSIVE_GOALS[entry.id] then
+        local alternative = M.planCommands(entry.id, view, world, snapshot, self.cfg, ctx)
+        if #alternative > 0 then
+          self:logLine(('→ %s (%s had nothing to act on)'):format(entry.id, chosen))
+          chosen, row, commands = entry.id, entry, alternative
+          break
+        end
+      end
+    end
+  end
+
   local changed = (chosen ~= self.goal)
   local stale = (self.time - self.lastDecisionAt) >= self.cfg.tick.interval
 
@@ -446,13 +487,6 @@ function Director:tick(dt, snapshot)
     self.lastDecisionAt = self.time
   end
 
-  local commands = M.planCommands(self.goal, view, world, snapshot, self.cfg, {
-    classDef = self.classDef,
-    desired = self.desired,
-    -- The directive in force, so a goal whose behaviour depends on it (walk_to)
-    -- can read it (scripts/idle/tapMove.lua).
-    directive = pending,
-  })
   self.commands = commands
   self.counters.commands = self.counters.commands + #commands
 

@@ -117,4 +117,52 @@ describe('idle.util', function()
       assert.equals(util.formatNumber(-1234), '-1,234')
     end)
   end)
+
+  -- ---------------------------------------------------------------------------
+  -- positions
+  -- ---------------------------------------------------------------------------
+  -- `self.position` is an engine Vector3 USERDATA. `point()` used to accept only tables, so
+  -- every distance in the mod was nil -- and the pathfinder's arrival test (`nil and x <= tol`)
+  -- fell through to "arrived". Measured live: the character "arrived" 4000 units from the target
+  -- and never took a step. This is the widest-reaching instance of AGENTS.md #7 in the codebase.
+  describe('positions from engine userdata', function()
+    local hasNewproxy = type(newproxy) == 'function'
+
+    local function vector(x, y, z)
+      if not hasNewproxy then return nil end
+      local proxy = newproxy(true)
+      getmetatable(proxy).__index = { x = x, y = y, z = z }
+      return proxy
+    end
+
+    it('measures from a table, a userdata, or one of each', function()
+      if not hasNewproxy then return end
+      local from = vector(0, 0, 0)
+      local to = vector(300, 400, 0)
+      assert.equals(500, util.distance(from, to))
+      assert.equals(500, util.distance({ x = 0, y = 0, z = 0 }, to))
+      assert.equals(500, util.distance(from, { x = 300, y = 400, z = 0 }))
+      assert.equals(util.distance(from, to), util.distance(to, from))
+    end)
+
+    it('measures planar distance from userdata too', function()
+      if not hasNewproxy then return end
+      assert.equals(500, util.planarDistance(vector(0, 0, 0), vector(300, 400, 900)))
+      assert.equals(util.planarDistance(vector(0, 0, 0), vector(300, 400, 0)), 500)
+    end)
+
+    it('copies a userdata position without raising', function()
+      -- `pairs` on an engine Vector3 is an error, and a copy of a position is the position
+      if not hasNewproxy then return end
+      local value = vector(1, 2, 3)
+      assert.equals(value, util.copy(value))
+      assert.equals(2, util.copy({ a = 1, b = 2 }).b)
+    end)
+
+    it('still declines a value that is not a position at all', function()
+      assert.is_nil(util.distance(nil, { x = 0, y = 0, z = 0 }))
+      assert.is_nil(util.distance(7, { x = 0, y = 0, z = 0 }))
+      assert.is_nil(util.planarDistance('nope', { x = 0, y = 0, z = 0 }))
+    end)
+  end)
 end)

@@ -129,11 +129,25 @@ describe('idle.director', function()
       return directorMod.planCommands(goalId, view(state), world, snapshot(state, world), cfg, ctx)
     end
 
-    it('engages the nearest enemy for fight', function()
+    it('walks into reach of the nearest enemy and attacks it', function()
+      -- An attack at a creature thousands of units away is a goal that cannot act wearing a
+      -- command: the character stands still and swings at air (measured live in Seyda Neen).
       local commands = plan('fight', worlds.wilderness())
-      assert.equals(#commands, 1)
-      assert.equals(commands[1].type, 'activate')
-      assert.equals(commands[1].kind, 'attack')
+      assert.equals(#commands, 2)
+      assert.equals(commands[1].type, 'move')
+      assert.equals(commands[1].dest.x, 60)
+      assert.equals(commands[2].type, 'activate')
+      assert.equals(commands[2].kind, 'attack')
+      assert.equals(commands[2].target.name, 'Rat')
+    end)
+
+    it('plans nothing for a goal whose target is absent, so tick can fall through', function()
+      -- 'talk' with nobody to talk to must emit NO command rather than an activation with a nil
+      -- target: the director uses "planned nothing" as the signal to hand over.
+      assert.equals(#plan('talk', worlds.empty()), 0)
+      assert.equals(#plan('fight', worlds.empty()), 0)
+      -- and an interaction goal WITH a target still plans it
+      assert.is_true(#plan('talk', worlds.town()) > 0)
     end)
 
     it('rests for the configured number of hours', function()
