@@ -83,6 +83,10 @@ VK = {
     "UP": 0x26, "DOWN": 0x28, "LEFT": 0x25, "RIGHT": 0x27,
     "Y": 0x59, "N": 0x4E, "E": 0x45, "T": 0x54, "F": 0x46, "W": 0x57, "S": 0x53,
     "1": 0x31, "2": 0x32, "3": 0x33, "4": 0x34, "5": 0x35,
+    # VK_OEM_3 is the grave/backtick key, which is OpenMW's console toggle
+    # (defaultKeyBindings[A_Console] = SDL_SCANCODE_GRAVE, bindingsmanager.cpp:268).
+    "GRAVE": 0xC0, "BACKTICK": 0xC0, "TILDE": 0xC0,
+    "MINUS": 0xBD, "EQUALS": 0xBB,
 }
 for i in range(1, 13):
     VK[f"F{i}"] = 0x6F + i

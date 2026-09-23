@@ -415,7 +415,17 @@ local function update(dt)
     end
 
     state.executor:update(dt, simulationTime())
-    applyCamera(state.snapshot and state.snapshot.phase and state.snapshot.phase.id)
+    local phaseId = state.snapshot and state.snapshot.phase and state.snapshot.phase.id
+    applyCamera(phaseId)
+
+    -- Announce a phase CHANGE to the engine log. This is the harness's signal that
+    -- character creation has ended (phase -> world) -- the console only appears in the
+    -- world, so without a log line a dev waiting on it has nothing to watch. Logged on
+    -- transition only, so it never spams.
+    if phaseId ~= state.lastPhaseId then
+      state.lastPhaseId = phaseId
+      print('idle-openmw: phase -> ' .. tostring(phaseId))
+    end
   end)
 
   if not ok then

@@ -136,6 +136,46 @@ and never calls it, so the feature silently stops working. We shipped exactly th
 (`onResolutionChanged`, which does not exist — it is `onViewportResized`). This checks
 every handler we declare against the engine's authoritative list.
 
+## Getting into the game fast
+
+```bash
+bash tools/dev/desktop/new-game.sh          # new game -> in the world
+bash tools/dev/desktop/new-game.sh --save   # ... and quicksave for instant reloads
+```
+
+The engine has flags that remove almost all of the slow part:
+
+| Flag | Effect |
+| --- | --- |
+| `--skip-menu=1` | do not show the main menu at all |
+| `--new-game=1` | run the new game sequence straight away (needs `skip-menu`) |
+| `--load-savegame <file>` | load a save on startup — the fast path once a save exists |
+| `--start <cell>` | set the initial cell |
+
+**Verified**: with `--skip-menu=1 --new-game=1` the game starts a new game with no menu
+and no intro, and the mod logs `idle-openmw: phase -> chargen` without a single click —
+see the phase-transition line the mod now prints (it exists for exactly this reason).
+The intro cinematic also simply is not in this data set (`Failed to open video:
+video/new_game.webm not found`), so there is nothing to skip past it.
+
+**Still to finish**: character creation itself. Two ways through it, and the state of each:
+
+1. **The console** — `set chargenstate -1` marks chargen complete and
+   `EnablePlayerControls` gives control back; the mod reads the same flag, so its phase
+   flips to `world` and the console appears. The console key is grave/backtick
+   (`defaultKeyBindings[A_Console] = SDL_SCANCODE_GRAVE`, bindingsmanager.cpp:268).
+   **Not yet confirmed** that injected key events open it and land in its text field —
+   that is the next thing to check, and it is the cheapest path by far.
+2. **Clicking the dialogs** — works but needs the right coordinates, and the GUI is
+   SCALED: at 1600x900 the scale is about 1.22, so the race dialog's declared 640x433
+   window renders as roughly 782x528, centred at x 408-1190, y 190-714. Its declared
+   OK button position (532 397 42 23) therefore lands at about **(1084, 684)**, not the
+   unscaled (1033, 641). Measured, not assumed — always derive from the frame you can
+   see in a capture rather than from the layout file alone.
+
+Handy: `F5` is quicksave and `F9` quickload, so once a character exists,
+`--load-savegame` gets you into the world in seconds.
+
 ## Driving character creation
 
 The engine log is the UI signal — each stage plays a voice line:

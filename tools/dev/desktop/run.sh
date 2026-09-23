@@ -50,9 +50,16 @@ fi
 [[ -x "$EXE" || -f "$EXE" ]] || { echo "!! engine not found: $EXE" >&2; exit 1; }
 [[ -f "$CONFIG_DIR/openmw.cfg" ]] || { echo "!! no openmw.cfg in $CONFIG_DIR -- run setup-cfg.sh" >&2; exit 1; }
 
-if [[ "$fresh" -eq 1 && -f "$LOG" ]]; then
-  mv "$LOG" "$LOG.prev-$(date +%H%M%S)"
-  echo "moved previous log aside"
+if [[ "$fresh" -eq 1 ]]; then
+  # Truncate rather than delete/move: a dying engine can still hold the handle, and on
+  # Windows the removal then fails quietly -- leaving the previous run's lines for the
+  # next wait to match against. Clearing the content is what we actually want.
+  : > "$LOG" 2>/dev/null || true
+  if [[ -s "$LOG" ]]; then
+    echo "!! could not clear $LOG -- stale lines may fool log waits" >&2
+  else
+    echo "cleared previous log"
+  fi
 fi
 
 echo "launching $(basename "$EXE") --user-data <$CONFIG_DIR>"
