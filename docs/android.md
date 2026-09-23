@@ -505,3 +505,51 @@ and diverging from upstream while doing it.
 That is the real shape of the task, and it is why the next step is a **configure attempt against
 the NDK toolchain with the superbuild bypassed**, not a script port: it answers "how far does our
 own source get with a modern NDK" without first rewriting a decade of pinned dependencies.
+
+## First Android configure, measured (the plan, in order)
+
+The attempt, the superbuild bypassed and the NDK toolchain used directly:
+
+```bash
+NDK=$ANDROID_HOME/ndk/29.0.14206865
+cmake -S .research/openmw -B build/android-configure -G Ninja \
+  -DCMAKE_TOOLCHAIN_FILE="$NDK/build/cmake/android.toolchain.cmake" \
+  -DANDROID_ABI=arm64-v8a -DANDROID_PLATFORM=android-24 \
+  -DCMAKE_BUILD_TYPE=Release
+```
+
+What it proves, step by step:
+
+1. **The compiler phase succeeds.** CMake identifies Clang 21 as the cross-compiler, detects its
+   ABI and features, and finds Git. Nothing about this host is in the way.
+2. **The first real blocker is GL.** `CMakeLists.txt:278` does an unconditional
+   `find_package(OpenGL REQUIRED)` — desktop OpenGL, which Android does not have. Pointing it at
+   the NDK's own GLES (`libGLESv2.so` / `libEGL.so` / sysroot headers) satisfies it, and the
+   configure moves on, so this is a *configure-time* obstacle rather than a porting job:
+   `Found OpenGL: .../aarch64-linux-android/24/libGLESv2.so`.
+3. **Then the dependency list.** With GL satisfied, the very next line stops it:
+   `Could NOT find LZ4 (missing: LZ4_LIBRARY LZ4_INCLUDE_DIR LZ4_VERSION)` at
+   `CMakeLists.txt:281`. LZ4 is the first of OSG, Boost, SDL2, MyGUI, Bullet, ffmpeg, OpenAL and
+   the rest — every one of them REQUIRED, each one stopping the configure in turn.
+
+**The conclusion this pins down:** OpenMW's CMake expects an Android dependency tree handed to it
+via `OPENMW_DEPENDENCIES_DIR` (`CMakeLists.txt:73` adds it to `CMAKE_FIND_ROOT_PATH`). Its own
+source is not the problem; the dependencies are. And the only thing in this project that produces
+such a tree is `openmw-android`'s superbuild — pinned to NDK r21e and 2019-2021 libraries.
+
+So the order of work is:
+
+1. **Produce an Android dependency tree for a modern NDK.** Either port the superbuild (bumping
+   Boost 1.69, ffmpeg 4.4, MyGUI 3.4, SDL2 2.0.12, gl4es and the rest one at a time), or build the
+   set by hand for r29, or run the existing superbuild on a Linux host/CI where its scripts work
+   unmodified — Docker is not installed here, and WSL2 needs an administrator.
+2. **Point `OPENMW_DEPENDENCIES_DIR` at it** and re-run the configure above. Expect the GLES
+   variables to move from the command line into the dependency tree.
+3. **Then** the fork's own patches (`buildscripts/patches/`) and the Lua API revision this mod
+   needs (>= 0.49 for `.omwscripts`; the fork is 0.52, revision 160).
+
+Step 1 is the whole task, and it is a dependency-porting job, not a first-build-blocker like the
+ones earlier in this project. That is worth knowing before starting it: the failure mode is slow
+and additive, not a wall.
+
+The log of this attempt is at `build/android-configure.log` (gitignored).
