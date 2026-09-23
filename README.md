@@ -254,6 +254,8 @@ decision layer — and the adapter — can be exercised headlessly against
 | [docs/dialogue.md](docs/dialogue.md) | dialogue topics, and the one thing Lua cannot do |
 | [docs/isometric.md](docs/isometric.md) | the camera lock, and why roofs stay visible |
 | [docs/observability.md](docs/observability.md) | the decision trace and the test/observability tools |
+
+| [docs/ui-inventory.md](docs/ui-inventory.md) | the decision trace and the test/observability tools |
 | [docs/ui-overhaul.md](docs/ui-overhaul.md) | moving Morrowind's own windows (data, not Lua) |
 | [docs/deployment.md](docs/deployment.md) | desktop + Android install, and the first run |
 | [docs/android.md](docs/android.md) | the emulator, data staging, the `.omwscripts` wall |
