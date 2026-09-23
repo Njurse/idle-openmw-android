@@ -46,12 +46,12 @@ if [[ "$fresh" -eq 1 && -f "$LOG" ]]; then
   echo "moved previous log aside"
 fi
 
-echo "launching $(basename "$EXE") --userdata <$CONFIG_DIR>"
+echo "launching $(basename "$EXE") --user-data <$CONFIG_DIR>"
 # Start-Process detaches properly. `cmd /c start` looks detached but the child
 # inherits our stdout/stderr, so a piped caller (… | tail) blocks until the GAME
 # exits -- which made every harness call hang until it was killed.
 powershell.exe -NoProfile -Command \
-  "Start-Process -FilePath '$(winpath "$EXE")' -ArgumentList '--userdata','$(winpath "$CONFIG_DIR")'" \
+  "Start-Process -FilePath '$(winpath "$EXE")' -ArgumentList '--user-data','$(winpath "$CONFIG_DIR")'" \
   >/dev/null 2>&1 </dev/null
 
 if [[ "$wait_secs" -gt 0 ]]; then

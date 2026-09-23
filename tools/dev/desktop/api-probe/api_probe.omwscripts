@@ -1,0 +1,12 @@
+# tools/dev/desktop/api-probe -- a throwaway mod that reports an engine's Lua API.
+#
+# Deliberately a MENU script: it runs at the main menu, so an engine's real API
+# surface can be measured in seconds, without loading a game.
+#
+# TWO facts about this, both learned the hard way:
+#   * ONE flag per file -- declaring the same script as both MENU and GLOBAL is a
+#     fatal "Flags mismatch" at load.
+#   * MENU does not exist before 0.49: OpenMW 0.48.0 answers
+#     "Unknown flag 'MENU'", and a GLOBAL script does not tick at the main menu
+#     either, so a pre-0.49 engine cannot be probed from the menu at all.
+MENU: scripts/api_probe.lua
