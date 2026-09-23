@@ -69,3 +69,43 @@ less eager rather than to freeze the goal -- measure it the same way.
 | `tests/sim/headless_sim.lua` | 1000 game-hours of invariants (streaks, gold, errors) |
 | `python tools/preview_console.py --png` | what the console looks like, without the game (`docs/theme.md`) |
 | `--only <substring>` | isolate one spec while iterating |
+
+## Reading the bridge's answers out of `openmw.log`
+
+The bridge writes one `IDLEAPI {json}` line per answer. Two things bite when you script
+against that log, both measured on the forked 0.52 build:
+
+- **A large payload can be interleaved.** `player` on a live save is a few kilobytes, and the
+  engine's log emitted it with another thread's line spliced *inside the JSON*
+  (`..."swimming"[07:29:10.416 *] false,...`), which no JSON parser will accept. Small answers
+  (`ui`, `world.pauseTags`, `ui.hints`) are reliable; for a big one, prefer a narrower method,
+  or ask twice and take the answer that parses.
+- **Locate the answer by `id`, not by "the last line".** Frames are logged continuously, so the
+  answer is whichever line carries your request id.
+
+The `ui` report is deliberately small and is the channel to prefer: it carries the director's
+decision, the live and snapshot positions, the camera state and the `nearbyLists` shapes.
+
+## Dev verbs (operator channel)
+
+Write one line into `mods/idle_openmw/dev_command.txt`; it is polled and consumed.
+
+| Verb | Effect |
+| --- | --- |
+| `dump` (or `ui`) | print the UI report |
+| `heartbeat <seconds>` | periodic frame summary |
+| `telemetry <seconds>` | periodic counters |
+| `note <text>` | record an operator note |
+| `camera on\|off` / `camera pitch <r>` / `camera distance <u>` | the isometric lock |
+| `economy gold <n>` / `economy give <id> [n]` / `economy take <id> [n]` | probe the player -> warden economy channel |
+| `stop` | stop the periodic output |
+
+`economy` exists because the economy is not otherwise reachable without a merchant in front of
+you, and because the player script *cannot* do it itself (`docs/openmw-lua-api.md` §10.1, and
+`docs/world-model.md`). Its live proof on the built engine:
+
+```
+[idle-openmw/warden] economy gold: 250 gold          # world.createObject + moveInto
+[idle-openmw/warden] economy take: 250 x gold_001    # it was really there, so it could be taken
+[idle-openmw/warden] economy take: FAILED - not carried: exp_sword_01   # the control
+```

@@ -86,6 +86,12 @@ describe('idle.uiReport', function()
       assert.equals('pitch -0.7', uiReport.parseCommand('camera pitch -0.7').text)
     end)
 
+    it('parses an economy probe, keeping its argument', function()
+      local command = uiReport.parseCommand('economy gold 100')
+      assert.equals('economy', command.verb)
+      assert.equals('gold 100', command.text)
+    end)
+
     it('ignores blank input and empty files', function()
       assert.is_nil(uiReport.parseCommand(''))
       assert.is_nil(uiReport.parseCommand('   '))

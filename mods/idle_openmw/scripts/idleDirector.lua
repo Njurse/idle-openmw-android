@@ -552,6 +552,26 @@ local function pollDevCommand()
     print('idle-openmw: heartbeat every ' .. tostring(state.heartbeatSeconds) .. 's')
   elseif command.verb == 'note' then
     state.operatorNote = command.text
+  elseif command.verb == 'economy' then
+    -- A live probe of the player -> warden -> engine channel, and the only way an operator can
+    -- exercise the economy without a merchant in front of them. The mod's own trades (sell/buy/
+    -- drop) go through the same `_requestEconomy`.
+    local op, rest = (command.text or ''):match('^(%S+)%s*(.*)$')
+    op = (op or ''):lower()
+    local first, second = rest:match('^(%S+)%s*(%S*)$')
+    local payload = nil
+    if op == 'gold' then
+      payload = { op = 'gold', amount = tonumber(first) }
+    elseif op == 'give' or op == 'take' then
+      payload = { op = op, recordId = first, count = tonumber(second) or 1 }
+    end
+    if not payload or not state.executor then
+      print('idle-openmw: economy needs "gold <n>", "give <recordId> [n]" or "take <recordId> [n]"')
+      state.lastDevCommand = nil
+      return
+    end
+    print('idle-openmw: economy -> ' .. op .. ' ' .. tostring(first or ''))
+    state.executor:_requestEconomy(payload)
   elseif command.verb == 'camera' then
     state.cfg.camera = state.cfg.camera or {}
     local set, rest = (command.text or ''):match('^(%S+)%s*(.*)$')
