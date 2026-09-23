@@ -111,6 +111,28 @@ local AI = {
   field('hello', 'number', '0..100 disposition'),
 }
 
+--- The eight attributes and twenty-seven skills, as DATA.
+---
+--- A host building a character sheet needs the canonical names, and hard-coding them in two
+--- places is how a typo becomes a missing column. These are the engine's own getter names
+--- (types.lua AttributeStats/SkillStats), so they can be used verbatim to ask for a value.
+M.ATTRIBUTES = {
+  'strength', 'intelligence', 'willpower', 'agility',
+  'speed', 'endurance', 'personality', 'luck',
+}
+
+M.SKILLS = {
+  -- combat
+  'block', 'armorer', 'mediumarmor', 'heavyarmor', 'bluntweapon', 'longblade', 'axe', 'spear',
+  -- magic
+  'destruction', 'alteration', 'illusion', 'conjuration', 'mysticism', 'restoration', 'enchant',
+  -- stealth
+  'alchemy', 'unarmored', 'security', 'sneak', 'acrobatics', 'lightarmor', 'shortblade',
+  'marksman', 'mercantile', 'speechcraft', 'handtohand',
+  -- misc
+  'athletics',
+}
+
 --- Actor KINDS are the shared identity plus these. Composed rather than re-listed: a kind
 --- that re-lists its fields is a kind that can silently omit one, which is exactly how
 --- actors lost `name` until the response validator caught it.
@@ -133,6 +155,27 @@ local ACTOR_EXTRA = {
   field('inventory', 'list', 'item stacks held'),
   field('services', 'map', 'servicesOffered: service name -> boolean'),
   field('travelDestinations', 'list', 'travel offers: {cellId, name?, position}'),
+
+  -- THE CHARACTER SHEET. NpcStats carries skills and reputation (types.lua:760-763), and the
+  -- player's stats ARE NpcStats, so all of this is available for the character we care about.
+  field('attributes', 'map', 'attribute name -> {base, damage, modified, modifier}; names in M.ATTRIBUTES'),
+  field('skills', 'map', 'skill name -> {base, damage, modified, modifier, progress}; names in M.SKILLS'),
+  field('levelProgress', 'number', 'LevelStat.progress, 0..1 towards the next level'),
+  field('reputation', 'number', 'NpcStats.reputation'),
+  field('spells', 'list', 'known spells, powers and abilities: {id, type}'),
+  field('activeSpells', 'list', 'spells currently affecting the actor: {id, temporary}'),
+  field('selectedSpell', 'string', 'the spell readied for casting'),
+  field('runSpeed', 'number', 'Actor.getRunSpeed'),
+  field('walkSpeed', 'number', 'Actor.getWalkSpeed'),
+  field('currentSpeed', 'number', 'Actor.getCurrentSpeed'),
+  field('stance', 'string', 'Actor.getStance'),
+  field('swimming', 'boolean', 'Actor.isSwimming'),
+  field('onGround', 'boolean', 'Actor.isOnGround'),
+  field('encumbrance', 'number', 'Actor.getEncumbrance'),
+  field('capacity', 'number', 'Actor.getCapacity'),
+  field('canMove', 'boolean', 'Actor.canMove'),
+  field('factions', 'map', 'faction id -> rank, for every faction the actor belongs to'),
+  field('werewolf', 'boolean', 'NPC.isWerewolf -- the one transformation state the engine exposes'),
 }
 
 local DOOR_EXTRA = {
@@ -296,6 +339,18 @@ M.AVAILABILITY = {
     available = false,
     reason = 'Dialogue can be OPENED (interfaces.UI.setMode) but no topic can be selected: '
       .. 'the dialogue window callbacks are internal C++ and not bound to Lua.',
+  },
+  bounty = {
+    available = false,
+    reason = 'The player\'s bounty is not a readable stat in 0.51. It appears only as'
+      .. ' PcCrimeLevel in a DIALOGUE RESPONSE context (core.lua:1268, "The player\'s bounty"),'
+      .. ' which is the speaker\'s view during a conversation, not a value we can query.',
+  },
+  birthsign = {
+    available = false,
+    reason = 'Not stored as a readable field. It is inferable: Morrowind grants a birthsign as'
+      .. ' an ability, so the birthsign shows up in the actor\'s spells list -- look for the'
+      .. ' known birthsign ability ids there rather than expecting a birthsign field.',
   },
   cellsInLocal = {
     available = false,

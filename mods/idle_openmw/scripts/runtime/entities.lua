@@ -19,6 +19,7 @@
 local engine = require('scripts.runtime.engine')
 local entity = require('scripts.idle.entity')
 local util = require('scripts.idle.util')
+local schema = require('scripts.idle.schema')
 
 local M = {}
 
@@ -133,20 +134,174 @@ local function readPool(builder, name, object, env)
   builder:set(name, { current = current, base = base, modifier = modifier })
 end
 
+--- Read a stat bean whose fields are {base, damage, modified, modifier} (+ progress).
+local function readStatBean(getter, object, extraField)
+  local stat = probe(getter, object)
+  if not stat then return nil end
+  local out = {
+    base = readField(stat, 'base'),
+    damage = readField(stat, 'damage'),
+    modified = readField(stat, 'modified'),
+    modifier = readField(stat, 'modifier'),
+  }
+  if extraField then out[extraField] = readField(stat, extraField) end
+  if out.base == nil and out.modified == nil then return nil end
+  return out
+end
+
+--- The character sheet: attributes, skills, level progress, reputation, spells, movement.
+---
+--- The player's stats ARE NpcStats (types.lua:760-763), so this is the same reader for the
+--- player and for NPCs -- which matters, because an idle RPG wants both sides of a fight.
+local function readSheet(builder, object, env)
+  local engineTypes = env.types
+  local actor = engineTypes and engineTypes.Actor
+  if not actor then return end
+  local stats = actor.stats
+  if not stats then return end
+
+  -- attributes: eight named getters (types.lua AttributeStats)
+  if stats.attributes then
+    local attributes = {}
+    for _, name in ipairs(schema.ATTRIBUTES) do
+      local getter = stats.attributes[name]
+      if type(getter) == 'function' then
+        local read = readStatBean(getter, object)
+        if read then attributes[name] = read end
+      end
+    end
+    if next(attributes) then builder:set('attributes', attributes) end
+  end
+
+  -- skills: twenty-seven named getters, each with progress towards the next point
+  if stats.skills then
+    local skills = {}
+    for _, name in ipairs(schema.SKILLS) do
+      local getter = stats.skills[name]
+      if type(getter) == 'function' then
+        local read = readStatBean(getter, object, 'progress')
+        if read then skills[name] = read end
+      end
+    end
+    if next(skills) then builder:set('skills', skills) end
+  end
+
+  -- level and progress towards the next one
+  if type(stats.level) == 'function' then
+    local level = probe(stats.level, object)
+    if level then
+      local current = readField(level, 'current')
+      if type(current) == 'number' then builder:set('level', math.floor(current)) end
+      builder:set('levelProgress', readField(level, 'progress'))
+    end
+  end
+
+  -- reputation (NpcStats only)
+  local reputation = stats.reputation and probe(stats.reputation, object)
+  if reputation then builder:set('reputation', readField(reputation, 'current')) end
+
+  -- spells, powers and abilities; and what is currently affecting the actor
+  if type(actor.spells) == 'function' then
+    local spells = probe(actor.spells, object)
+    if spells then
+      local list = {}
+      pcall(function()
+        for _, spell in pairs(spells) do
+          local id = readField(spell, 'id')
+          if id then list[#list + 1] = { id = id, type = readField(spell, 'type') } end
+        end
+      end)
+      if #list > 0 then
+        table.sort(list, function(a, b) return tostring(a.id) < tostring(b.id) end)
+        builder:set('spells', list)
+      end
+    end
+  end
+
+  if type(actor.activeSpells) == 'function' then
+    local active = probe(actor.activeSpells, object)
+    if active then
+      local list = {}
+      pcall(function()
+        for _, spell in pairs(active) do
+          local id = readField(spell, 'id')
+          if id then list[#list + 1] = { id = id, temporary = readField(spell, 'temporary') } end
+        end
+      end)
+      if #list > 0 then builder:set('activeSpells', list) end
+    end
+  end
+
+  if type(actor.getSelectedSpell) == 'function' then
+    local selected = probe(actor.getSelectedSpell, object)
+    if selected then
+      local id = readField(selected, 'id')
+      builder:set('selectedSpell', id or (type(selected) == 'string' and selected or nil))
+    end
+  end
+
+  -- movement and load, which is what "can I do anything right now" depends on
+  local plain = {
+    runSpeed = actor.getRunSpeed, walkSpeed = actor.getWalkSpeed,
+    currentSpeed = actor.getCurrentSpeed, encumbrance = actor.getEncumbrance,
+    capacity = actor.getCapacity, canMove = actor.canMove,
+    swimming = actor.isSwimming, onGround = actor.isOnGround,
+  }
+  for name, getter in pairs(plain) do
+    if type(getter) == 'function' then
+      local value = probe(getter, object)
+      if value ~= nil then builder:set(name, value) end
+    end
+  end
+  if type(actor.getStance) == 'function' then
+    local stance = probe(actor.getStance, object)
+    if stance ~= nil then builder:set('stance', tostring(stance)) end
+  end
+end
+
+--- Factions and lycanthropy: NPC-scoped, and the closest thing to "standing" the engine has.
+local function readStanding(builder, object, env)
+  local npc = env.types and env.types.NPC
+  if not npc then return end
+
+  if type(npc.getFactions) == 'function' then
+    local ids = probe(npc.getFactions, object)
+    if type(ids) == 'table' then
+      local factions = {}
+      for _, id in ipairs(ids) do
+        if type(npc.getFactionRank) == 'function' then
+          local rank = probe(npc.getFactionRank, object, id)
+          if rank ~= nil then factions[tostring(id)] = rank end
+        else
+          factions[tostring(id)] = nil
+        end
+      end
+      if next(factions) then builder:set('factions', factions) end
+    end
+  end
+
+  if type(npc.isWerewolf) == 'function' then
+    local werewolf = probe(npc.isWerewolf, object)
+    if type(werewolf) == 'boolean' then builder:set('werewolf', werewolf) end
+  end
+end
+
 local function readActor(builder, object, env)
   local engineTypes = env.types
   local actor = engineTypes and engineTypes.Actor
   if not actor then return end
 
   local stats = actor.stats
-  if stats and stats.level and type(stats.level) == 'function' then
-    local level = probe(stats.level, object)
-    if level then builder:set('level', math.floor(readField(level, 'level') or level)) end
-  end
+  -- Level and level progress are read by readSheet: the engine's LevelStat has BOTH `current`
+  -- and `progress` (types.lua:443-445), and having the old `stats.level.level` guess here as
+  -- well meant a bean reached math.floor and threw.
   if actor.isDead then
     local dead = probe(actor.isDead, object)
     if type(dead) == 'boolean' then builder:set('dead', dead) end
   end
+
+  readSheet(builder, object, env)
+  readStanding(builder, object, env)
 
   readPool(builder, 'health', object, env)
   readPool(builder, 'magicka', object, env)

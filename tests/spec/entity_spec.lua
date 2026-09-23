@@ -166,13 +166,28 @@ describe('runtime.entities', function()
       getRecordName = function(object) return object._name end,
       Actor = {
         stats = {
-          level = function(object) return { level = object._level } end,
+          level = function(object) return { current = object._level } end,
           ai = { fight = function(object) return object._fight end },
           dynamic = {
             health = function(object) return { current = object._health, base = 100 } end,
           },
+          -- the character sheet: one attribute and one skill is enough to prove the reader
+          -- walks the canonical name lists
+          attributes = {
+            strength = function() return { base = 40, modified = 45, damage = 0, modifier = 5 } end,
+          },
+          skills = {
+            longblade = function()
+              return { base = 30, modified = 35, damage = 0, modifier = 5, progress = 0.25 }
+            end,
+          },
+          reputation = function() return { current = 3 } end,
         },
         isDead = function(object) return object._dead == true end,
+        getRunSpeed = function() return 180 end,
+        getStance = function() return 'WEAPON' end,
+        canMove = function() return true end,
+        spells = function() return { { id = 'thunder fist', type = 0 } } end,
       },
       Door = {
         objectIsInstance = function(object) return object._type == 'Door' end,
@@ -226,6 +241,32 @@ describe('runtime.entities', function()
     assert.equals(100, read.health.base)
     assert.equals(90, read.ai.fight)
     assert.equals(false, read.dead)
+  end)
+
+  it('reads the character sheet: attributes, skills, movement, spells', function()
+    local env = fakeEnv()
+    local read = reader.read({ _type = 'NPC', id = 'n1', _name = 'guard', _level = 7,
+                               _health = 10, _fight = 50 }, env)
+    assert.equals(7, read.level)
+    -- one attribute, with the engine's bean fields
+    assert.equals(40, read.attributes.strength.base)
+    assert.equals(45, read.attributes.strength.modified)
+    -- one skill, including progress towards the next point
+    assert.equals(30, read.skills.longblade.base)
+    assert.equals(0.25, read.skills.longblade.progress)
+    assert.equals(3, read.reputation)
+    assert.equals(180, read.runSpeed)
+    assert.equals('WEAPON', read.stance)
+    assert.equals(true, read.canMove)
+    assert.equals('thunder fist', read.spells[1].id)
+  end)
+
+  it('keeps the sheet schema-valid, including for the player', function()
+    local env = fakeEnv()
+    local schema = require('scripts.idle.schema')
+    local read = reader.read({ _type = 'NPC', id = 'n1', _level = 3, _health = 5 }, env)
+    local ok, problems = schema.validate(read.kind, read)
+    assert.is_true(ok, tostring(problems and problems[1]))
   end)
 
   it('does not invent fields the engine could not supply', function()
