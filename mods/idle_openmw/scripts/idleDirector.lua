@@ -266,6 +266,20 @@ local function gatherUiReport()
       data.uiLabel = status.uiLabel
     end
     data.paused = engine.isWorldPaused()
+    -- A paused world with no window open is a MESSAGE BOX: Morrowind's messages are not UI
+    -- modes, so the mode stack is empty while a modal stops the world. Say so, because Lua
+    -- cannot click a native widget -- the host has to, and it has to know when.
+    do
+      local modes = data.uiModes
+      local noModal = type(modes) == 'table' and #modes == 0
+      if data.paused == true and noModal then
+        data.blocked = true
+        data.hint = 'world is paused with no window open: a message box is up. '
+          .. 'Any key or click dismisses it (the engine gives Lua no way to click it).'
+      else
+        data.blocked = false
+      end
+    end
     data.ticking = state.lastDt and state.lastDt > 0
     -- the FLAG's value, not the capability: reporting features.charGenFlag said "true"
     -- merely because the API exists, which read as "chargen is finished" and was wrong
@@ -387,6 +401,86 @@ local function playerObject()
     return env.self
   end
   return nil
+end
+
+--- The game's UI module: interfaces.UI, which is Lua (scripts/omw/ui.lua), not an engine
+--- binding. Reaching it directly is what makes closing a window possible at all.
+local function uiControl()
+  local interfaces = engine.interfaces()
+  if not interfaces then return nil end
+  local ok, ui = pcall(function() return interfaces.UI end)
+  if ok and ui then return ui end
+  return nil
+end
+
+--- Copy the active mode stack as a plain list, so it serialises.
+local function modeStack()
+  local ui = uiControl()
+  if not ui then return nil end
+  local out = {}
+  local ok = pcall(function()
+    for _, mode in ipairs(ui.modes) do out[#out + 1] = tostring(mode) end
+  end)
+  if not ok then return nil end
+  return out
+end
+
+--- Report the UI: what is open, and whether it is pausing the world.
+local function uiState()
+  local ui = uiControl()
+  if not ui then return nil end
+  local current = nil
+  pcall(function() current = ui.getMode() end)
+  return {
+    current = current,
+    stack = modeStack(),
+    paused = engine.isWorldPaused(),
+  }
+end
+
+--- Close a window (or all of them), which is how a host unblocks a paused world.
+local function uiClose(params)
+  local ui = uiControl()
+  if not ui or type(ui.setMode) ~= 'function' then return nil end
+  local mode = type(params) == 'table' and params.mode or nil
+  local ok, err
+  if mode then
+    ok, err = pcall(ui.removeMode, mode)
+  else
+    -- setMode with no argument drops every active mode (scripts/omw/ui.lua:213)
+    ok, err = pcall(ui.setMode)
+  end
+  local state = uiState() or {}
+  state.closed = mode or 'all'
+  if not ok then state.error = tostring(err) end
+  return state
+end
+
+--- Open a window, optionally targeting an actor (Barter, Dialogue...).
+local function uiOpen(params)
+  local ui = uiControl()
+  if not ui or type(ui.addMode) ~= 'function' then return nil end
+  if type(params) ~= 'table' or type(params.mode) ~= 'string' then return nil end
+  local options = {}
+  if params.windows then options.windows = params.windows end
+  local ok, err = pcall(ui.addMode, params.mode, options)
+  local state = uiState() or {}
+  state.opened = params.mode
+  if not ok then state.error = tostring(err) end
+  return state
+end
+
+--- Say whether a mode should pause the game. Windows pause by default; an idle game with its
+--- own HUD often wants the world to keep running underneath.
+local function uiSetPauseOnMode(params)
+  local ui = uiControl()
+  if not ui or type(ui.setPauseOnMode) ~= 'function' then return nil end
+  if type(params) ~= 'table' or type(params.mode) ~= 'string' then return nil end
+  local pause = params.pause
+  if pause == nil then pause = false end
+  local ok, err = pcall(ui.setPauseOnMode, params.mode, pause and true or false)
+  if not ok then return { mode = params.mode, error = tostring(err) } end
+  return { mode = params.mode, pause = pause and true or false }
 end
 
 local function bridgeSources()
@@ -554,6 +648,13 @@ local function bridgeSources()
       return out
     end,
     ui = function() return gatherUiReport() end,
+    -- UI CONTROL: a host can close a window, open one, or stop one pausing the world. This is
+    -- how a paused-by-a-menu game gets unblocked, and it needs no input synthesis because
+    -- interfaces.UI is the game's own Lua module.
+    uiState = function() return uiState() end,
+    uiClose = function(params) return uiClose(params) end,
+    uiOpen = function(params) return uiOpen(params) end,
+    uiPauseOnMode = function(params) return uiSetPauseOnMode(params) end,
     uiTarget = function() return lookAt() end,
     uiInteractables = function(params) return interactables(params) end,
     uiHints = function() return hints() end,
@@ -853,6 +954,24 @@ local function update(dt)
       if raw ~= state.lastUiKey then
         state.lastUiKey = raw
         print('idle-openmw: screen -> ' .. raw)
+      end
+    end
+
+    -- Announce blocking separately from pausing: "paused" is a state, "blocked" is something
+    -- the host must act on, and for a while those looked like the same thing.
+    do
+      local ui = engine.ui()
+      local modes = nil
+      if ui and type(ui._getUiModeStack) == 'function' then
+        local okStack, stack = pcall(ui._getUiModeStack)
+        if okStack and type(stack) == 'table' then modes = stack end
+      end
+      local paused = engine.isWorldPaused()
+      local blocked = (paused == true) and (modes ~= nil) and (#modes == 0)
+      if blocked ~= state.wasBlocked then
+        state.wasBlocked = blocked
+        print('idle-openmw: ' .. (blocked and 'BLOCKED (a message box is up: send a key or a click)'
+          or 'unblocked'))
       end
     end
 

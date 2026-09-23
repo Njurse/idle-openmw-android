@@ -58,6 +58,14 @@ M.METHODS = {
     params = { 'radius (number, optional; default 1024)' }, returns = 'entityList' },
   { name = 'ui.hints', description = 'The same advice the game gives on screen, derived instead of read.',
     params = {} },
+  { name = 'ui.state', description = 'What window is open and whether it is pausing the world.',
+    params = {} },
+  { name = 'ui.close', description = 'Close a window, or all of them -- how a menu-paused world gets unblocked.',
+    params = { 'mode (string, optional; omit to close everything)' } },
+  { name = 'ui.open', description = 'Open a window, e.g. Barter with a target.',
+    params = { 'mode (string)', 'windows (list, optional)' } },
+  { name = 'ui.pauseOnMode', description = 'Whether a mode pauses the game (windows pause by default).',
+    params = { 'mode (string)', 'pause (boolean)' } },
   { name = 'action', description = 'Ask the mod to do something (routed through the director).',
     params = { 'goal (string)', 'ttl (number, optional)' } },
 }
@@ -137,6 +145,10 @@ local SOURCE_METHODS = {
   ['ui.target'] = 'uiTarget',
   ['ui.interactables'] = 'uiInteractables',
   ['ui.hints'] = 'uiHints',
+  ['ui.state'] = 'uiState',
+  ['ui.close'] = 'uiClose',
+  ['ui.open'] = 'uiOpen',
+  ['ui.pauseOnMode'] = 'uiPauseOnMode',
 }
 
 --- @param sources table name -> function(params) -> value

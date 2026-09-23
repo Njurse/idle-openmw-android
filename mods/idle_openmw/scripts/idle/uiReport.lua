@@ -91,6 +91,8 @@ function M.format(data)
     add('lua elements', tostring(elements or 'unavailable'))
   end
 
+  if data.blocked ~= nil then add('blocked', tostring(data.blocked)) end
+  if data.hint then add('hint', tostring(data.hint)) end
   if data.snapshot then add('snapshot', tostring(data.snapshot)) end
   if data.lifecycle then add('lifecycle', tostring(data.lifecycle)) end
   if data.capabilities then add('capabilities', tostring(data.capabilities)) end
