@@ -246,6 +246,7 @@ decision layer — and the adapter — can be exercised headlessly against
 
 | Doc | What |
 | --- | --- |
+| [docs/scope.md](docs/scope.md) | **what this project is for** — the goal, its eight tracks, and the definition of done |
 | [docs/openmw-lua-api.md](docs/openmw-lua-api.md) | the verified engine API, §0–§13, every claim with a `file:line` |
 | [docs/architecture.md](docs/architecture.md) | the layers, the snapshot contract, the pipeline |
 | [docs/console.md](docs/console.md) | every tab, order, option and gesture in the phone console |
