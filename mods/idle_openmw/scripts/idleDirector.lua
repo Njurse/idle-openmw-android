@@ -485,12 +485,6 @@ end
 local function bridgeSources()
   local function snapshot() return state.snapshot end
 
-  --- Vector3 is userdata in 0.51: read the components, never the object itself.
-  local function position(p)
-    if not p then return nil end
-    return { x = p.x, y = p.y, z = p.z }
-  end
-
   --- The object under the crosshair, and what can be done with it.
   ---
   --- This is the answer to "look up at the hatch and press space": the engine will not hand
@@ -517,9 +511,7 @@ local function bridgeSources()
     if not hitObject then return nil end
 
     -- the object under the crosshair IS an entity, read the same way as any other
-    local object = playerObject()
-    local from = nil
-    pcall(function() from = object and object.position end)
+    local from = entitiesMod.positionOf(playerObject())
     local read = entitiesMod.read(hitObject, engine.env(), from)
     if read then read.hit = true end
     return read
@@ -528,9 +520,7 @@ local function bridgeSources()
   --- Nearby things the player could interact with, nearest first.
   local function interactables(params)
     local radius = type(params) == 'table' and tonumber(params.radius) or 1024
-    local object = playerObject()
-    local from = nil
-    pcall(function() from = object and object.position end)
+    local from = entitiesMod.positionOf(playerObject())
     local nearby = entitiesMod.readNearby(engine.env(), from)
     if not nearby then return nil end
     local out = {}
@@ -569,10 +559,7 @@ local function bridgeSources()
         local snap = snapshot()
         return snap and snap.player or {}
       end
-      local env = engine.env()
-      local object_position = nil
-      pcall(function() object_position = object.position end)
-      local read = entitiesMod.read(object, env)
+      local read = entitiesMod.read(object, engine.env())
       if not read then return {} end
       -- the player is the reference point, so distance/vertical are meaningless for it
       read.distance, read.vertical = nil, nil
@@ -599,9 +586,7 @@ local function bridgeSources()
       return entitiesMod.readCell(cell, engine.env())
     end,
     entities = function(params)
-      local object = playerObject()
-      local from = nil
-      pcall(function() from = object and object.position end)
+      local from = entitiesMod.positionOf(playerObject())
       local nearby = entitiesMod.readNearby(engine.env(), from)
       if not nearby then return nil end
       local radius = type(params) == 'table' and tonumber(params.radius) or nil

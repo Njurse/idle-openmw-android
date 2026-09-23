@@ -302,4 +302,36 @@ describe('runtime.entities', function()
       assert.is_true(ok, ('%s: %s'):format(read.kind, tostring(problems and problems[1])))
     end
   end)
+
+  -- One read of an engine Vector3. It was written out four times in the bridge sources before
+  -- this existed, and a Vector3 is USERDATA, so every copy needed its own pcall.
+  describe('positionOf', function()
+    it('reads a complete position into a plain table', function()
+      local at = reader.positionOf({ position = { x = 1, y = 2, z = 3 } })
+      assert.equals(at.x, 1)
+      assert.equals(at.y, 2)
+      assert.equals(at.z, 3)
+    end)
+
+    it('is nil, not a half vector, when a component is missing', function()
+      -- every caller derives a distance or a direction from this; a partial vector would
+      -- produce a confidently wrong answer rather than an honest absence
+      assert.is_nil(reader.positionOf({ position = { x = 1, y = 2 } }))
+      assert.is_nil(reader.positionOf({ position = { x = 1 } }))
+    end)
+
+    it('is nil for anything with no position at all', function()
+      assert.is_nil(reader.positionOf(nil))
+      assert.is_nil(reader.positionOf(7))
+      assert.is_nil(reader.positionOf({}))
+      assert.is_nil(reader.positionOf({ position = nil }))
+    end)
+
+    it('is nil when reading the position throws, rather than taking the caller down', function()
+      if type(newproxy) ~= 'function' then return end
+      local proxy = newproxy(true)
+      getmetatable(proxy).__index = function() error('engine exploded') end
+      assert.is_nil(reader.positionOf(proxy))
+    end)
+  end)
 end)

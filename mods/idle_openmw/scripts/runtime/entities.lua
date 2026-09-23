@@ -494,6 +494,27 @@ local function readItem(builder, object, env)
   end
 end
 
+--- An engine object's world position as a plain { x, y, z }.
+---
+--- Vector3 is engine USERDATA, so this read is pcall-guarded. It lives here because there were
+--- four separate copies of it in the bridge sources, each of which could have drifted; one
+--- function means one interpretation of what a position is.
+---
+--- @param object engine GameObject
+--- @return table|nil nil when the object has no readable, complete position
+function M.positionOf(object)
+  if not util.isObject(object) then return nil end
+  local out = nil
+  pcall(function()
+    local value = object.position
+    if value then out = { x = value.x, y = value.y, z = value.z } end
+  end)
+  -- a half-read vector is worse than none: every caller derives a distance or a direction
+  -- from this, and a partial one would produce a confidently wrong answer
+  if out and (out.x == nil or out.y == nil or out.z == nil) then return nil end
+  return out
+end
+
 --- Read one engine object into a schema entity.
 --- @param object engine GameObject
 --- @param env table|nil the injected engine env (defaults to scripts.runtime.engine.env())
