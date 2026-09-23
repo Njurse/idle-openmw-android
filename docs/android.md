@@ -573,3 +573,23 @@ state character creation holds. No amount of Lua can break that loop.
 So a modern APK alone would still land on the same wall. The two are independent, and the chargen
 hook is the cheaper of the two — it is also the half that would let the desktop path stop relying
 on `--skip-menu=1`, which is how the world is reached today.
+
+## The recipe (reproducible)
+
+`bash tools/android/configure-android.sh` — it locates the newest installed NDK, maps the ABI to
+the sysroot's ABI **triple** (`arm64-v8a` -> `aarch64-linux-android`, a mapping that fails
+silently if you get it wrong: the `-D` paths just point at nothing), and reports the first error
+rather than a wall of CMake output.
+
+```
+NDK      : .../ndk/29.0.14206865
+ABI      : arm64-v8a  (platform android-24)
+GLES dir : .../sysroot/usr/lib/aarch64-linux-android/24
+
+Configure stopped (expected until the dependency tree exists). First error:
+  Could NOT find LZ4 (missing: LZ4_LIBRARY LZ4_INCLUDE_DIR LZ4_VERSION)
+```
+
+A failing run is the informative outcome today, and `--abi x86_64` targets the emulator's
+architecture. Passing `OPENMW_DEPENDENCIES_DIR=<tree>` adds the dependency search root
+(CMakeLists.txt:73) and is the whole of the remaining work.
