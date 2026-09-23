@@ -400,6 +400,22 @@ local function gatherUiReport()
     end
     data.nearbyLists = lists
   end
+
+  do -- what the CAMERA is actually doing (an isometric lock is otherwise invisible)
+    local cam = engine.camera()
+    if cam then
+      local camera = {}
+      pcall(function() if type(cam.getMode) == 'function' then camera.mode = cam.getMode() end end)
+      pcall(function() if type(cam.getPitch) == 'function' then camera.pitch = cam.getPitch() end end)
+      pcall(function() if type(cam.getYaw) == 'function' then camera.yaw = cam.getYaw() end end)
+      pcall(function()
+        if type(cam.getThirdPersonDistance) == 'function' then
+          camera.distance = cam.getThirdPersonDistance()
+        end
+      end)
+      data.camera = camera
+    end
+  end
     -- A paused world with no window open is a MESSAGE BOX: Morrowind's messages are not UI
     -- modes, so the mode stack is empty while a modal stops the world. Say so, because Lua
     -- cannot click a native widget -- the host has to, and it has to know when.
@@ -533,6 +549,26 @@ local function pollDevCommand()
     print('idle-openmw: heartbeat every ' .. tostring(state.heartbeatSeconds) .. 's')
   elseif command.verb == 'note' then
     state.operatorNote = command.text
+  elseif command.verb == 'camera' then
+    state.cfg.camera = state.cfg.camera or {}
+    local set, rest = (command.text or ''):match('^(%S+)%s*(.*)$')
+    set = (set or ''):lower()
+    if set == 'on' then
+      state.cfg.camera.isometric = true
+    elseif set == 'off' then
+      state.cfg.camera.isometric = false
+    elseif set == 'pitch' then
+      state.cfg.camera.pitch = tonumber(rest) or state.cfg.camera.pitch
+    elseif set == 'distance' then
+      state.cfg.camera.distance = tonumber(rest) or state.cfg.camera.distance
+    else
+      print('idle-openmw: camera needs on|off|pitch <radians>|distance <units>')
+      state.lastDevCommand = nil
+      return
+    end
+    print('idle-openmw: camera isometric=' .. tostring(state.cfg.camera.isometric)
+      .. ' pitch=' .. tostring(state.cfg.camera.pitch)
+      .. ' distance=' .. tostring(state.cfg.camera.distance))
   elseif command.verb == 'telemetry' then
     state.telemetrySeconds = command.seconds or 10
     state.telemetryElapsed = 0

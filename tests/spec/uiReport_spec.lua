@@ -74,10 +74,16 @@ describe('idle.uiReport', function()
       assert.equals(15, command.seconds)
     end)
 
-    it('parses a note, keeping its text', function()
-      local command = uiReport.parseCommand('note walking to the trap door')
+    it('parses a note, keeping its text', function()      local command = uiReport.parseCommand('note walking to the trap door')
       assert.equals('note', command.verb)
       assert.equals('walking to the trap door', command.text)
+    end)
+
+    it('parses a camera tweak, keeping its argument', function()
+      local command = uiReport.parseCommand('camera on')
+      assert.equals('camera', command.verb)
+      assert.equals('on', command.text)
+      assert.equals('pitch -0.7', uiReport.parseCommand('camera pitch -0.7').text)
     end)
 
     it('ignores blank input and empty files', function()

@@ -38,6 +38,24 @@ Config (`scripts/idle/config.lua`, `camera`):
 | `isometric` | `false` | master switch — **off by default** |
 | `pitch` | `-0.6109` | radians; ~ -35°, the classic 2:1 iso tilt |
 | `distance` | `640` | third-person distance, engine units |
+
+## It is verified on the built engine
+
+The lock was a claim until it was measured on the forked 0.52 engine. It is now:
+
+```
+dev_command.txt: "camera on"        # turns the lock on at runtime
+-> idle-openmw: camera isometric=true pitch=-0.6109 distance=640
+bridge "ui" before: camera = { mode = 3, pitch = 0,       yaw = 0.84, distance = 192 }
+bridge "ui" after : camera = { mode = 3, pitch = -0.6109, yaw = 1.18, distance = 192 }
+```
+
+`pitch` lands on the configured value exactly, which is the lock: `camera.setPitch(v)`
+binds to `Camera::setPitch(-v, true)` — the `true` is `force`, so it latches `mLockPitch`
+and the game's own look controls stop moving it (`camerabindings.cpp:55`,
+`mwrender/camera.cpp:320`). The dev channel verbs are `camera on|off`,
+`camera pitch <radians>`, `camera distance <units>`; the applied state is readable from
+the bridge's `ui.camera`, because an isometric lock is otherwise invisible from outside.
 | `yaw` | `nil` | a fully-fixed heading in radians; `nil` = follow the actor |
 | `inManual` | `false` | keep the lock even while the human is driving |
 
