@@ -254,6 +254,7 @@ decision layer — and the adapter — can be exercised headlessly against
 | [docs/tap-to-move.md](docs/tap-to-move.md) | tapping the world: raycast → walk / enter / talk |
 - [Walking out of the ship](docs/leaving-the-ship.md) -- pathfind close enough to interact, look up at the hatch, use it; the reach GMST, the yaw convention, and an aim verified by ray
 - [Building OpenMW from source](docs/engine-build.md) -- the fork: why, the recipe, and the two things that go wrong
+- [Character creation](docs/chargen.md) -- where the new-game flow goes, and why Lua cannot finish it
 | [docs/dialogue.md](docs/dialogue.md) | dialogue topics, and the one thing Lua cannot do |
 | [docs/isometric.md](docs/isometric.md) | the camera lock, and why roofs stay visible |
 | [docs/observability.md](docs/observability.md) | the decision trace and the test/observability tools |

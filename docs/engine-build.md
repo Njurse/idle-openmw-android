@@ -120,3 +120,19 @@ where the project's own name and version will want to live.
   `RecastNavigation` and `OSGPlugins` are the same story in a quieter way: their defaults already
   use the internal copies, or they are found through CMake modules rather than a `share/`
   config, so a "missing from `share/`" check is not the same as missing.
+
+## Running it
+
+`build.sh` now copies the vcpkg **runtime DLLs** (from both `bin/` and `bin/Release/` — a
+few, MyGUIEngine among them, live in the latter) and the versioned **`osgPlugins-*`** tree
+next to `openmw.exe`. Without them the engine dies before writing a single log line (exit
+127 from bash, or a load error on Windows), and there is nothing to distinguish that from a
+broken mod. With them the build directory is self-contained:
+
+```bash
+OMW_EXE=/f/OpenMW-build/build/openmw.exe bash tools/dev/desktop/into-world.sh
+```
+
+The built engine is **0.52.0** (master), Lua API revision **160**; the mod reports all
+required capabilities present. Character creation does not complete on it from Lua — that is
+`docs/chargen.md`, and it is the fork's reason #2.

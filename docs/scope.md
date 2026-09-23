@@ -49,6 +49,12 @@ Steps 1–3 are the **engine/chargen** problem; 4–6 are the **pathfinding + in
 economy** problem. Both are being driven at once because the second cannot be trusted
 until the first can be observed.
 
+**Status of step 2 (measured on the forked 0.52 engine, `docs/chargen.md`):** chargen
+*cannot* be finished from Lua. `chargenstate` is set to `-1` by Morrowind's own `CharGen`
+script, which only runs while the world is unpaused — the opposite of the state chargen
+holds. So the world is reached the documented way (`tools/dev/desktop/into-world.sh`,
+the engine's `bypass` path) and Android chargen waits on an engine change.
+
 ## The engine floor
 
 The mod needs a **modern OpenMW**. The measured floor is **0.49+** (Lua API revision
