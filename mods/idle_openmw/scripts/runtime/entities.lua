@@ -134,6 +134,42 @@ local function readPool(builder, name, object, env)
   builder:set(name, { current = current, base = base, modifier = modifier })
 end
 
+--- The engine's equipment slots, in the order the 0.51 docs list them (types.lua:74-91).
+--- Needed because Actor.EQUIPMENT_SLOT is a BEAN, not a Lua table: `pairs()` over it yields
+--- nothing, so a slot number could only be turned back into a name by asking for each name.
+local EQUIPMENT_SLOTS = {
+  'Helmet', 'Cuirass', 'Greaves', 'LeftPauldron', 'RightPauldron',
+  'LeftGauntlet', 'RightGauntlet', 'Boots', 'Shirt', 'Pants', 'Skirt', 'Robe',
+  'LeftRing', 'RightRing', 'Amulet', 'Belt', 'CarriedRight', 'CarriedLeft', 'Ammunition',
+}
+
+local STANCES = { 'Nothing', 'Weapon', 'Spell' }
+
+--- Turn an engine enum value back into its NAME.
+---
+--- `Actor.getStance` returns 0/1/2 and equipment slots come back as numbers, so a client that
+--- displays the raw number shows the wrong thing. The enum cannot be iterated (it is a bean),
+--- so we ask for each known name in turn and compare.
+local function enumName(enumBean, names, value)
+  if value == nil then return nil end
+  for _, name in ipairs(names) do
+    local code = readField(enumBean, name)
+    if code ~= nil and code == value then return name end
+  end
+  return nil
+end
+
+--- Which slot is this number? Falls back to the number, which is still meaningfully readable
+--- next to the item it holds.
+local function slotName(actor, slot)
+  return enumName(actor and actor.EQUIPMENT_SLOT, EQUIPMENT_SLOTS, slot) or tostring(slot)
+end
+
+--- Which stance is this number?
+local function stanceName(actor, stance)
+  return enumName(actor and actor.STANCE, STANCES, stance) or (stance ~= nil and tostring(stance))
+end
+
 --- Read a stat bean whose fields are {base, damage, modified, modifier} (+ progress).
 local function readStatBean(getter, object, extraField)
   local stat = probe(getter, object)
@@ -157,7 +193,12 @@ local function readSheet(builder, object, env)
   local engineTypes = env.types
   local actor = engineTypes and engineTypes.Actor
   if not actor then return end
-  local stats = actor.stats
+
+  -- SKILLS live on NpcStats, not on the base ActorStats: `types.NPC.stats` is the extended
+  -- bean (types.lua:909) and the player is an NPC type instance, so this is the same call for
+  -- the character we care about and for every humanoid we might fight. Reading only
+  -- `Actor.stats` is why skills came back empty the first time on a real engine.
+  local stats = (engineTypes.NPC and engineTypes.NPC.stats) or actor.stats
   if not stats then return end
 
   -- attributes: eight named getters (types.lua AttributeStats)
@@ -255,8 +296,29 @@ local function readSheet(builder, object, env)
   end
   if type(actor.getStance) == 'function' then
     local stance = probe(actor.getStance, object)
-    if stance ~= nil then builder:set('stance', tostring(stance)) end
+    -- the engine gives a number from Actor.STANCE; name it through the enum
+    builder:set('stance', stanceName(actor, stance))
   end
+end
+
+--- What the actor is wearing and wielding.
+---
+--- `Actor.getEquipment(actor)` with a single argument returns slot -> GameObject
+--- (types.lua:170-180). Slots come back as numbers, so they are named through
+--- Actor.EQUIPMENT_SLOT rather than a list of names we would have to keep in step.
+local function readEquipment(builder, object, env)
+  local actor = env.types and env.types.Actor
+  if not actor or type(actor.getEquipment) ~= 'function' then return end
+  local worn = probe(actor.getEquipment, object)
+  if type(worn) ~= 'table' then return end
+
+  local equipment = {}
+  for slot, item in pairs(worn) do
+    local name = slotName(actor, slot)
+    local read = M.read(item, env)
+    equipment[name] = read or { id = readField(item, 'id'), kind = 'item' }
+  end
+  if next(equipment) then builder:set('equipment', equipment) end
 end
 
 --- Factions and lycanthropy: NPC-scoped, and the closest thing to "standing" the engine has.
@@ -301,6 +363,7 @@ local function readActor(builder, object, env)
   end
 
   readSheet(builder, object, env)
+  readEquipment(builder, object, env)
   readStanding(builder, object, env)
 
   readPool(builder, 'health', object, env)

@@ -352,6 +352,12 @@ M.AVAILABILITY = {
       .. ' an ability, so the birthsign shows up in the actor\'s spells list -- look for the'
       .. ' known birthsign ability ids there rather than expecting a birthsign field.',
   },
+  playerName = {
+    available = false,
+    reason = 'The PLAYER has no record, so no name is readable: types.getRecordName(player) is'
+      .. ' nil, and there is no Player name accessor in the 0.51 API. A named character can'
+      .. ' therefore only come from the save it was created in.',
+  },
   cellsInLocal = {
     available = false,
     reason = 'world.cells, cell:getAll() and world.activeActors are global-context only, so '
