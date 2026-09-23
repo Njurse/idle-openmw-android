@@ -541,7 +541,19 @@ function M.env(spec)
       newSimulationTimer = function() return { cancel = function() end } end,
       newGameTimer = function() return { cancel = function() end } end,
       newRealTimeTimer = function() return { cancel = function() end } end,
-      callback = function(fn) return fn end,
+      -- `async.callback` is a METHOD on the engine (async.lua:54 documents `@param self`,
+      -- and the engine's own scripts all write `async:callback(...)`). Calling it with a
+      -- dot passes the function where the package id belongs and throws
+      -- "expected userdata, received function" -- which silently disabled the console
+      -- in a real game. This mock reproduces that strictness so the bug cannot come back.
+      callback = function(self, fn)
+        -- `self` must be the async package itself: called as `async.callback(fn)` the
+        -- first argument arrives as `fn`, which is exactly the real engine's failure.
+        if type(self) ~= 'table' or type(self.registerTimerCallback) ~= 'function' then
+          error('async.callback must be called as a method: async:callback(fn)', 2)
+        end
+        return fn
+      end,
     },
     interfaces = {
       AI = { startPackage = function() end },

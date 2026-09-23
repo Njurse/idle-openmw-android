@@ -25,7 +25,16 @@ local core = require('openmw.core')
 local world = require('openmw.world')
 local types = require('openmw.types')
 local util = require('openmw.util')
-local menu = require('openmw.menu')
+-- `openmw.menu` is declared `@context menu` (menu.lua:3), so a GLOBAL script cannot
+-- require it at load time: doing so killed this entire script with
+-- "Can't start Global[scripts/idlewarden.lua]; Lua error: module not found: openmw.menu".
+-- Resolve it lazily, and treat its absence as "the reload rescue is unavailable"
+-- rather than a crash that would take the teleport rescue down with it.
+local function menuModule()
+  local ok, module = pcall(require, 'openmw.menu')
+  if ok then return module end
+  return nil
+end
 
 local function player()
   return (world.players and world.players[1]) or nil
@@ -77,6 +86,10 @@ end
 
 --- Load a save slot. Used only when guardian.onDeath == 'reload'.
 local function reload(data)
+  local menu = menuModule()
+  if not menu then
+    return false, 'openmw.menu is not available in this script context'
+  end
   local dir = data and data.saveDir
   if not dir then
     local ok, current = pcall(function() return menu.getCurrentSaveDir() end)

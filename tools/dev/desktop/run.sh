@@ -22,6 +22,15 @@ winpath() { # bash path -> Windows path, for cmd/start
   if command -v cygpath >/dev/null 2>&1; then cygpath -w "$p"; else echo "$p"; fi
 }
 
+# Quote an argument for PowerShell's -ArgumentList. Without this a path containing a
+# space is split, and the engine silently uses a TRUNCATED directory: "Documents/My
+# Games/OpenMW" became "Documents/My", so screenshots went to Documents/My/screenshots
+# and saves would have gone somewhere wrong too.
+psarg() {
+  local p="$1"
+  if [[ "$p" == *" "* ]]; then printf '"%s"' "$p"; else printf '%s' "$p"; fi
+}
+
 fresh=0; wait_secs=0; stop=0
 while [[ $# -gt 0 ]]; do
   case "$1" in
@@ -51,7 +60,7 @@ echo "launching $(basename "$EXE") --user-data <$CONFIG_DIR>"
 # inherits our stdout/stderr, so a piped caller (… | tail) blocks until the GAME
 # exits -- which made every harness call hang until it was killed.
 powershell.exe -NoProfile -Command \
-  "Start-Process -FilePath '$(winpath "$EXE")' -ArgumentList '--user-data','$(winpath "$CONFIG_DIR")'" \
+  "Start-Process -FilePath '$(winpath "$EXE")' -ArgumentList '--user-data','$(psarg "$(winpath "$CONFIG_DIR")")'" \
   >/dev/null 2>&1 </dev/null
 
 if [[ "$wait_secs" -gt 0 ]]; then

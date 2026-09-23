@@ -128,14 +128,18 @@ local function createElement(opts)
   local layout = { layer = 'HUD', props = props }
   local t = opts.template and template(opts.template)
   if t then layout.template = t else layout.type = opts.type or ui.TYPE.Text end
+  -- `async:callback` is a METHOD -- the engine's own scripts call `async:callback`
+  -- (e.g. vfs-mw/scripts/omw/settings/renderers.lua:88 wires mouseClick that way).
+  -- Calling it with a DOT passes the function where the package id belongs and throws
+  -- "expected userdata, received function", which silently disabled the whole console.
   if opts.onTap and async and type(async.callback) == 'function' then
-    layout.events = { mouseClick = async.callback(opts.onTap) }
+    layout.events = { mouseClick = async:callback(opts.onTap) }
   end
   -- `mouseRelease` is the event that carries a POSITION (mouseClick gives none;
   -- components/lua_ui/widget.cpp:546 vs :566). Tap-to-move needs the coordinate.
   if opts.onRelease and async and type(async.callback) == 'function' then
     layout.events = layout.events or {}
-    layout.events.mouseRelease = async.callback(opts.onRelease)
+    layout.events.mouseRelease = async:callback(opts.onRelease)
   end
   -- our rect props deliberately override template defaults; silence the warnings
   return ui.create(layout, { noWarnUnused = true })
