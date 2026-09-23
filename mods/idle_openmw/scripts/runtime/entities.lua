@@ -377,7 +377,12 @@ local function readActor(builder, object, env)
       local getter = stats.ai[key]
       if type(getter) == 'function' then
         local value = probe(getter, object)
-        if value ~= nil then ai[key] = value end
+        -- The engine hands back a STAT WRAPPER (a userdata), not a number. Taken raw it
+        -- serialised as "<userdata>", so the host received an unusable string from the one
+        -- field that says how likely this actor is to attack -- and it validated, because the
+        -- `map` type does not look inside. Read the modified value, then base.
+        if util.isObject(value) then value = value.modified or value.base end
+        if type(value) == 'number' then ai[key] = value end
       end
     end
     if next(ai) then builder:set('ai', ai) end

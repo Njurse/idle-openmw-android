@@ -186,3 +186,36 @@ Three things this pins down, each of which was a bug before it:
 
 `count: 0` in 902 is honest and not a fault: at chargen nothing has been read yet, so nothing is
 remembered. Ask `entities.nearby` first and the registry fills.
+
+## `ui.target` when there is nothing to look at
+
+`ui.target` is validated as an **entity**, so "the crosshair is on nothing" must be `null` — an
+explanation table there is a schema violation (`entity has no kind`), which is exactly what the
+validator said to the first version of this change. The reason travels through `ui.hints`
+instead, which is free-form text:
+
+```
+{"id": 1, "method": "ui.target"}   -> {"id": 1, "ok": true}          (no result: nothing there)
+{"id": 2, "method": "ui.hints"}    -> ["Nothing in front of you. Nearest: player (0 away).
+                                       (the ray hit nothing)"]
+```
+
+The parenthetical matters. A bare "nothing in front of you" reads identically whether the ray
+genuinely hit nothing or the pick is broken — and the pick *was* broken for a long time, because
+`camera.viewportToWorldVector` returns a Vector3 **userdata** and `nearby.castRay` returns the
+registered `RayCastingResult` **userdata**, both of which were guarded as `type(x) == 'table'`.
+
+## Engine values must not reach the wire
+
+The schema's `map`/`list` checks now reject an **engine value nested anywhere inside** a field.
+They used to be `type(v) == 'table'` and nothing more, so `types.Actor.stats.ai` — an AI
+disposition *wrapper*, not a number — validated, then serialised as the literal string
+`"<userdata>"`. A host asking for the AI dispositions, which are how the mod judges hostility,
+received confident nonsense and nothing complained. Now:
+
+```
+"ai": {"alarm": 0, "fight": 83, "flee": 30, "hello": 0}
+```
+
+Positions are the one documented exception: they may *be* userdata, because that is how the
+engine hands them over.

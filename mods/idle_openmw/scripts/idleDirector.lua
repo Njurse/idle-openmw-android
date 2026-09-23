@@ -843,13 +843,26 @@ local function bridgeSources()
   local function lookAt()
     local camera = engine.camera()
     local nearby = engine.nearby()
-    if not (camera and nearby and type(nearby.castRay) == 'function') then return nil end
+    -- Report WHY there is nothing under the crosshair rather than a bare null. A silent nil here
+    -- is indistinguishable from the pick being broken, and the pick WAS broken for a long time
+    -- (it guarded Vector3/RayCastingResult results as tables -- docs/openmw-lua-api.md 3).
+    -- `ui.target` is validated as an ENTITY by the bridge, so "nothing" must stay nil -- writing
+    -- an explanation table here is a schema violation, and the schema caught exactly that. The
+    -- reason travels through `ui.hints` instead, which is free-form text.
+    if not (camera and nearby and type(nearby.castRay) == 'function') then
+      state.targetReason = 'this engine exposes no camera.castRay'
+      return nil
+    end
 
     local hitObject = nil
+    local reason = 'the ray hit nothing'
     pcall(function()
       local from = camera.getPosition()
       local direction = camera.viewportToWorldVector(0.5, 0.5)
-      if not (from and direction) then return end
+      if not (from and direction) then
+        reason = 'the camera gave no position or direction'
+        return
+      end
       local reach = state.cfg.ui and state.cfg.ui.tapReach or 4096
       local to = {
         x = from.x + direction.x * reach,
@@ -857,9 +870,17 @@ local function bridgeSources()
         z = from.z + direction.z * reach,
       }
       local hit = nearby.castRay(from, to, { ignore = playerObject() })
-      if hit and hit.hit and hit.hitObject then hitObject = hit.hitObject end
+      if hit and hit.hit and hit.hitObject then
+        hitObject = hit.hitObject
+      else
+        reason = ('the ray looked %.0f units and hit nothing'):format(reach)
+      end
     end)
-    if not hitObject then return nil end
+    if not hitObject then
+      state.targetReason = reason
+      return nil
+    end
+    state.targetReason = nil
 
     -- the object under the crosshair IS an entity, read the same way as any other
     local from = entitiesMod.positionOf(playerObject())
@@ -887,6 +908,7 @@ local function bridgeSources()
     local snap = snapshot()
     return hudMod.hints({
       target = target,
+      targetReason = state.targetReason,
       -- OpenMW exposes no action->key lookup (only key codes to names), so this is the
       -- documented default rather than a guess dressed up as a fact.
       activateKey = state.cfg.ui and state.cfg.ui.activateKey or 'Space',

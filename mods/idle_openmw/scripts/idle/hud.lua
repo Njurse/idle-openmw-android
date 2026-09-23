@@ -118,8 +118,12 @@ function M.hints(context)
     local nearest = context.interactables and context.interactables[1]
     if nearest then
       local distance = nearest.distance and (' (' .. nearest.distance .. ' away)') or ''
+      -- Say WHY the crosshair is empty. A bare "nothing in front of you" reads the same whether
+      -- the ray genuinely hit nothing or the pick is broken -- and the pick was broken for a
+      -- long time (Vector3/RayCastingResult results guarded as tables).
+      local why = context.targetReason and (' (' .. tostring(context.targetReason) .. ')') or ''
       hints[#hints + 1] = 'Nothing in front of you. Nearest: ' ..
-        (nearest.name or nearest.kind or 'something') .. distance .. '.'
+        (nearest.name or nearest.kind or 'something') .. distance .. '.' .. why
     elseif context.interactables then
       hints[#hints + 1] = 'Nothing to interact with nearby.'
     end

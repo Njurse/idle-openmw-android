@@ -286,5 +286,23 @@ describe('idle.schema', function()
       end
       assert.is_true(found)
     end)
+    it('rejects an engine value NESTED inside a map or list', function()
+      -- A `map` used to be `type(v) == 'table'` and nothing more, so an engine stat wrapper
+      -- nested inside one validated, then serialised as the literal string "<userdata>" -- and a
+      -- host asking for the AI dispositions got confident nonsense. Measured live.
+      if type(newproxy) ~= 'function' then return end
+      local engineValue = newproxy(true)
+      local ok, problems = schema.validate('player',
+        { id = '@1', kind = 'player', ai = { fight = engineValue } })
+      assert.is_false(ok)
+      local mentionsAi = false
+      for _, problem in ipairs(problems or {}) do
+        if tostring(problem):find('ai') then mentionsAi = true end
+      end
+      assert.is_true(mentionsAi)
+      -- a plain nested number is still fine
+      assert.is_true(schema.validate('player',
+        { id = '@1', kind = 'player', ai = { fight = 95, alarm = 0 } }))
+    end)
   end)
 end)

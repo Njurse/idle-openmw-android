@@ -34,6 +34,28 @@ M.VERSION = 1
 --- `position` and `vector` deliberately accept engine userdata as well as plain tables:
 --- engine values are userdata in 0.51, and demanding a table rejected every real reading
 --- once already.
+--- True when a value is a plain table with NO engine value anywhere inside it.
+---
+--- A `map`/`list` used to be `type(v) == 'table'` and nothing more, so an engine STAT WRAPPER
+--- nested inside one passed validation and then serialised as the literal string
+--- `"<userdata>"`. A host asking for the AI dispositions -- the one field that says how likely an
+--- actor is to attack -- received confident nonsense, and nothing complained. Positions are the
+--- documented exception: they may BE userdata, since that is how the engine hands them over.
+---
+--- Declared BEFORE M.TYPE uses it: a local is not in scope until its own statement completes
+--- (AGENTS.md #4), and a forward reference here resolves to a nil global instead.
+local function noEngineValues(v, depth)
+  if type(v) == 'userdata' then return false end
+  if type(v) == 'table' then
+    if (depth or 0) > 6 then return true end -- deep/shared graphs: do not walk forever
+    for _, item in pairs(v) do
+      if not noEngineValues(item, (depth or 0) + 1) then return false end
+    end
+    return true
+  end
+  return type(v) ~= 'function' and type(v) ~= 'thread'
+end
+
 M.TYPE = {
   string = function(v) return type(v) == 'string' end,
   number = function(v) return type(v) == 'number' end,
@@ -52,8 +74,8 @@ M.TYPE = {
     end
     return false
   end,
-  list = function(v) return type(v) == 'table' end,
-  map = function(v) return type(v) == 'table' end,
+  list = function(v) return noEngineValues(v) end,
+  map = function(v) return noEngineValues(v) end,
   any = function() return true end,
 }
 
