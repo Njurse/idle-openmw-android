@@ -135,4 +135,105 @@ eventHandlers['IdleOpenMW_Guardian'] = function(data)
   })
 end
 
-return { eventHandlers = eventHandlers }
+-- ---------------------------------------------------------------------------
+-- global-only verbs
+--
+-- The player script that serves the bridge cannot touch `openmw.world` (world.lua:3 says
+-- global), so anything the engine will only let a global script do has to be done HERE. This
+-- is the seed of the write layer: same idea, same shape, one verb at a time.
+-- ---------------------------------------------------------------------------
+
+--- Read a small text file from the data folder without requiring a player context.
+local function readTextFile(name)
+  local ok, vfs = pcall(require, 'openmw.vfs')
+  if not ok or type(vfs) ~= 'table' or type(vfs.open) ~= 'function' then return nil end
+  local read, text = pcall(function()
+    local handle = vfs.open(name)
+    if not handle then return nil end
+    local data = handle:read('*a')
+    handle:close()
+    return data
+  end)
+  if not read or type(text) ~= 'string' then return nil end
+  return text
+end
+
+local function worldModule()
+  local ok, module = pcall(require, 'openmw.world')
+  if ok and type(module) == 'table' then return module end
+  return nil
+end
+
+local function coreModule()
+  local ok, module = pcall(require, 'openmw.core')
+  if ok and type(module) == 'table' then return module end
+  return nil
+end
+
+local function isPaused()
+  local core = coreModule()
+  if not core or type(core.isWorldPaused) ~= 'function' then return nil end
+  local ok, paused = pcall(core.isWorldPaused)
+  if ok and type(paused) == 'boolean' then return paused end
+  return nil
+end
+
+--- Run one global-only verb. Returns true when the verb was ours.
+local function runGlobalVerb(verb)
+  local world = worldModule()
+  if verb == 'unpause' then
+    if not world or type(world.unpause) ~= 'function' then
+      log('global: this engine has no world.unpause')
+      return true
+    end
+    -- the empty tag is the default: `world.pause()` and `world.unpause()` without a tag use
+    -- it, so a script that paused with the default tag is released by this call
+    local ok, err = pcall(world.unpause, '')
+    log('global: unpause -> ' .. (ok and 'ok' or tostring(err))
+      .. ', paused=' .. tostring(isPaused()))
+    return true
+  end
+  if verb == 'pause' then
+    if not world or type(world.pause) ~= 'function' then
+      log('global: this engine has no world.pause')
+      return true
+    end
+    local ok, err = pcall(world.pause, 'idle-dev')
+    log('global: pause -> ' .. (ok and 'ok' or tostring(err))
+      .. ', paused=' .. tostring(isPaused()))
+    return true
+  end
+  if verb == 'paused' then
+    log('global: paused=' .. tostring(isPaused()))
+    return true
+  end
+  return false
+end
+
+--- Poll the dev command file for verbs only a global script can perform.
+---
+--- `dt` is useless here: a PAUSED world is handed dt=0 on every frame (measured), which is
+--- exactly when we most want to unpause it. So the throttle counts FRAMES.
+local devCommandFrame = 0
+local lastCommand = nil
+
+local function onUpdate()
+  devCommandFrame = devCommandFrame + 1
+  if devCommandFrame % 30 ~= 0 then return end          -- roughly twice a second at 60fps
+
+  local text = readTextFile('dev_command.txt')
+  if not text then return end
+  local command = text:gsub('%s+$', '')
+  if command == '' or command == lastCommand then return end
+  lastCommand = command
+
+  local verb = command:match('^(%S+)')
+  if verb and verb ~= 'heartbeat' and verb ~= 'telemetry' and verb ~= 'ui'
+    and verb ~= 'dump' and verb ~= 'note' and verb ~= 'stop' then
+    if not runGlobalVerb(verb) then
+      log('global: unknown dev verb ' .. tostring(verb))
+    end
+  end
+end
+
+return { eventHandlers = eventHandlers, engineHandlers = { onUpdate = onUpdate } }
