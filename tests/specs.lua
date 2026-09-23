@@ -44,4 +44,5 @@ return {
   'tests.spec.json_spec',
   'tests.spec.bridge_spec',
   'tests.spec.hud_spec',
+  'tests.spec.schema_spec',
 }
