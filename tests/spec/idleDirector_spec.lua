@@ -485,4 +485,47 @@ describe('runtime.idleDirector lifecycle + camera wiring', function()
       assert.is_false(handlers.interface.act('walk_to', { x = 540, y = 200 }))
     end)
   end)
+
+  -- The request channel and the dev channel are gated by this. They used to accumulate dt,
+  -- which is 0 on every frame of a paused world -- so both went silent exactly when a host
+  -- asks "why is nothing happening?". Frames advance either way, so count frames.
+  describe('the frame throttle', function()
+    it('fires once per N frames', function()
+      withScript({}, function(env, handlers)
+        local store = {}
+        local fired = 0
+        for _ = 1, 90 do
+          if handlers.everyFrames(store, 'tick', 30) then fired = fired + 1 end
+        end
+        assert.equals(fired, 3)
+      end)
+    end)
+
+    it('keeps its own counter per key', function()
+      withScript({}, function(env, handlers)
+        local store = {}
+        for _ = 1, 30 do handlers.everyFrames(store, 'a', 30) end
+        -- 'b' has its own counter, so it still needs its full 30 frames
+        for _ = 1, 29 do
+          assert.is_false(handlers.everyFrames(store, 'b', 30))
+        end
+        assert.is_true(handlers.everyFrames(store, 'b', 30))
+      end)
+    end)
+
+    it('fires on every call when asked for one frame', function()
+      withScript({}, function(env, handlers)
+        local store = {}
+        assert.is_true(handlers.everyFrames(store, 'tick', 1))
+        assert.is_true(handlers.everyFrames(store, 'tick', 1))
+      end)
+    end)
+
+    it('is inert rather than a throw when handed no store', function()
+      withScript({}, function(env, handlers)
+        assert.is_false(handlers.everyFrames(nil, 'tick', 30))
+        assert.is_false(handlers.everyFrames('not a table', 'tick', 30))
+      end)
+    end)
+  end)
 end)

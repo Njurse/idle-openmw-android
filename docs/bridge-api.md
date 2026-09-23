@@ -87,10 +87,12 @@ Three rules, because each one is a trap:
    `position` as current and do not expect health or inventory. That is also why `entity.get`
    is declared `returns = "free"` rather than `"entity"`: a remembered record is honestly a
    subset, and calling it an entity would be a quiet lie.
-2. **A miss is `ok: true` with `result: null`**, not an error. An id can be unknown because it
-   was never read, because it aged out (see 3), or because the host made it up; none of those
-   are a broken call. Every miss also writes a line to the decision trace, so a stale reference
-   is visible in the log instead of mysterious.
+2. **A miss is `ok: true` with no `result` key at all** (not an error, and not `result: null`
+   either — a nil result is omitted from the envelope, so a host must read "no result" as
+   "nothing to report", never as a failed call). An id can be unknown because it was never
+   read, because it aged out (see 3), or because the host made it up; none of those are a
+   broken call. Every miss also writes a line to the decision trace, so a stale reference is
+   visible in the log instead of mysterious.
 3. **Bounded, least-recently-seen evicted first.** `params.ui.registryCap` (default 200)
    entities are kept. `registry` reports `cap`, `count`, `evicted` and `entities` (most recent
    first), so a host can both notice eviction and recover: anything evicted is still reachable
@@ -145,6 +147,42 @@ press Space to open it."*
 1. Add it to `M.METHODS` in `scripts/idle/bridge.lua` (this table **is** the documentation —
    `schema` serves it).
 2. Map it in `SOURCE_METHODS` and provide the source in `bridgeSources()`
-   (`scripts/idleDirector.lua`).
+   (`scripts/idleDirector.lua`). `tests/spec/bridge_spec.lua` then asserts that every method in
+   `M.METHODS` is actually wired to a source, so a declared-but-dead method cannot ship.
 3. Anything whose logic is not engine access belongs in a pure module with a spec — see
    `scripts/idle/hud.lua` and `tests/spec/hud_spec.lua`.
+
+## A live transcript, and why the pause matters
+
+Recorded on OpenMW 0.51.0 (Lua API r129) sitting at **ChargenName**, with the world paused and
+`dt = 0` on every frame. Requests were left in `mods/idle_openmw/idle_api.txt`; answers came
+back under the `IDLEAPI ` prefix:
+
+```
+IDLEAPI {"id":901,"ok":true,"result":{"api":1,"methods":19,"mod":"idle-openmw"}}
+IDLEAPI {"id":902,"ok":true,"result":{"cap":200,"count":0,"entities":{},"evicted":0}}
+IDLEAPI {"id":903,"ok":true,"result":{}}
+IDLEAPI {"id":904,"ok":true}
+```
+
+alongside, from the same run:
+
+```
+idle-openmw: screen -> ChargenName
+idle-openmw: BLOCKED (menu) paused by an open window: ChargenName. The mod can close it...
+idle-openmw: frame 300 dt=0 sinceSnapshot=1.0241555776447
+```
+
+Three things this pins down, each of which was a bug before it:
+
+- **A paused world is still answerable.** The poll used to be gated on accumulated `dt`, which
+  is `0` for every frame of a paused world — so the channel went silent exactly when a host most
+  wants to ask "what is going on?". It is frame-counted now (`everyFrames`), which is why these
+  four lines exist at all.
+- **`screen -> ChargenName`, not `screen -> empty`.** The mode stack is engine *userdata*; a
+  `type(stack) == 'table'` test called a real open window "empty".
+- **`BLOCKED (menu)`.** Pausing is reported with its *cause*, and the cause names the remedy: a
+  mode the mod can close, versus a message box only the host can clear.
+
+`count: 0` in 902 is honest and not a fault: at chargen nothing has been read yet, so nothing is
+remembered. Ask `entities.nearby` first and the registry fills.

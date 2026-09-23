@@ -348,12 +348,35 @@ end
 --- Injecting keystrokes into the running game proved unreliable (the console does not take
 --- them), while READING a file does not: the mod polls it through openmw.vfs. So asking the
 --- running game for something is a matter of writing a line. Nothing here changes gameplay.
-local function pollDevCommand(dt)
-  -- Throttled by accumulated dt, NOT by subtracting wall-clock readings: the sandbox has
-  -- no os.time, that subtraction was nil arithmetic, and it threw on every frame.
-  state.devCommandElapsed = (state.devCommandElapsed or 0) + (dt or 0)
-  if state.devCommandElapsed < 1 then return end
-  state.devCommandElapsed = 0
+--- A throttle that still fires while the world is paused.
+---
+--- `dt` is 0 for every frame of a paused world (measured: `dt=0 sinceSnapshot=0` for thousands
+--- of consecutive frames), so a dt-accumulated throttle NEVER fires during chargen, a modal
+--- window or a message box -- that is, in exactly the situations where a host most wants to ask
+--- the mod what is going on. It made the whole request channel look dead.
+---
+--- Frames advance either way (the engine calls onUpdate regardless of pause), so count frames.
+--- 30 frames is roughly half a second at 60 fps and a whole second at 30, which is the right
+--- order for a file-based request channel.
+---
+--- @param store table where to keep the counter (so this stays testable without globals)
+--- @param key string the counter's name inside `store`
+--- @param frames number how many calls to let pass between firings
+--- @return boolean true on the call that fires
+local function everyFrames(store, key, frames)
+  if type(store) ~= 'table' then return false end
+  local count = (store[key] or 0) + 1
+  if count < (frames or 1) then
+    store[key] = count
+    return false
+  end
+  store[key] = 0
+  return true
+end
+
+local function pollDevCommand()
+  -- frame-counted, not dt-accumulated: see everyFrames
+  if not everyFrames(state, 'devTick', 30) then return end
 
   local ok, text = pcall(engine.readTextFile, 'dev_command.txt', 512)
   if not ok or type(text) ~= 'string' then return end
@@ -723,10 +746,11 @@ end
 ---
 --- OpenMW's Lua cannot open a socket or write a file, so a file in and a print out is the
 --- whole channel: the host writes a line, the mod answers into the log (and stdout).
-local function pollApiRequests(dt)
-  state.apiElapsed = (state.apiElapsed or 0) + (dt or 0)
-  if state.apiElapsed < 1 then return end
-  state.apiElapsed = 0
+local function pollApiRequests()
+  -- frame-counted, not dt-accumulated: while the world is paused dt is 0 every frame, so a
+  -- dt-gated poll never runs -- and a paused game is EXACTLY when a host is asking what is
+  -- going on. See everyFrames.
+  if not everyFrames(state, 'apiTick', 30) then return end
 
   local ok, text = pcall(engine.readTextFile, 'idle_api.txt', 8192)
   if not ok or type(text) ~= 'string' or text == '' then return end
@@ -1049,12 +1073,13 @@ local function update(dt)
     -- the director's own tick keeps the real dt and still refuses to act during a pause.
     local observeDt = dt
     if not (type(observeDt) == 'number' and observeDt > 0) then observeDt = 1 / 60 end
-    pollDevCommand(observeDt)
-    pollApiRequests(observeDt)
+    pollDevCommand()
+    pollApiRequests()
     if state.telemetrySeconds and state.telemetrySeconds > 0 then
-      state.telemetryElapsed = (state.telemetryElapsed or 0) + observeDt
-      if state.telemetryElapsed >= state.telemetrySeconds then
-        state.telemetryElapsed = 0
+      -- frame-counted for the same reason as the pollers: a paused world has dt = 0, and
+      -- telemetry that stops the moment the game pauses is telemetry you cannot use to find
+      -- out WHY it paused. ~60 frames per requested second.
+      if everyFrames(state, 'telemetryTick', math.floor(state.telemetrySeconds * 60)) then
         print(bridge():telemetry())
       end
     end
@@ -1313,6 +1338,8 @@ local function onGuardianApplied(event)
 end
 
 return {
+  -- exposed for tests: the throttle that keeps working while the world is paused
+  everyFrames = everyFrames,
   engineHandlers = {
     onUpdate = update,
     onSave = onSave,
