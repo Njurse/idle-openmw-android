@@ -93,7 +93,7 @@ python tools/preview_console.py --tab info --png    # -> build/console-preview.p
 This project began as a much more ambitious plan. A lot of that plan turned out
 to rest on API capabilities OpenMW does not have. Rather than ship something
 that pretends, here is the honest split — every claim below is backed by a
-citation in [docs/openmw-lua-api.md](docs/openmw-lua-api.md) or a test.
+citation in [docs/openmw-lua-api.md | [Dev environment](docs/dev-environment.md)](docs/openmw-lua-api.md) or a test.
 
 | Capability | Status |
 |---|---|
