@@ -209,4 +209,18 @@ function M.quantize(v, step)
   return math.floor(v / step + 0.5) * step
 end
 
+--- Is this an engine-provided object (or a plain Lua table)?
+---
+--- OpenMW hands out its packages AND its objects as USERDATA, not Lua tables. Verified
+--- on a real engine, where the capability probe reported:
+---     [env: core=userdata, types=userdata, ui=userdata, nearby=userdata, camera=userdata]
+--- So a guard like `type(record) == 'table'` FAILS for every real record, GameObject,
+--- Cell and item -- it does not raise, it just quietly yields nil, and the world model
+--- goes blind. Use this instead: it accepts both shapes, so the same code is honest on
+--- 0.48, on 0.51 and against the headless mocks (which return plain tables).
+function M.isObject(value)
+  local t = type(value)
+  return t == 'table' or t == 'userdata'
+end
+
 return M

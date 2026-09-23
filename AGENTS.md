@@ -71,6 +71,19 @@ Because `env` is injected, **new engine behaviour is testable**: extend
    global. Declare the variable first.
 5. **`assert` is a function**, so `assert.equals` needs the harness's callable
    table trick (`tests/harness.lua:install`).
+7. **Engine values are `userdata`, not `table`.** `require('openmw.types')`, a record,
+   a GameObject, a Cell, an item, a stat — all `userdata` on 0.51. Measured, from the
+   mod's own log line sent to the engine console:
+   `[env: core=userdata,types=userdata,ui=userdata,nearby=userdata,camera=userdata,...]`.
+   So `type(x) == 'table'` is **false for every engine value** — it does not raise, it
+   yields nil, and the world model goes quietly blind. Use `util.isObject(x)` (accepts
+   both) or plain truthiness. `tests/spec/userdata_spec.lua` drives the real code with
+   real userdata via `newproxy` to keep this honest.
+8. **An engine handler the engine does not know is silent, not fatal.** It logs
+   "Not supported handler 'x'" and never fires — so the feature just stops working.
+   The authoritative names are in
+   `.research/openmw/docs/source/reference/lua-scripting/engine_handlers.rst`;
+   `python tools/dev/check_handlers.py` checks ours against them.
 6. **A repath must not reset the stuck timer** — otherwise a stuck actor looks
    healthy forever (`scripts/idle/pathfinder.lua`).
 

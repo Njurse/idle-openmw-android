@@ -599,7 +599,14 @@ local function update(dt)
 end
 
 --- Rebuild on resize/rotation: the layout is resolution-derived.
-local function onResolutionChanged()
+---
+--- The handler is `onViewportResized(width, height)`, NOT `onResolutionChanged` --
+--- that name does not exist in the engine at all
+--- (docs/source/reference/lua-scripting/engine_handlers.rst; registered in
+--- mwlua/playerscripts.hpp:56). Declaring a handler the engine does not know is not
+--- fatal, but it logs "Not supported handler ..." and then never fires, so the
+--- console would keep the stale layout after a rotation on a phone.
+local function onViewportResized()
   if state.disabled then return end
   pcall(requestRebuild)
 end
@@ -607,6 +614,6 @@ end
 return {
   engineHandlers = {
     onUpdate = update,
-    onResolutionChanged = onResolutionChanged,
+    onViewportResized = onViewportResized,
   },
 }

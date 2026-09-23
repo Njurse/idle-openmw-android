@@ -77,7 +77,7 @@ local function readSkills(env, actor)
   local stats = env.types and env.types.NPC and env.types.NPC.stats
   for id, getter in pairs(readStatMap(stats and stats.skills)) do
     local stat = safe(getter, actor)
-    if type(stat) == 'table' then
+    if util.isObject(stat) then
       out[id] = {
         base = num(stat.base, 0),
         modified = num(stat.modified, num(stat.base, 0)),
@@ -93,7 +93,7 @@ local function readAttributes(env, actor)
   local stats = env.types and env.types.NPC and env.types.NPC.stats
   for id, getter in pairs(readStatMap(stats and stats.attributes)) do
     local stat = safe(getter, actor)
-    if type(stat) == 'table' then
+    if util.isObject(stat) then
       out[id] = {
         base = num(stat.base, 0),
         modified = num(stat.modified, num(stat.base, 0)),
@@ -108,7 +108,7 @@ local function readEquipped(env, actor)
   local equipment = safe(env.types and env.types.Actor and env.types.Actor.getEquipment, actor)
   if type(equipment) ~= 'table' then return set end
   for _, item in pairs(equipment) do
-    local id = type(item) == 'table' and (item.recordId or item.id) or nil
+    local id = util.isObject(item) and (item.recordId or item.id) or nil
     if id then set[id] = true end
   end
   return set
@@ -125,7 +125,7 @@ function M.readInventory(env, actor)
   if type(items) ~= 'table' then return out end
 
   for _, object in pairs(items) do
-    if type(object) == 'table' then
+    if util.isObject(object) then
       local id = object.recordId or object.id
       if not M.CURRENCY[id] then
         -- record of the item's own type carries value/weight
@@ -240,23 +240,23 @@ local function actorFight(env, object)
   local stats = env.types and env.types.Actor and env.types.Actor.stats
   local ai = stats and stats.ai
   local stat = safe(ai and ai.fight, object)
-  if type(stat) == 'table' then return num(stat.modified, num(stat.base, nil)) end
+  if util.isObject(stat) then return num(stat.modified, num(stat.base, nil)) end
   return nil
 end
 
 --- Turn one nearby GameObject into a worldsense descriptor, reading the actor's
 --- real record (`object.type.record(object)`).
 local function describeActor(env, object, cfg)
-  local kind = type(object) == 'table' and object.type or nil
+  local kind = util.isObject(object) and object.type or nil
   local record = safe(kind and kind.record, object)
   return worldsense.describe({
-    record = type(record) == 'table' and record or {},
+    record = util.isObject(record) and record or {},
     isCreature = kind ~= nil and kind == env.types.Creature,
     fight = actorFight(env, object),
     level = actorLevel(env, object),
-    name = type(object) == 'table' and (object.name or object.recordId) or nil,
-    id = type(object) == 'table' and object.recordId or nil,
-    position = point(type(object) == 'table' and object.position or nil),
+    name = util.isObject(object) and (object.name or object.recordId) or nil,
+    id = util.isObject(object) and object.recordId or nil,
+    position = point(util.isObject(object) and object.position or nil),
     object = object,
   }, cfg)
 end
@@ -293,7 +293,7 @@ function M.scanWorld(env, opts, player)
   if servicesOf then
     for _, descriptor in ipairs(descriptors) do
       local services = safe(servicesOf, descriptor.object)
-      if type(services) == 'table' then
+      if util.isObject(services) then
         for role, value in pairs(services) do descriptor.roles[role] = value and true or false end
         descriptor.offersServices = descriptor.roles.services or descriptor.roles.travel
       end
@@ -327,7 +327,7 @@ function M.scanWorld(env, opts, player)
     local current = nearest.loot
     if not current or (distance and distance < (current.distance or math.huge)) then
       nearest.loot = {
-        name = type(container) == 'table' and container.recordId or nil,
+        name = util.isObject(container) and container.recordId or nil,
         position = at,
         distance = distance,
         object = container,
@@ -379,7 +379,7 @@ function M.readUi(env)
   local ui = env.ui
   if ui then
     local raw = safe(ui._getUiModeStack)
-    if type(raw) == 'table' then
+    if util.isObject(raw) then
       stack = {}
       for i = 1, #raw do
         if type(raw[i]) == 'string' and raw[i] ~= '' then stack[#stack + 1] = raw[i] end
@@ -418,7 +418,7 @@ function M.readLifecycle(env)
   end
 
   local health = safe(function() return env.types.Actor.stats.dynamic.health(actor) end)
-  local dead = type(health) == 'table' and health.current ~= nil and health.current <= 0
+  local dead = util.isObject(health) and health.current ~= nil and health.current <= 0
 
   return {
     playerExists = actor ~= nil,
@@ -440,7 +440,7 @@ function M.readJournal(env, actor)
   local count = #entries
   for i = math.max(1, count - 19), count do
     local entry = entries[i]
-    if type(entry) == 'table' then
+    if util.isObject(entry) then
       out[#out + 1] = { text = entry.text, questId = entry.questId, day = entry.day }
     end
   end
@@ -465,8 +465,8 @@ function M.readJournalTopics(env, actor)
   for name, topic in pairs(journal.topics) do
     if type(name) == 'string' and name ~= '' then
       local lines = 0
-      local entries = type(topic) == 'table' and topic.entries or nil
-      if type(entries) == 'table' then lines = #entries end
+      local entries = util.isObject(topic) and topic.entries or nil
+      if util.isObject(entries) then lines = #entries end
       out[#out + 1] = { topic = name, lines = lines }
     end
   end
@@ -483,7 +483,7 @@ function M.readQuests(env, actor)
   if type(quests) ~= 'table' then return out end
 
   for id, quest in pairs(quests) do
-    if type(quest) == 'table' and quest.started and not quest.finished then
+    if util.isObject(quest) and quest.started and not quest.finished then
       out[#out + 1] = {
         id = quest.id or id,
         stage = quest.stage,

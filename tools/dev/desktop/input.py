@@ -132,6 +132,20 @@ def find_window(process: str = "openmw") -> int:
     return found[0]
 
 
+def place_window(hwnd: int, x: int, y: int) -> None:
+    """Move the game window onto a chosen screen position.
+
+    OpenMW remembers where it was and can land on a secondary monitor -- which here
+    meant x=-1796, and the engine then rendered nothing capturable (every screenshot
+    came out black, mean brightness 13 instead of 58). Pinning the window to the
+    primary desktop makes focus, clicks and captures all agree on one coordinate space.
+    """
+    SWP_NOSIZE = 0x0001
+    SWP_NOZORDER = 0x0004
+    user32.SetWindowPos(hwnd, 0, x, y, 0, 0, SWP_NOSIZE | SWP_NOZORDER)
+    time.sleep(0.3)
+
+
 def client_rect(hwnd: int) -> tuple[int, int, int, int]:
     r = wintypes.RECT()
     user32.GetClientRect(hwnd, ctypes.byref(r))
@@ -141,9 +155,30 @@ def client_rect(hwnd: int) -> tuple[int, int, int, int]:
 
 
 def focus(hwnd: int) -> None:
+    """Bring the game to the foreground, reliably.
+
+    A bare SetForegroundWindow fails when another process currently owns the
+    foreground -- Windows only lets you steal it if you share an input queue. So
+    attach to the current foreground window's thread first, which is the standard
+    workaround, then detach. Without this the game is not focused and SendInput goes
+    somewhere else entirely (which is indistinguishable from "wrong coordinates").
+    """
     user32.ShowWindow(hwnd, 9)  # SW_RESTORE
-    user32.SetForegroundWindow(hwnd)
-    time.sleep(0.25)
+    fg = user32.GetForegroundWindow()
+    if fg != hwnd:
+        our_thread = ctypes.windll.kernel32.GetCurrentThreadId()
+        fg_thread = user32.GetWindowThreadProcessId(fg, None)
+        attached = False
+        if fg_thread and fg_thread != our_thread:
+            attached = bool(user32.AttachThreadInput(our_thread, fg_thread, True))
+        try:
+            user32.BringWindowToTop(hwnd)
+            user32.SetForegroundWindow(hwnd)
+            user32.SetFocus(hwnd)
+        finally:
+            if attached:
+                user32.AttachThreadInput(our_thread, fg_thread, False)
+    time.sleep(0.3)
 
 
 def _absolute(hwnd: int, cx: int, cy: int) -> tuple[int, int]:
@@ -230,11 +265,17 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--type", dest="text", metavar="TEXT")
     ap.add_argument("--repeat", type=int, default=1)
     ap.add_argument("--delay", type=float, default=0.12)
+    ap.add_argument("--place", metavar="X,Y",
+                    help="move the game window to this SCREEN position first")
     ap.add_argument("--probe", action="store_true",
                     help="report struct sizes, the window, and whether it is focused")
     args = ap.parse_args(argv)
 
     hwnd = find_window(args.process)
+    if args.place:
+        px, py = (int(v) for v in args.place.split(","))
+        place_window(hwnd, px, py)
+        hwnd = find_window(args.process)  # handle may move with the window
     x, y, w, h = client_rect(hwnd)
     title = ctypes.create_unicode_buffer(256)
     user32.GetWindowTextW(hwnd, title, 256)

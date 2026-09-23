@@ -16,6 +16,8 @@
 --   types.Actor.EQUIPMENT_SLOT  apps/openmw/mwlua/types/actor.cpp:190
 --   slot numbering         apps/openmw/mwworld/inventorystore.hpp:33-51
 
+local util = require('scripts.idle.util')
+
 local M = {}
 
 --- type NAME -> equipment slot NAME, per item kind.
@@ -73,7 +75,7 @@ function M.paperDoll(items)
   local worn = {}
   local index = {}
   for i, item in ipairs(items or {}) do
-    if type(item) == 'table' and item.equipped and item.equipSlot then
+    if util.isObject(item) and item.equipped and item.equipSlot then
       worn[item.equipSlot] = item
       index[item.equipSlot] = i
     end

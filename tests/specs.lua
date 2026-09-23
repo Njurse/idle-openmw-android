@@ -37,4 +37,5 @@ return {
   'tests.spec.trace_spec',
   'tests.spec.tapMove_spec',
   'tests.spec.capabilities_spec',
+  'tests.spec.userdata_spec',
 }

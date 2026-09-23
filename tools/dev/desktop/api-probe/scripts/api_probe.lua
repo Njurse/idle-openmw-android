@@ -20,7 +20,9 @@
 local M = {}
 
 local function has(tbl, key, kind)
-  if type(tbl) ~= 'table' then return false end
+  -- Engine packages are USERDATA on 0.51, not tables -- an `== 'table'` guard here
+  -- reports every capability as absent.
+  if tbl == nil then return false end
   local value = tbl[key]
   if kind then return type(value) == kind end
   return value ~= nil

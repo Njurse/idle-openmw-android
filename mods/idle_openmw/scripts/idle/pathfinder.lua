@@ -76,7 +76,7 @@ local Route = {}
 Route.__index = Route
 
 function M.newRoute(nav, cfg)
-  assert(type(nav) == 'table' and type(nav.findPath) == 'function',
+  assert(util.isObject(nav) and type(nav.findPath) == 'function',
     'nav port must expose findPath(from, to)')
   return setmetatable({
     nav = nav,

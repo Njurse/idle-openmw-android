@@ -21,6 +21,8 @@
 -- See also scripts/idle/lifecycle.lua, which folds this together with the
 -- character-generation flag to decide whether the director may act at all.
 
+local util = require('scripts.idle.util')
+
 local M = {}
 
 -- GuiMode name -> our `kind`. Every name the engine can put on the stack is
@@ -128,7 +130,7 @@ end
 --- `interfaces.UI.getMode()` string on an engine whose internal hook is missing.
 function M.fromStack(stack, fallback)
   local copy = {}
-  if type(stack) == 'table' then
+  if util.isObject(stack) then
     for i = 1, #stack do
       if type(stack[i]) == 'string' and stack[i] ~= '' then copy[#copy + 1] = stack[i] end
     end

@@ -234,7 +234,7 @@ describe('runtime.portraitUI', function()
     local env, script = loadHud({ screen = SCREEN })
     pcall(script.engineHandlers.onUpdate, 0.1)
     local before = #env._createdElements
-    local ok = pcall(script.engineHandlers.onResolutionChanged)
+    local ok = pcall(script.engineHandlers.onViewportResized)
     local ok2 = pcall(script.engineHandlers.onUpdate, 0.5)
     local after = #env._createdElements
     mocks.uninstall()

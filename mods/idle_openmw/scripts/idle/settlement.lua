@@ -23,6 +23,8 @@
 -- (3) is the part most likely to be wrong on some obscure cell, which is why
 -- `settlement.wildernessNames` exists to correct it by hand without code changes.
 
+local util = require('scripts.idle.util')
+
 local M = {}
 
 M.KIND = {
@@ -45,7 +47,7 @@ end
 
 --- Trim and normalise a cell name.
 function M.name(cell)
-  local name = type(cell) == 'table' and cell.name or nil
+  local name = util.isObject(cell) and cell.name or nil
   if type(name) ~= 'string' then return nil end
   name = name:gsub('^%s+', ''):gsub('%s+$', '')
   if name == '' then return nil end
@@ -108,7 +110,7 @@ function M.arrived(previous, current, ctx)
   if not M.isSettlement(current, ctx) then return false, nil end
   local name = M.displayName(current)
 
-  if type(previous) == 'table' then
+  if util.isObject(previous) then
     local previousName = M.name(previous)
     local previousKind = M.classify(previous, ctx)
     -- same town, or moving between interiors inside it

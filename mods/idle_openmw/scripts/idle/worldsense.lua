@@ -47,7 +47,7 @@ M.ROLES = { 'shop', 'trainer', 'healer', 'repairer', 'travel', 'enchanter' }
 --- Normalize a `servicesOffered` map into a flag set over M.SERVICE_KEYS.
 function M.readServices(record)
   local flags = {}
-  local offered = type(record) == 'table' and record.servicesOffered or nil
+  local offered = util.isObject(record) and record.servicesOffered or nil
   if type(offered) ~= 'table' then return flags end
   for _, key in ipairs(M.SERVICE_KEYS) do
     flags[key] = offered[key] == true
@@ -86,8 +86,8 @@ function M.roles(flags, record)
     end
   end
 
-  local destinations = type(record) == 'table' and record.travelDestinations or nil
-  roles.travel = type(destinations) == 'table' and #destinations > 0
+  local destinations = util.isObject(record) and record.travelDestinations or nil
+  roles.travel = util.isObject(destinations) and #destinations > 0
   -- An actor that offers nothing and travels nowhere is a "talker": the only
   -- thing left to do with them is start a conversation.
   roles.questing = not roles.services and not roles.travel
@@ -118,7 +118,7 @@ function M.hostile(actor, cfg)
   if actor.isEssential then return false, 'essential — cannot be attacked' end
   if actor.offersServices then return false, 'offers a service' end
 
-  if actor.id and type(sensing.ignoreRecords) == 'table' then
+  if actor.id and util.isObject(sensing.ignoreRecords) then
     for _, ignored in ipairs(sensing.ignoreRecords) do
       if tostring(ignored) == tostring(actor.id) then return false, 'ignored by config' end
     end
@@ -169,7 +169,7 @@ function M.describe(spec, cfg)
     serviceCount = M.serviceCount(flags),
     roles = roles,
     offersServices = offers,
-    travelDestinations = type(record.travelDestinations) == 'table' and record.travelDestinations or nil,
+    travelDestinations = util.isObject(record.travelDestinations) and record.travelDestinations or nil,
     hostile = hostile,
     hostileReason = reason,
     isCreature = spec.isCreature and true or false,
@@ -261,7 +261,7 @@ function M.destinationsOf(entry)
   local out = {}
   if type(entry) ~= 'table' then return out end
   for i, destination in ipairs(entry.travelDestinations or {}) do
-    if type(destination) == 'table' then
+    if util.isObject(destination) then
       out[#out + 1] = {
         index = i,
         cell = destination.cell or destination.name,

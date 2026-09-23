@@ -31,52 +31,55 @@ M.FEATURES = {
   -- (scripts/idle/lifecycle.lua). Without it the mod cannot know, and may drift
   -- into driving a character that is still being created.
   charGenFlag = function(env)
+    -- NOTE: engine packages are USERDATA on 0.51, never tables. Probe truthiness and
+    -- the member's type -- never the container's (that mistake made this report
+    -- "MISSING 10/10" on a fully capable engine).
     local Player = env.types and env.types.Player
-    return type(Player) == 'table' and type(Player.isCharGenFinished) == 'function'
+    return Player ~= nil and type(Player.isCharGenFinished) == 'function'
   end,
 
   -- The live UI mode stack: the "what window is open" hook (scripts/idle/uiState.lua).
   uiModeStack = function(env)
-    return type(env.ui) == 'table' and type(env.ui._getUiModeStack) == 'function'
+    return env.ui ~= nil and type(env.ui._getUiModeStack) == 'function'
   end,
 
   -- Reading the journal's topics: the unlocked dialogue options (docs/dialogue.md).
   journalTopics = function(env)
     local Player = env.types and env.types.Player
-    return type(Player) == 'table' and type(Player.journal) == 'function'
+    return Player ~= nil and type(Player.journal) == 'function'
   end,
 
   -- Handing movement controls back to the game, so MANUAL play is really playable.
   controlsOverride = function(env)
     local Controls = env.interfaces and env.interfaces.Controls
-    return type(Controls) == 'table' and type(Controls.overrideMovementControls) == 'function'
+    return Controls ~= nil and type(Controls.overrideMovementControls) == 'function'
   end,
 
   -- Screen -> world: tap-to-move needs BOTH of these (docs/tap-to-move.md).
   viewportPick = function(env)
-    return type(env.camera) == 'table' and type(env.camera.viewportToWorldVector) == 'function'
+    return env.camera ~= nil and type(env.camera.viewportToWorldVector) == 'function'
   end,
   cameraPosition = function(env)
-    return type(env.camera) == 'table' and type(env.camera.getPosition) == 'function'
+    return env.camera ~= nil and type(env.camera.getPosition) == 'function'
   end,
 
   -- Ray casting, for both picking and line-of-sight checks.
   castRay = function(env)
-    return type(env.nearby) == 'table' and type(env.nearby.castRay) == 'function'
+    return env.nearby ~= nil and type(env.nearby.castRay) == 'function'
   end,
   renderingRay = function(env)
-    return type(env.camera) == 'table' and type(env.camera.castRenderingRay) == 'function'
+    return env.camera ~= nil and type(env.camera.castRenderingRay) == 'function'
   end,
 
   -- Morrowind's own GMST colours, so the console matches the player's game
   -- (scripts/idle/theme.lua).
   gmst = function(env)
-    return type(env.core) == 'table' and type(env.core.getGMST) == 'function'
+    return env.core ~= nil and type(env.core.getGMST) == 'function'
   end,
 
   -- The one supported widget-injection point.
   settingsPage = function(env)
-    return type(env.ui) == 'table' and type(env.ui.registerSettingsPage) == 'function'
+    return env.ui ~= nil and type(env.ui.registerSettingsPage) == 'function'
   end,
 }
 
@@ -100,6 +103,17 @@ M.LABEL = {
   settingsPage = 'settings page',
 }
 
+--- `core=table,types=table,...` -- the Lua type of each engine package we were given.
+local function envFieldTypes(env)
+  local names = { 'core', 'types', 'ui', 'nearby', 'camera', 'interfaces', 'util',
+                  'world', 'self', 'input', 'async', 'storage' }
+  local parts = {}
+  for _, name in ipairs(names) do
+    parts[#parts + 1] = name .. '=' .. type(env and env[name])
+  end
+  return table.concat(parts, ',')
+end
+
 --- Probe the engine.
 --- @param env table the injected engine env (scripts/runtime/engine.lua)
 --- @return { revision?, features, present, missing, ok }
@@ -122,6 +136,12 @@ function M.probe(env)
 
   return {
     revision = revision,
+    -- What the env actually held, so a "everything missing" report is diagnosable
+    -- from the log instead of needing another engine run to investigate.
+    envTypes = (function()
+      local ok, value = pcall(envFieldTypes, env)
+      return ok and value or ('unreadable: ' .. tostring(value))
+    end)(),
     features = features,
     present = present,
     missing = missing,
@@ -140,8 +160,9 @@ function M.describe(probe)
   for _, name in ipairs(probe.missing or {}) do
     labels[#labels + 1] = M.LABEL[name] or name
   end
-  return ('%s; MISSING %d/%d: %s'):format(revision, #(probe.missing or {}),
-    #(probe.present or {}) + #(probe.missing or {}), table.concat(labels, ', '))
+  return ('%s; MISSING %d/%d: %s  [env: %s]'):format(revision, #(probe.missing or {}),
+    #(probe.present or {}) + #(probe.missing or {}), table.concat(labels, ', '),
+    probe.envTypes or '?')
 end
 
 --- The features the console/UI genuinely cannot work without, as opposed to ones

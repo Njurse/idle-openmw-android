@@ -155,7 +155,7 @@ function Executor:_restorePool(kind)
   local dynamic = self.env.types and self.env.types.Actor and self.env.types.Actor.stats
     and self.env.types.Actor.stats.dynamic
   local stat = safe(dynamic and dynamic[kind], actor)
-  if type(stat) == 'table' and type(stat.base) == 'number' then
+  if util.isObject(stat) and type(stat.base) == 'number' then
     stat.current = stat.base
     return true
   end
@@ -246,9 +246,9 @@ function Executor:_execute(command, now)
 
   elseif command.type == 'activate' then
     local target = command.target
-    local object = type(target) == 'table' and target.object or nil
+    local object = util.isObject(target) and target.object or nil
     local actor = self:_player()
-    if type(object) == 'table' and type(object.activateBy) == 'function' and actor then
+    if util.isObject(object) and type(object.activateBy) == 'function' and actor then
       pcall(function() object:activateBy(actor) end)
       self:log(('Approaching %s'):format(command.kind or 'target'), 'info')
     else
@@ -285,7 +285,7 @@ function Executor:_execute(command, now)
       local stats = self.env.types and self.env.types.NPC and self.env.types.NPC.stats
         and self.env.types.NPC.stats.skills
       local stat = safe(stats and stats[command.skill], actor)
-      if type(stat) == 'table' then
+      if util.isObject(stat) then
         stat.progress = math.min(1, (stat.progress or 0) + 0.2)
         local cost = (self.cfg.behaviour.trainGoldPerLevel or 0) * (self.applied.level or 1)
         if cost > 0 then self:_spendGold(cost) end

@@ -13,6 +13,32 @@ or the C++ bindings under `apps/openmw/mwlua/`.
 
 ---
 
+## Engine values are `userdata`, not Lua tables
+
+Measured on OpenMW 0.51.0 with the mod's own capability line, which prints the type of
+every package it was handed:
+
+```
+idle-openmw: Lua API revision 129; MISSING 10/10: character-creation flag, live UI mode
+stack, journal topics, ... [env: core=userdata,types=userdata,ui=userdata,
+nearby=userdata,camera=userdata,interfaces=userdata,util=userdata,world=nil,
+self=userdata,input=userdata,async=userdata,storage=userdata]
+```
+
+`openmw.*` packages, records, GameObjects, Cells, items and stats are **userdata**.
+`world` is `nil` in a PLAYER script (it is global-only). Consequences:
+
+- `type(x) == 'table'` is **false** for every engine value. It does not raise — it
+  yields nil, so the failure is silent. The probe above claimed a fully capable engine
+  had nothing; the world model would have reported no name, no position, no record and
+  no services.
+- Use `util.isObject(x)` (accepts both shapes) or plain truthiness for anything the
+  engine gave you. Reserve `type(x) == 'table'` for tables **we** built.
+- `tests/spec/userdata_spec.lua` runs the real code against real `userdata`
+  (`newproxy`, LuaJIT/5.1) so this cannot regress unnoticed.
+
+---
+
 ## The supported engine floor (measured, not assumed)
 
 The sections below cite an OpenMW `master` checkout. That is *not* the same engine as

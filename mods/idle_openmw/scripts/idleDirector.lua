@@ -224,6 +224,10 @@ local function ensureInit()
     local ui = engine.ui()
     if ui and type(ui.printToConsole) == 'function' then ui.printToConsole(capabilityLine) end
   end)
+  -- `print` is the channel that reaches openmw.log (the api-probe proved it: a MENU
+  -- script's print lands as `Menu[scripts/api_probe.lua]: ...`). printToConsole only
+  -- paints the in-game console, which is invisible to the harness.
+  print(capabilityLine)
   local missingRequired = capabilitiesMod.requiredMissing(state.capabilities)
   if #missingRequired > 0 then
     state.director:logLine('idle-openmw: this engine is missing ' ..
