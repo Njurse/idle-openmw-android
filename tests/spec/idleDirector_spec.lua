@@ -489,6 +489,61 @@ describe('runtime.idleDirector lifecycle + camera wiring', function()
   -- The request channel and the dev channel are gated by this. They used to accumulate dt,
   -- which is 0 on every frame of a paused world -- so both went silent exactly when a host
   -- asks "why is nothing happening?". Frames advance either way, so count frames.
+  -- The goal the whole bridge exists to serve: walk to the door, LOOK at it, use it, and end up
+  -- somewhere else. Three things are asserted, and each of them has been a real bug before:
+  -- the loop does not crash (a nil global silently killed it on the engine), it walks while out
+  -- of reach, and it uses the door once it is close enough and aimed.
+  describe('leaving the cell by the door', function()
+    it('reports honestly when there is no door to leave by', function()
+      withScript(base(), function(env, handlers)
+        tick(handlers, 1)   -- the director only exists after a tick; asking before is refused
+        assert.is_true(handlers.interface.act('go_out'))
+        tick(handlers, 3)
+        -- no doors nearby is not a crash and not a silent no-op: the run ends, and says why
+        assert.is_nil(handlers.interface.getState().exit)
+      end)
+    end)
+
+    it('walks toward a door that is out of reach', function()
+      withScript(base({
+        doors = { { id = 'hatch', recordId = 'ex_de_shipdoor_01',
+                    position = { x = 0, y = 900, z = 0 } } },
+      }), function(env, handlers)
+        tick(handlers, 1)
+        assert.is_true(handlers.interface.act('go_out'))
+        tick(handlers, 2)
+        local exit = handlers.interface.getState().exit
+        assert.is_not_nil(exit, 'the run should still be going')
+        -- 900 away against a reach of ~128: the only sensible step is to move
+        assert.equals(exit.phase, 'move')
+      end)
+    end)
+
+    it('uses the door once in reach -- the whole point', function()
+      withScript(base({
+        doors = { { id = 'hatch', recordId = 'ex_de_shipdoor_01',
+                    position = { x = 0, y = 40, z = 0 } } },
+      }), function(env, handlers)
+        tick(handlers, 1)
+        assert.is_true(handlers.interface.act('go_out'))
+        -- the aim is verified by asking the engine where it looks, which in a mock is the
+        -- ray: point it at the hatch so the verification can succeed. (A bare `a and b()` is
+        -- not a Lua statement, hence the if.)
+        local hatch = env.nearby and env.nearby.doors and env.nearby.doors[1] or nil
+        if env._setRayHit and hatch then
+          env._setRayHit({ hitObject = hatch, hitPos = { x = 0, y = 40, z = 0 } })
+        end
+        tick(handlers, 6)
+        local exit = handlers.interface.getState().exit
+        -- either it finished (the mock's door does not move the player) or it is retrying, but
+        -- the door must have been USED
+        local used = hatch and hatch._spec and (hatch._spec.activated or 0) or 0
+        assert.is_true(used > 0, 'expected the hatch to have been activated')
+        assert.is_true(exit == nil or exit.tries >= 1)
+      end)
+    end)
+  end)
+
   describe('the frame throttle', function()
     it('fires once per N frames', function()
       withScript({}, function(env, handlers)

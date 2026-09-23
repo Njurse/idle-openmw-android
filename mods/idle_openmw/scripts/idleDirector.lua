@@ -39,6 +39,9 @@ local bridgeMod = require('scripts.idle.bridge')
 local hudMod = require('scripts.idle.hud')
 local entitiesMod = require('scripts.runtime.entities')
 local registryMod = require('scripts.idle.registry')
+local util = require('scripts.idle.util')
+local aimMod = require('scripts.idle.aim')
+local interactMod = require('scripts.runtime.interact')
 local uiLayoutMod = require('scripts.idle.uiLayout')
 
 local self = engine.self()
@@ -667,6 +670,36 @@ local function bridgeSources()
       end
       return entry
     end,
+    --- Leave the cell the player is in: walk to the door, look at it, use it.
+    ---
+    --- The whole reason the bridge exists (docs/bridge-api.md): a goal, not a read. It runs
+    --- across frames, so the answer is "started", and the outcome arrives in the log/narration
+    --- as `idle-openmw: exit -> ...` lines -- including `-> OUT: <before> -> <after>` when the
+    --- player's cell actually changes.
+    worldExit = function()
+      if not startExit() then return { started = false, reason = 'the director is not up yet' } end
+      local exit = state.exit or {}
+      return {
+        started = true,
+        fromCell = exit.cellBefore,
+        note = 'watch for "idle-openmw: exit ->" lines; OUT when the cell changes',
+      }
+    end,
+    --- What the exit run is doing, for a host that would rather poll than read the log.
+    exitState = function()
+      local exit = state.exit
+      if not exit then return { running = false } end
+      return {
+        running = true,
+        phase = exit.phase,
+        targetId = exit.targetId,
+        aimed = exit.aimed,
+        tries = exit.tries,
+        fromCell = exit.cellBefore,
+        cell = state.snapshot and state.snapshot.world and state.snapshot.world.cell
+          and state.snapshot.world.cell.name or nil,
+      }
+    end,
     --- What is currently remembered, most recent first. A host that lost an id can find it
     --- again without re-reading the cell, and `evicted` says whether anything was dropped.
     registry = function(params)
@@ -935,6 +968,211 @@ local function guardianTick(snapshot)
   state.guardian.sinceIntervention = 0
 end
 
+-- ===========================================================================
+-- LEAVING THE SHIP -- the goal the whole bridge exists to serve
+-- ===========================================================================
+--
+-- This is a hand-played sequence written down: walk to the hatch, LOOK UP AT IT, press use.
+-- Three things make it more than a wrapper:
+--
+--   * the decisions are pure (scripts/idle/aim.lua: chooseExit, step) so they are testable
+--     without a game, and the narration can say WHY it is doing what it is doing;
+--   * the engine I/O is its own layer (scripts/runtime/interact.lua: reach, aimAndVerify,
+--     activate), including a ray-verified aim that corrects the pitch convention once;
+--   * it VERIFIES the outcome: a teleport door changes the player's cell, so "did we get out?"
+--     is answered by comparing the cell before and after rather than by assuming the call worked.
+
+--- How long to keep trying before reporting failure. At 60 fps this is ~45 s, which is a
+--- leisurely walk across the ship's cabin.
+local EXIT_MAX_FRAMES = 60 * 45
+--- How many times to try using the door. Morrowind teleport doors fire on use, but a door that
+--- is merely closed needs the second call to travel.
+local EXIT_ACTIVATION_TRIES = 4
+--- Frames between progress lines, so a slow walk is visibly a walk and not a hang.
+local EXIT_REPORT_EVERY = 90
+
+--- The doors near the player, each paired with the engine object that activates it.
+---
+--- The pairing is the point: the schema entity is what we reason about and report, the engine
+--- object is the only thing `activateBy` accepts, and neither can be derived from the other
+--- after the fact.
+local function nearbyDoors(from)
+  local nearby = engine.nearby()
+  local list = nearby and nearby.doors
+  if not util.isObject(list) then return {} end
+  local out = {}
+  for _, raw in ipairs(list) do
+    local read = entitiesMod.read(raw, engine.env(), from)
+    if read and read.position then out[#out + 1] = { entity = read, object = raw } end
+  end
+  return out
+end
+
+--- Note which door the crosshair is already on, so an existing look is respected rather than
+--- overridden (aim.chooseExit uses this).
+local function markLookedAt(doors, crosshair)
+  local crosshairId = interactMod.objectId(crosshair)
+  if not crosshairId then return end
+  for _, door in ipairs(doors) do
+    if door.entity.id == crosshairId then door.entity.hit = true end
+  end
+end
+
+--- Start leaving by the nearest door: the console's "Go out" action and the bridge's
+--- `world.exit`.
+function startExit()
+  if not state.director then return false end
+  local world = state.snapshot and state.snapshot.world
+  local cell = world and world.cell
+  state.exit = {
+    started = state.frameCount or 0,
+    phase = 'seek',
+    aimed = false,
+    tries = 0,
+    cellBefore = cell and cell.name or nil,
+    targetId = nil,
+    lastReport = 0,
+    reason = nil,
+  }
+  -- stop the idle brain steering, and let our own loop own the frame
+  state.executor:clear()
+  print('idle-openmw: exit -> looking for a way out of '
+    .. tostring(state.exit.cellBefore or '?'))
+  return true
+end
+
+--- One frame of the exit loop. Called from update() on EVERY frame (not on snapshot ticks)
+--- because looking and using want to be responsive, while the idle brain can stay slow.
+local function updateExit()
+  local exit = state.exit
+  if not exit then return end
+
+  local frame = state.frameCount or 0
+  local elapsed = frame - (exit.started or frame)
+  if elapsed > EXIT_MAX_FRAMES then
+    exit.phase = 'failed'
+    exit.reason = string.format('gave up after %d frames', elapsed)
+    print('idle-openmw: exit -> FAILED: ' .. exit.reason)
+    state.exit = nil
+    state.executor:clear()
+    return
+  end
+
+  local env = engine.env()
+  local player = playerObject()
+  local from = entitiesMod.positionOf(player)
+  local reach = interactMod.reach(env)
+  local eye = interactMod.eye(env)
+  local crosshair = interactMod.crosshairObject(env, eye, player)
+
+  -- ---- pick a target -----------------------------------------------------
+  local doors = nearbyDoors(from)
+  markLookedAt(doors, crosshair)
+
+  local entities = {}
+  local byId = {}
+  for _, door in ipairs(doors) do
+    entities[#entities + 1] = door.entity
+    byId[door.entity.id] = door
+  end
+
+  local chosen, why = aimMod.chooseExit(entities, reach, from)
+  if not chosen then
+    exit.phase = 'failed'
+    exit.reason = why
+    print('idle-openmw: exit -> FAILED: ' .. tostring(why))
+    state.exit = nil
+    return
+  end
+  if exit.targetId ~= chosen.id then
+    exit.targetId = chosen.id
+    exit.aimed = false
+    exit.tries = 0
+    print(string.format('idle-openmw: exit -> target %s (%s): %s',
+      tostring(chosen.name or chosen.recordId or chosen.id), tostring(chosen.id), tostring(why)))
+  end
+
+  local target = byId[chosen.id]
+  if not target then
+    state.exit = nil
+    return
+  end
+
+  -- ---- decide the step ---------------------------------------------------
+  local decision = aimMod.step(chosen, from, reach, { aimed = exit.aimed })
+
+  if decision.step == 'move' then
+    exit.phase = 'move'
+    -- the executor's own route: it pathfinds and steers the character controls
+    state.executor:submit({ { type = 'move', dest = chosen.position, run = false } })
+    if elapsed - (exit.lastReport or 0) >= EXIT_REPORT_EVERY then
+      exit.lastReport = elapsed
+      print(string.format('idle-openmw: exit -> walking to it (%.0f away, reach %.0f)',
+        decision.distance or 0, decision.reach or 0))
+    end
+    return
+  end
+
+  if decision.step == 'aim' then
+    exit.phase = 'aim'
+    state.executor:clear()   -- arrived: stop walking so the aim is measured standing still
+    local trace = interactMod.aimAndVerify(env, target.object, chosen.position, {
+      ignore = player, eye = eye,
+    })
+    if trace.verified then
+      exit.aimed = true
+      print('idle-openmw: exit -> ' .. interactMod.describeAim(trace)
+        .. (trace.above and ' -- it is UP, so we look up' or ''))
+    else
+      -- not a failure yet: the camera may need a frame to settle before the ray agrees
+      if elapsed - (exit.lastReport or 0) >= EXIT_REPORT_EVERY then
+        exit.lastReport = elapsed
+        print('idle-openmw: exit -> ' .. interactMod.describeAim(trace))
+      end
+    end
+    return
+  end
+
+  if decision.step == 'activate' then
+    exit.phase = 'activate'
+    exit.tries = (exit.tries or 0) + 1
+    local result = interactMod.activate(env, target.object, player)
+    print(string.format('idle-openmw: exit -> using %s (try %d): %s',
+      tostring(chosen.name or chosen.recordId or chosen.id), exit.tries,
+      result.ok and 'called' or ('failed: ' .. tostring(result.reason))))
+    exit.phase = 'verify'
+    exit.verifyAt = frame
+    return
+  end
+
+  -- ---- verify the outcome ------------------------------------------------
+  if exit.phase == 'verify' then
+    local world = state.snapshot and state.snapshot.world
+    local cell = world and world.cell
+    local now = cell and cell.name or nil
+    if now and exit.cellBefore and now ~= exit.cellBefore then
+      print(string.format('idle-openmw: exit -> OUT: %s -> %s', exit.cellBefore, now))
+      state.exit = nil
+      return
+    end
+    -- the snapshot only refreshes on the director's tick, so give it a couple of ticks before
+    -- deciding the door did nothing
+    local waited = frame - (exit.verifyAt or frame)
+    if waited > 120 then
+      if (exit.tries or 0) >= EXIT_ACTIVATION_TRIES then
+        exit.phase = 'failed'
+        exit.reason = 'used it ' .. tostring(exit.tries) .. ' times and did not move'
+        print('idle-openmw: exit -> FAILED: ' .. exit.reason)
+        state.exit = nil
+      else
+        -- aim again (the use may have turned the character) and try once more
+        exit.phase = 'aim'
+        exit.aimed = false
+      end
+    end
+  end
+end
+
 local function update(dt)
   local ok, err = pcall(function()
     ensureInit()
@@ -974,8 +1212,11 @@ local function update(dt)
       local result = state.director:tick(elapsed, snapshot)
       applyControlOverride()
 
-      if acting then
+      if acting and not state.exit then
         state.executor:submit(result.commands)
+      elseif state.exit then
+        -- the exit loop owns movement and looking right now: the idle brain must not fight it
+        -- for the character controls
       else
         -- Character creation / menu / load screen: hold everything, and make sure
         -- no stale command keeps steering the character (see lifecycle.lua).
@@ -1075,6 +1316,9 @@ local function update(dt)
     if not (type(observeDt) == 'number' and observeDt > 0) then observeDt = 1 / 60 end
     pollDevCommand()
     pollApiRequests()
+    -- the exit loop runs EVERY frame, unlike the idle brain: looking at a thing and using it
+    -- should not wait for the director's slow tick
+    updateExit()
     if state.telemetrySeconds and state.telemetrySeconds > 0 then
       -- frame-counted for the same reason as the pollers: a paused world has dt = 0, and
       -- telemetry that stops the moment the game pauses is telemetry you cannot use to find
@@ -1225,6 +1469,8 @@ function ACTIONS.walk_to(payload)
 end
 
 function ACTIONS.talk_nearest() return state.director:pushDirective('talk') ~= nil end
+--- Walk out of the building: to the door, look at it, use it (the "Go out" action).
+function ACTIONS.go_out() return startExit() end
 function ACTIONS.cancel() state.director:clearDirectives() return true end
 function ACTIONS.clear_log() state.director.log:clear() return true end
 function ACTIONS.refresh() return true end

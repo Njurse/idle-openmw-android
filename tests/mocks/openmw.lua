@@ -156,6 +156,8 @@ local function makeActorObject(actor)  return {
     end,
     remove = function(_, n) actor.removed = (actor.removed or 0) + (n or 1) end,
     activateBy = function() actor.activated = (actor.activated or 0) + 1 end,
+    -- Door-specific reads the schema's door kind uses (nil is fine for a plain door)
+    destCell = actor.destCell and function() return actor.destCell end or nil,
     teleport = function() end,
     split = function() end,
   }
@@ -226,9 +228,11 @@ function M.env(spec)
     Creature = {},
     -- Distinct sentinels so tap-to-move's pick classification is testable
     -- (idleDirector.classifyPick compares object.type against these).
-    Door = { __name = 'Door' },
+    -- `objectIsInstance` is what scripts/runtime/entities.lua:classify actually calls, so
+    -- these sentinels need it; `.type` alone is invisible to the classifier.
+    Door = { __name = 'Door', objectIsInstance = function(o) return o._type == 'Door' end },
     Activator = { __name = 'Activator' },
-    Container = { __name = 'Container' },
+    Container = { __name = 'Container', objectIsInstance = function(o) return o._type == 'Container' end },
   }
 
   local actor = { recordId = spec.recordId or 'player' }
@@ -378,7 +382,18 @@ function M.env(spec)
   -- `nearby.actors` is a list of GameObjects in the real API, so the mock hands
   -- back real objects too -- not a convenience wrapper with fields like
   -- `.services` or `.hostile` that the engine would never provide.
-  local nearbyActors, nearbyContainers = {}, {}
+  local nearbyActors, nearbyContainers, nearbyDoors = {}, {}, {}
+  -- Doors matter because the "leave the cell" loop walks to one and activates it, so a spec
+  -- must be able to place one. The object carries `_type` and `types.Door.objectIsInstance`
+  -- matches on it: the shared classifier asks the TYPE, it does not read `.type`, so a mock
+  -- that only set `.type` would be classified as nothing at all.
+  for _, entry in ipairs(spec.doors or {}) do
+    local object = makeActorObject(entry)
+    object._type = 'Door'
+    object.id = entry.id or ('door' .. tostring(#nearbyDoors + 1))
+    object.position = point(entry.position)
+    nearbyDoors[#nearbyDoors + 1] = object
+  end
   for _, entry in ipairs(spec.actors or {}) do
     local object = makeActorObject(entry)
     object.type = entry.creature and types.Creature or types.NPC
@@ -421,12 +436,33 @@ function M.env(spec)
   -- Faithful to apps/openmw/mwlua/camerabindings.cpp: modes + the setters the
   -- isometric lock uses. Calls are recorded so specs can assert on them.
   local cameraCalls = {}
+  -- The camera's angles are state, not just call recordings: the aim path (runtime/interact.lua)
+  -- writes an angle and then READS IT BACK to decide whether it landed where it asked. A mock
+  -- that only recorded calls would make every aim look like it silently failed.
+  --
+  -- Declared before the table on purpose: a closure inside the literal cannot close over the
+  -- literal (the scope starts after the statement) -- gotcha 4 in AGENTS.md.
+  local cameraState = { pitch = 0, yaw = 0, roll = 0, extraPitch = 0, extraYaw = 0 }
   local cameraMock = {
     MODE = { Static = 0, FirstPerson = 1, ThirdPerson = 2, Vanity = 3, Preview = 4 },
     setMode = function(mode) cameraCalls[#cameraCalls + 1] = { 'setMode', mode } end,
     setPitch = function(value) cameraCalls[#cameraCalls + 1] = { 'setPitch', value } end,
     setYaw = function(value) cameraCalls[#cameraCalls + 1] = { 'setYaw', value } end,
     setRoll = function(value) cameraCalls[#cameraCalls + 1] = { 'setRoll', value } end,
+    -- Full pitch/yaw are base + extra (openmw/camera.lua). The aim writes the EXTRA angles so it
+    -- composes with whatever the game is holding, including our own isometric lock.
+    getPitch = function() return cameraState.pitch end,
+    getYaw = function() return cameraState.yaw end,
+    getExtraPitch = function() return cameraState.extraPitch end,
+    getExtraYaw = function() return cameraState.extraYaw end,
+    setExtraPitch = function(value)
+      cameraState.extraPitch = value
+      cameraCalls[#cameraCalls + 1] = { 'setExtraPitch', value }
+    end,
+    setExtraYaw = function(value)
+      cameraState.extraYaw = value
+      cameraCalls[#cameraCalls + 1] = { 'setExtraYaw', value }
+    end,
     setPreferredThirdPersonDistance = function(value)
       cameraCalls[#cameraCalls + 1] = { 'setDistance', value }
     end,
@@ -468,7 +504,7 @@ function M.env(spec)
   local nearby = {
     actors = nearbyActors,
     containers = nearbyContainers,
-    doors = {}, activators = {}, items = {},
+    doors = nearbyDoors, activators = {}, items = {},
     FIND_PATH_STATUS = FIND_PATH_STATUS,
     COLLISION_TYPE = { Default = 1, Camera = 2, VisualOnly = 3 },
     -- Ray picking for tap-to-move. Specs set spec.rayHit = { hitPos, hitObject }.
@@ -602,6 +638,7 @@ function M.env(spec)
     _cameraCalls = cameraCalls,
     _setUiModes = function(modes) spec.uiModes = modes end,
     _setRayHit = function(hit) spec.rayHit = hit end,
+    _camera = cameraState,
     _pools = pools,
     _globalEvents = globalEvents,
   }

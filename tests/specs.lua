@@ -5,6 +5,7 @@
 -- this manifest has drifted from what is on disk.
 return {
   'tests.spec.activityLog_spec',
+  'tests.spec.aim_spec',
   'tests.spec.classPriorities_spec',
   'tests.spec.combat_spec',
   'tests.spec.config_spec',
