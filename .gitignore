@@ -47,3 +47,4 @@ Thumbs.db
 # doing, and the mod reads it through openmw.vfs (scripts/idle/narration.lua). It is a
 # working note, not content, so it must not ship or dirty the tree.
 mods/idle_openmw/narration.txt
+mods/idle_openmw/dev_command.txt

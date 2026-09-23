@@ -40,4 +40,5 @@ return {
   'tests.spec.userdata_spec',
   'tests.spec.jumper_spec',
   'tests.spec.narration_spec',
+  'tests.spec.uiReport_spec',
 }

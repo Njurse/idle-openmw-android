@@ -33,6 +33,8 @@ local cameraMod = require('scripts.idle.camera')
 local tapMove = require('scripts.idle.tapMove')
 local capabilitiesMod = require('scripts.runtime.capabilities')
 local narrationMod = require('scripts.idle.narration')
+local uiReportMod = require('scripts.idle.uiReport')
+local uiLayoutMod = require('scripts.idle.uiLayout')
 
 local self = engine.self()
 
@@ -215,6 +217,139 @@ local function operatorNarration()
   local ok, text = pcall(engine.readTextFile, 'narration.txt')
   state.narrationText = ok and text or nil
   return state.narrationText
+end
+
+--- Everything we can know about the UI and our own drawing, as one report.
+---
+--- ui.getElements() enumerates ONLY elements the Lua layer created, so this is the mod's
+--- own drawing -- the engine's widgets (the chargen dialogs, the journal) are not in it and
+--- cannot be enumerated from Lua at all. docs/ui-inventory.md says what is and is not
+--- observable; the report says what is true right now.
+local function gatherUiReport()
+  local data = {}
+  do -- the engine's open windows
+    local ui = engine.ui()
+    if ui and type(ui._getUiModeStack) == 'function' then
+      local ok, stack = pcall(ui._getUiModeStack)
+      data.uiModes = ok and stack or ('error: ' .. tostring(stack))
+    else
+      data.uiModes = 'no _getUiModeStack'
+    end
+    if ui and type(ui.getElements) == 'function' then
+      local ok, elements = pcall(ui.getElements)
+      -- say WHY it is missing: "unavailable" with no reason sent me looking in the wrong
+      -- place once already
+      data.elements = ok and elements or ('error: ' .. tostring(elements))
+    else
+      data.elements = 'ui.getElements is not a function'
+    end
+    if ui and type(ui.screenSize) == 'function' then
+      local ok, size = pcall(ui.screenSize)
+      if ok then data.screen = size end
+    end
+  end
+  do -- game state
+    -- phase straight off the director: status() did not carry it, so the report read nil
+    -- while the director knew perfectly well that it was in chargen
+    -- The SNAPSHOT is authoritative: that is what the phase gate reads. The director's
+    -- own self.phase is only set while acting, so it read nil during chargen.
+    local snapshotPhase = state.snapshot and state.snapshot.phase
+    data.phase = (snapshotPhase and snapshotPhase.id) or state.director.phase
+    data.phaseLabel = (snapshotPhase and snapshotPhase.label) or state.director.phaseLabel
+    local ok, status = pcall(function() return state.director:status() end)
+    if ok and status then
+      data.acting = status.acting
+      data.mode = status.mode
+      data.uiKind = status.uiKind
+      data.uiLabel = status.uiLabel
+    end
+    data.paused = engine.isWorldPaused()
+    -- the FLAG's value, not the capability: reporting features.charGenFlag said "true"
+    -- merely because the API exists, which read as "chargen is finished" and was wrong
+    do
+      local types = engine.types()
+      local flag = types and types.Player and types.Player.isCharGenFinished
+      if type(flag) == 'function' then
+        -- the player object lives in the injected env; fetch it if we do not hold it
+        local player = state.env and state.env.self
+        if not player then
+          local okEnv, env = pcall(engine.env)
+          if okEnv and env then player = env.self end
+        end
+        local okFlag, done = pcall(flag, player)
+        data.charGenDone = okFlag and tostring(done) or ('error: ' .. tostring(done))
+      else
+        data.charGenDone = 'no isCharGenFinished'
+      end
+    end
+    local snapshot = state.snapshot
+    if snapshot then
+      data.cell = snapshot.world and snapshot.world.cellName
+      data.position = snapshot.player and snapshot.player.position
+    end
+  end
+  do -- our geometry
+    -- state.layout only exists once the console has been BUILT (world phase), but the
+    -- narration is drawn during chargen too -- so fall back to computing the base layout,
+    -- which is what the narration actually positions itself from.
+    local base = state.layout and state.layout.base
+    if not base then
+      local screen = nil
+      if data.screen then screen = data.screen end
+      local cfg = {}
+      if state.director and state.director.cfg then cfg = state.director.cfg.ui or {} end
+      local okBase, computed = pcall(uiLayoutMod.compute, screen, cfg)
+      if okBase then base = computed end
+    end
+    if base then
+      data.scale = base.scale
+      data.textScale = base.textScale
+      data.narrationRect = base.narration
+    end
+    data.capabilities = state.capabilities and capabilitiesMod.describe(state.capabilities)
+  end
+  return data
+end
+
+--- Print a UI report to the engine log.
+local function reportUi()
+  local ok, text = pcall(function() return uiReportMod.format(gatherUiReport()) end)
+  if ok then print(text) else print('idle-openmw: ui report failed: ' .. tostring(text)) end
+end
+
+--- The dev command channel: `dev_command.txt` in the data folder, polled.
+---
+--- Injecting keystrokes into the running game proved unreliable (the console does not take
+--- them), while READING a file does not: the mod polls it through openmw.vfs. So asking the
+--- running game for something is a matter of writing a line. Nothing here changes gameplay.
+local function pollDevCommand()
+  local now = engine.wallClock()
+  if state.devCommandReadAt and (now - state.devCommandReadAt) < 1 then return end
+  state.devCommandReadAt = now
+
+  local ok, text = pcall(engine.readTextFile, 'dev_command.txt', 512)
+  if not ok or type(text) ~= 'string' then return end
+  text = text:gsub('%s+$', '')
+  if text == '' or text == state.lastDevCommand then return end
+  state.lastDevCommand = text
+
+  local command = uiReportMod.parseCommand(text)
+  if not command then return end
+  print('idle-openmw: dev command -> ' .. command.verb)
+  if command.verb == 'dump' then
+    reportUi()
+  elseif command.verb == 'heartbeat' then
+    state.heartbeatSeconds = command.seconds or 10
+    state.heartbeatAt = now
+    print('idle-openmw: heartbeat every ' .. tostring(state.heartbeatSeconds) .. 's')
+  elseif command.verb == 'note' then
+    state.operatorNote = command.text
+  elseif command.verb == 'stop' then
+    state.heartbeatSeconds = nil
+    state.operatorNote = nil
+  else
+    print('idle-openmw: unknown dev command: ' .. tostring(command.text))
+  end
 end
 
 local function ensureInit()
@@ -459,6 +594,16 @@ local function update(dt)
     if paused ~= nil and paused ~= state.paused then
       state.paused = paused
       print('idle-openmw: world ' .. (paused and 'PAUSED' or 'running'))
+    end
+
+    -- the dev channel, then any heartbeat the operator asked for
+    pollDevCommand()
+    if state.heartbeatSeconds and state.heartbeatSeconds > 0 then
+      local now = engine.wallClock()
+      if not state.heartbeatAt or (now - state.heartbeatAt) >= state.heartbeatSeconds then
+        state.heartbeatAt = now
+        reportUi()
+      end
     end
 
     state.executor:update(dt, simulationTime())
@@ -747,6 +892,7 @@ return {
         if status.uiLabel then parts[#parts + 1] = 'screen: ' .. tostring(status.uiLabel) end
       end
       local line = table.concat(parts, ' -- ')
+      if state.operatorNote then line = state.operatorNote end
       -- Say when the world is paused: a paused game runs no simulation and takes no input,
       -- so "nothing is happening" and "the mod is stuck" look the same from outside.
       if state.paused == true then line = 'PAUSED -- ' .. line end

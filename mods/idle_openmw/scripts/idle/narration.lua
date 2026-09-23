@@ -17,9 +17,10 @@
 
 local M = {}
 
---- Longest narration we will draw. Long text is not helpful on a phone; it stops being
---- readable at a glance, which is the whole point.
-M.MAX_LENGTH = 220
+--- Longest narration we will draw, in bytes. It WAS 220, which cut the live feed off
+--- mid-sentence on screen at about one line's worth. The box is wrapped and now several
+--- lines tall, so a short paragraph fits; beyond this it is not worth reading on a phone.
+M.MAX_LENGTH = 600
 
 --- Byte length of the ellipsis. NOT 1: '…' is a three-byte UTF-8 sequence, so a
 --- byte-based clamp that forgets this overruns its limit by two bytes.

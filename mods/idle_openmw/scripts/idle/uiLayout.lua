@@ -99,7 +99,9 @@ function M.compute(screen, cfg)
   -- Narration strip: one wrapped line of "what the mod is doing now", centred and
   -- sitting just above the command bar, so it never covers the buttons or the gesture
   -- bar. Sized for three wrapped lines; the text element does the wrapping.
-  local narrationHeight = math.floor(60 * scale)
+  -- Six wrapped lines: the operator feed is a short paragraph, and at 60px it was cut off
+  -- after roughly one line. Line height is ~1.35x the 16pt narration text.
+  local narrationHeight = math.floor(130 * scale)
   layout.narration = {
     width = math.min(width - margin * 2, math.floor(width * 0.80)),
     height = narrationHeight,

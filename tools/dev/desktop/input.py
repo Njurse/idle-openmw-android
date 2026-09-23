@@ -268,6 +268,11 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--key", metavar="NAME")
     ap.add_argument("--type", dest="text", metavar="TEXT")
     ap.add_argument("--repeat", type=int, default=1)
+    ap.add_argument("--seq", metavar="STEPS",
+                    help="ordered steps in ONE process, e.g. "
+                         "'key:GRAVE;type:set chargenstate -1;key:ENTER'. Each separate "
+                         "invocation re-focuses the window, which drops the in-game "
+                         "console's text focus between keystrokes.")
     ap.add_argument("--delay", type=float, default=0.12)
     ap.add_argument("--place", metavar="X,Y",
                     help="move the game window to this SCREEN position first")
@@ -299,6 +304,30 @@ def main(argv: list[str] | None = None) -> int:
     def point(spec: str) -> tuple[int, int]:
         a, b = spec.split(",")
         return int(a), int(b)
+
+    if args.seq:
+        for step in args.seq.split(";"):
+            step = step.strip()
+            if not step:
+                continue
+            kind, _, value = step.partition(":")
+            kind = kind.strip().lower()
+            if kind == "key":
+                key(hwnd, value.strip(), delay=args.delay)
+                emit("seq key " + value.strip())
+            elif kind == "type":
+                type_text(hwnd, value)
+                emit("seq type " + repr(value))
+            elif kind == "click":
+                cx, cy = point(value)
+                click(hwnd, cx, cy, delay=args.delay)
+                emit("seq click (%d,%d)" % (cx, cy))
+            elif kind in ("wait", "sleep"):
+                time.sleep(float(value.strip() or 0.5))
+                emit("seq wait " + value.strip())
+            else:
+                raise SystemExit("unknown seq step: " + step)
+        return 0
 
     for n in range(args.repeat):
         if args.click:
