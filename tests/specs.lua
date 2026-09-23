@@ -36,4 +36,5 @@ return {
   'tests.spec.firstRun_spec',
   'tests.spec.trace_spec',
   'tests.spec.tapMove_spec',
+  'tests.spec.capabilities_spec',
 }

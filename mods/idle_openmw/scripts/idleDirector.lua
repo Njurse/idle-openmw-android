@@ -31,6 +31,7 @@ local guardianMod = require('scripts.idle.guardian')
 local settlementMod = require('scripts.idle.settlement')
 local cameraMod = require('scripts.idle.camera')
 local tapMove = require('scripts.idle.tapMove')
+local capabilitiesMod = require('scripts.runtime.capabilities')
 
 local self = engine.self()
 
@@ -205,10 +206,30 @@ local function ensureInit()
   state.cfg = loadUserConfig()
   local env = engine.env()
 
+  -- Ask the engine what it can do, once, and say so. Without this an older engine
+  -- (0.48 has none of the chargen flag / UI mode stack / journal topics) degrades
+  -- SILENTLY -- the model just stops gating and stops reporting
+  -- (scripts/runtime/capabilities.lua).
+  state.capabilities = capabilitiesMod.probe(env)
+  local capabilityLine = 'idle-openmw: ' .. capabilitiesMod.describe(state.capabilities)
   state.director = directorMod.new({
     classDef = observer.readClass(env, self.object),
     config = state.cfg,
   })
+  state.director:logLine(capabilityLine, state.capabilities.ok and 'info' or 'warn')
+  -- Also to the engine console/log, so the dev harness (tools/dev/desktop/errors.sh)
+  -- can see that the mod ran at all -- the mod is otherwise silent on startup.
+  -- (ui.printToConsole, files/lua_api/openmw/ui.lua:65.)
+  pcall(function()
+    local ui = engine.ui()
+    if ui and type(ui.printToConsole) == 'function' then ui.printToConsole(capabilityLine) end
+  end)
+  local missingRequired = capabilitiesMod.requiredMissing(state.capabilities)
+  if #missingRequired > 0 then
+    state.director:logLine('idle-openmw: this engine is missing ' ..
+      table.concat(missingRequired, ', ') .. ' -- expect degraded behaviour', 'bad')
+  end
+
   state.executor = executorMod.new(env, state.cfg, {
     nav = makeNavPort(),
     rng = state.director.rng,
@@ -420,6 +441,7 @@ local function panel()
     -- with what the player just opened (the snapshot is only rebuilt on the tick).
     ui = observer.readUi(env),
     phase = fromDirector.phase,
+    capabilities = state.capabilities,
     dialogue = fromDirector.dialogue,
     topics = fromDirector.topics,
     log = fromDirector.log,
@@ -639,6 +661,8 @@ return {
     phase = function()
       return state.director and state.director.phase and state.director.phase.id or nil
     end,
+    --- What this engine can do (scripts/runtime/capabilities.lua). Probed once.
+    capabilities = function() return state.capabilities end,
     setMode = function(mode)
       if not state.director then return nil end
       local applied = state.director:setMode(mode)

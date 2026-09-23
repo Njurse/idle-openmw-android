@@ -402,6 +402,9 @@ function M.env(spec)
     content = function(list) return list end,
     showMessage = function() end,
     printToConsole = function() end,
+    -- The one supported widget-injection point (uibindings.cpp:246); the
+    -- capability probe looks for it (scripts/runtime/capabilities.lua).
+    registerSettingsPage = function() end,
     -- The real live-UI hook: the window manager's GuiMode stack
     -- (apps/openmw/mwlua/uibindings.cpp:276). Array of mode names, newest last.
     _getUiModeStack = function() return spec.uiModes or {} end,
@@ -518,6 +521,9 @@ function M.env(spec)
       -- (files/openmw.cfg fallback=FontColor_color_*). Absent by default so the
       -- theme falls back to its shipped palette, exactly as on a bare engine.
       getGMST = function(name) return spec.gmst and spec.gmst[name] or nil end,
+      -- The engine's Lua API revision (core.lua:11), read by
+      -- scripts/runtime/capabilities.lua. Override with spec.apiRevision.
+      API_REVISION = spec.apiRevision or 100,
       -- Recorded, not dropped: the guardian's two rescue actions go out this way
       -- (see scripts/idleWarden.lua), so tests must be able to see them.
       sendGlobalEvent = function(name, data)

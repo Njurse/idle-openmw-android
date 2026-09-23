@@ -51,6 +51,9 @@ function M.env()
     interfaces = M.interfaces(),
     input      = M.input(),
     ui         = M.ui(),
+    -- `openmw.camera` is a PLAYER package (luabindings.cpp:73): the isometric lock
+    -- and tap-to-move both need it, and the capability probe checks for it.
+    camera     = M.camera(),
   }
 end
 

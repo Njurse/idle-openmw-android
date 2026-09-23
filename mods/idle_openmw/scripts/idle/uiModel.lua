@@ -326,6 +326,17 @@ local function infoRows(panel)
     rows[#rows + 1] = row({ id = 'phase', kind = 'info', label = 'Holding',
       detail = ('%s — %s'):format(tostring(phase.label or phase.id), tostring(phase.note or '')) })
   end
+  -- What this engine can do (scripts/runtime/capabilities.lua). Probed once; a
+  -- missing capability is why something else in the console is quiet.
+  local caps = panel.capabilities
+  if caps then
+    local detail = caps.revision and ('Lua API r' .. tostring(caps.revision)) or 'Lua API unknown'
+    if not caps.ok then
+      detail = detail .. ('  — missing %d: %s'):format(#caps.missing, table.concat(caps.missing, ', '))
+    end
+    rows[#rows + 1] = row({ id = 'caps', kind = caps.ok and 'info' or 'warn',
+      label = 'Engine', detail = detail })
+  end
   -- What the engine currently has open (read from ui._getUiModeStack; see
   -- scripts/idle/uiState.lua). This is the "hook into the UI" the player sees.
   local ui = panel.ui
