@@ -51,6 +51,12 @@ M.METHODS = {
     params = {} },
   { name = 'ui', description = 'The UI report: open window, pause, phase, geometry (scripts/idle/uiReport.lua).',
     params = {} },
+  { name = 'ui.target', description = 'What the crosshair is on, and what can be done with it.',
+    params = {} },
+  { name = 'ui.interactables', description = 'Doors, activators, containers and actors near the player, nearest first.',
+    params = { 'radius (number, optional; default 1024)' } },
+  { name = 'ui.hints', description = 'The same advice the game gives on screen, derived instead of read.',
+    params = {} },
   { name = 'action', description = 'Ask the mod to do something (routed through the director).',
     params = { 'goal (string)', 'ttl (number, optional)' } },
 }
@@ -65,6 +71,9 @@ local SOURCE_METHODS = {
   ['quests.active'] = 'quests',
   ['journal.topics'] = 'topics',
   ui = 'ui',
+  ['ui.target'] = 'uiTarget',
+  ['ui.interactables'] = 'uiInteractables',
+  ['ui.hints'] = 'uiHints',
 }
 
 --- @param sources table name -> function(params) -> value

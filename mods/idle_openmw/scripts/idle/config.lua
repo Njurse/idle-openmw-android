@@ -224,6 +224,10 @@ M.defaults = {
     -- Tap the world to walk there, enter a door, or talk to an NPC. The renderer
     -- forwards the screen point; the runtime raycasts (docs/tap-to-move.md).
     tapToMove = true,
+    -- The key that activates things, for the HUD hints. OpenMW's Lua exposes no
+    -- action->key lookup (input.getKeyName takes a key code, not an action), so this is the
+    -- engine's default rather than something we can read. (local)
+    activateKey = 'Space',
     tapReach = 4096,   -- engine units a tap can reach
   },
 

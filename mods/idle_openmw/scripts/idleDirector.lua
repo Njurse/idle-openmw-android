@@ -35,6 +35,7 @@ local capabilitiesMod = require('scripts.runtime.capabilities')
 local narrationMod = require('scripts.idle.narration')
 local uiReportMod = require('scripts.idle.uiReport')
 local bridgeMod = require('scripts.idle.bridge')
+local hudMod = require('scripts.idle.hud')
 local uiLayoutMod = require('scripts.idle.uiLayout')
 
 local self = engine.self()
@@ -264,6 +265,7 @@ local function gatherUiReport()
       data.uiLabel = status.uiLabel
     end
     data.paused = engine.isWorldPaused()
+    data.ticking = state.lastDt and state.lastDt > 0
     -- the FLAG's value, not the capability: reporting features.charGenFlag said "true"
     -- merely because the API exists, which read as "chargen is finished" and was wrong
     do
@@ -371,6 +373,21 @@ end
 ---
 --- Every source is defensive: a bridge that cannot answer says "unavailable" rather than
 --- taking the mod down, and this runs in a live game where any of these can be missing.
+--- The player object, from wherever it is available.
+---
+--- `state.env` is only populated on some paths, so a fallback that read `state.env.self`
+--- found nothing and reported an empty player -- silently, which is the failure mode this
+--- session has been about. Ask the engine instead.
+local function playerObject()
+  if state.env and state.env.self then return state.env.self end
+  local ok, env = pcall(engine.env)
+  if ok and env and env.self then
+    state.env = env
+    return env.self
+  end
+  return nil
+end
+
 local function bridgeSources()
   local function snapshot() return state.snapshot end
 
@@ -421,6 +438,121 @@ local function bridgeSources()
     end
   end
 
+  --- What kind of thing is this object? The engine types answer, and each answer is pcall'd
+  --- because this runs against live objects that may be in any state.
+  local function classifyObject(object)
+    local types = engine.types()
+    local out = {}
+    if not (types and object) then return out end
+    local checks = {
+      isActor = types.Actor, isDoor = types.Door, isContainer = types.Container,
+      isItem = types.Item, isActivator = types.Activator, isNPC = types.NPC,
+    }
+    for flag, class in pairs(checks) do
+      if class and type(class.objectIsInstance) == 'function' then
+        local ok, yes = pcall(class.objectIsInstance, object)
+        if ok and yes == true then out[flag] = true end
+      end
+    end
+    pcall(function() out.recordId = object.recordId end)
+    pcall(function() out.name = types.getRecordName and types.getRecordName(object) end)
+    pcall(function()
+      local p = object.position
+      if p then out.worldPosition = { x = p.x, y = p.y, z = p.z } end
+    end)
+    return out
+  end
+
+  --- The object under the crosshair, and what can be done with it.
+  ---
+  --- This is the answer to "look up at the hatch and press space": the engine will not hand
+  --- over its own prompt text, but a ray from the camera tells us the same thing.
+  local function lookAt()
+    local camera = engine.camera()
+    local nearby = engine.nearby()
+    if not (camera and nearby and type(nearby.castRay) == 'function') then return nil end
+
+    local ok, target = pcall(function()
+      local from = camera.getPosition()
+      -- the centre of the viewport is where the crosshair is
+      local direction = camera.viewportToWorldVector(0.5, 0.5)
+      if not (from and direction) then return nil end
+      local reach = state.cfg.ui and state.cfg.ui.tapReach or 4096
+      local to = {
+        x = from.x + direction.x * reach,
+        y = from.y + direction.y * reach,
+        z = from.z + direction.z * reach,
+      }
+      local hit = nearby.castRay(from, to, { ignore = playerObject() })
+      if not (hit and hit.hit and hit.hitObject) then return nil end
+      return hit.hitObject
+    end)
+    if not ok or not target then return nil end
+
+    local described = classifyObject(target)
+    local snap = snapshot()
+    local player = snap and snap.player
+    local eye = player and player.position
+    if eye and described.worldPosition then
+      local dx = described.worldPosition.x - eye.x
+      local dy = described.worldPosition.y - eye.y
+      local dz = described.worldPosition.z - eye.z
+      described.distance = math.floor(math.sqrt(dx * dx + dy * dy + dz * dz) + 0.5)
+      described.vertical = hudMod.relativeHeight(described.worldPosition.z, eye.z)
+    end
+    return described
+  end
+
+  --- Nearby things the player could interact with, nearest first.
+  local function interactables(params)
+    local radius = type(params) == 'table' and tonumber(params.radius) or 1024
+    local snap = snapshot()
+    local player = snap and snap.player
+    local eye = player and player.position
+    local nearby = engine.nearby()
+    if not nearby then return nil end
+
+    local out = {}
+    local lists = { 'actors', 'doors', 'containers', 'activators', 'items' }
+    for _, listName in ipairs(lists) do
+      local list = nearby[listName]
+      if type(list) == 'table' then
+        for _, object in ipairs(list) do
+          local described = classifyObject(object)
+          described.kind = hudMod.kindOf(described)
+          if described.kind ~= 'unknown' then
+            if eye and described.worldPosition then
+              local dx = described.worldPosition.x - eye.x
+              local dy = described.worldPosition.y - eye.y
+              local dz = described.worldPosition.z - eye.z
+              described.distance = math.floor(math.sqrt(dx * dx + dy * dy + dz * dz) + 0.5)
+              described.vertical = hudMod.relativeHeight(described.worldPosition.z, eye.z)
+            end
+            if not described.distance or described.distance <= radius then
+              out[#out + 1] = described
+            end
+          end
+        end
+      end
+    end
+    return hudMod.sortByDistance(out)
+  end
+
+  --- The derived on-screen advice.
+  local function hints()
+    local target = lookAt()
+    local snap = snapshot()
+    return hudMod.hints({
+      target = target,
+      -- OpenMW exposes no action->key lookup (only key codes to names), so this is the
+      -- documented default rather than a guess dressed up as a fact.
+      activateKey = state.cfg.ui and state.cfg.ui.activateKey or 'Space',
+      paused = engine.isWorldPaused(),
+      phase = snap and snap.phase and snap.phase.id,
+      interactables = interactables({ radius = 512 }),
+    })
+  end
+
   return {
     hasRealClock = function() return engine.hasRealClock() end,
     capabilities = function()
@@ -428,7 +560,33 @@ local function bridgeSources()
     end,
     player = function()
       local snap = snapshot()
-      local player = snap and snap.player or {}
+      local player = snap and snap.player
+      if not player then
+        -- Read the engine directly. The snapshot is only built while the world advances, so
+        -- a paused game has none -- and a host asking "what is the player doing" during a
+        -- pause should get an answer, not an empty object.
+        player = {}
+        local self = playerObject()
+        if self then
+          pcall(function() player.position = position(self.position) end)
+          pcall(function() player.cell = self.cell and self.cell.name or nil end)
+          pcall(function()
+            local types = engine.types()
+            if types and types.Actor and types.Actor.stats then
+              local dynamic = types.Actor.stats.dynamic
+              player.health = dynamic.health and dynamic.health(self).current or nil
+              player.fatigue = dynamic.fatigue and dynamic.fatigue(self).current or nil
+              player.magicka = dynamic.magicka and dynamic.magicka(self).current or nil
+            end
+          end)
+          pcall(function()
+            local types = engine.types()
+            if types and types.Player and type(types.Player.name) == 'function' then
+              player.name = types.Player.name(self)
+            end
+          end)
+        end
+      end
       return {
         name = player.name, level = player.level, gold = player.gold,
         health = player.health, fatigue = player.fatigue, magicka = player.magicka,
@@ -440,7 +598,20 @@ local function bridgeSources()
     cell = function()
       local snap = snapshot()
       local cell = snap and snap.world and snap.world.cell
-      if not cell then return nil end
+      if not cell then
+        -- same fallback: the player's own cell object is readable without the snapshot
+        local self = playerObject()
+        local object = nil
+        pcall(function() object = self and self.cell end)
+        if not object then return nil end
+        local read = {}
+        pcall(function() read.name = object.name end)
+        pcall(function() read.region = object.region end)
+        pcall(function() read.exterior = object.isExterior end)
+        pcall(function() read.gridX = object.gridX end)
+        pcall(function() read.gridY = object.gridY end)
+        return read
+      end
       return {
         name = cell.name, region = cell.region,
         exterior = cell.isExterior, gridX = cell.gridX, gridY = cell.gridY,
@@ -456,11 +627,7 @@ local function bridgeSources()
     end,
     quests = function()
       local types = engine.types()
-      local player = state.env and state.env.self
-      if not player and engine.env then
-        local okEnv, env = pcall(engine.env)
-        if okEnv and env then player = env.self end
-      end
+      local player = playerObject()
       if not (types and types.Player and type(types.Player.quests) == 'function') then
         return nil
       end
@@ -489,6 +656,9 @@ local function bridgeSources()
       return out
     end,
     ui = function() return gatherUiReport() end,
+    uiTarget = function() return lookAt() end,
+    uiInteractables = function(params) return interactables(params) end,
+    uiHints = function() return hints() end,
   }
 end
 
@@ -797,11 +967,21 @@ local function update(dt)
     end
 
     -- the dev channel, then any heartbeat the operator asked for
+    state.lastDt = dt
     state.frameCount = (state.frameCount or 0) + 1
-    pollDevCommand(dt)
-    pollApiRequests(dt)
+    -- OBSERVATION TIME vs SIMULATION TIME.
+    --
+    -- OpenMW hands Lua dt=0 on every frame the world is paused (measured: 0 while paused,
+    -- 1/60 while running). Anything accumulating dt therefore stalls exactly when a host
+    -- most wants to ask what is wrong. So the observation channels -- the dev command file,
+    -- the API requests, the heartbeats -- advance on a nominal frame time instead, while
+    -- the director's own tick keeps the real dt and still refuses to act during a pause.
+    local observeDt = dt
+    if not (type(observeDt) == 'number' and observeDt > 0) then observeDt = 1 / 60 end
+    pollDevCommand(observeDt)
+    pollApiRequests(observeDt)
     if state.telemetrySeconds and state.telemetrySeconds > 0 then
-      state.telemetryElapsed = (state.telemetryElapsed or 0) + dt
+      state.telemetryElapsed = (state.telemetryElapsed or 0) + observeDt
       if state.telemetryElapsed >= state.telemetrySeconds then
         state.telemetryElapsed = 0
         print(bridge():telemetry())
@@ -811,7 +991,7 @@ local function update(dt)
       -- Accumulate dt rather than comparing wall clocks: the wall-clock version fired on
       -- EVERY frame (3603 reports in under a minute) and buried the log it was meant to
       -- make readable.
-      state.heartbeatElapsed = (state.heartbeatElapsed or 0) + dt
+      state.heartbeatElapsed = (state.heartbeatElapsed or 0) + observeDt
       if state.heartbeatElapsed >= state.heartbeatSeconds then
         state.heartbeatElapsed = 0
         reportUi()

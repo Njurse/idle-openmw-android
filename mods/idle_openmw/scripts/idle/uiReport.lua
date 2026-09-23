@@ -56,8 +56,11 @@ function M.format(data)
 
   -- Geometry: what we assume the screen looks like, and what we actually drew.
   if data.screen then
-    add('screen size', ('%dx%d'):format(data.screen.x or 0, data.screen.y or 0))
+    -- Vector2 is userdata in 0.51: read x/y, or it prints as "<userdata>"
+    add('screen size', ('%dx%d'):format(tonumber(data.screen.x) or 0,
+      tonumber(data.screen.y) or 0))
   end
+  if data.ticking ~= nil then add('sim ticking', tostring(data.ticking)) end
   if data.scale then add('gui scale', tostring(data.scale)) end
   if data.textScale then add('text scale', tostring(data.textScale)) end
   if data.narrationRect then
