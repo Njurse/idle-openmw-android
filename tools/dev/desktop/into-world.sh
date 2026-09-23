@@ -48,7 +48,17 @@ if [[ "${1:-}" == "--stop" ]]; then
 fi
 
 keep_log=0
-[[ "${1:-}" == "--keep-log" ]] && keep_log=1
+cell=""
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    --keep-log) keep_log=1; shift ;;
+    # --cell NAME starts the player inside that cell. Combined with --skip-menu=1 (which bypasses
+    # character creation) this is how you get a RUNNING world inside the ship, which is the only
+    # state in which "walk out of the ship" can be tested: chargen leaves the world paused.
+    --cell) cell="$2"; shift 2 ;;
+    *) echo "unknown arg: $1" >&2; exit 2 ;;
+  esac
+done
 
 if [[ ! -x "$EXE" && ! -f "$EXE" ]]; then
   echo "no engine at $EXE (set OMW_EXE)" >&2
@@ -70,9 +80,24 @@ else
   fi
 fi
 
-echo "== launching into the world (--skip-menu=1, chargen bypassed)"
+where="the default start"
+[[ -n "$cell" ]] && where="$cell"
+echo "== launching into the world (--skip-menu=1, chargen bypassed, start: $where)"
+# A PowerShell ARRAY, not a comma-joined string: with `-ArgumentList '--start=Imperial Prison
+# Ship'` PowerShell splits on the space and the engine looks for a cell called "Imperial"
+# ("Failed to start new game: Interior cell is not found: 'Imperial'"). Inside @(...) each
+# element is passed as one argument and the spaces survive.
+args="@('--skip-menu=1'"
+if [[ -n "$cell" ]]; then
+  # quoted: cell names contain spaces ("Imperial Prison Ship"), and PowerShell splits on them
+  # The DOUBLE quotes have to be part of the element: Start-Process joins -ArgumentList back
+  # into one command line, so quotes that only existed around the PowerShell element are gone by
+  # the time the engine parses it -- which is why it looked for a cell called "Imperial".
+  args="$args,'--start=\"$cell\"'"
+fi
+args="$args,'--user-data',$(psarg "$(winpath "$CONFIG_DIR")"))"
 powershell.exe -NoProfile -Command \
-  "Start-Process -FilePath '$(winpath "$EXE")' -ArgumentList '--skip-menu=1','--user-data',$(psarg "$(winpath "$CONFIG_DIR")")" \
+  "Start-Process -FilePath '$(winpath "$EXE")' -ArgumentList $args" \
   >/dev/null 2>&1
 
 # Wait for the MOD to say it is in the world, not merely for the process to exist: the mod's

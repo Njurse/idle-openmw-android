@@ -158,17 +158,24 @@ local function readTextFile(name)
   return text
 end
 
-local function worldModule()
-  local ok, module = pcall(require, 'openmw.world')
-  if ok and type(module) == 'table' then return module end
+--- Resolve an engine module, treating USERDATA as a module.
+---
+--- `openmw.world` and `openmw.core` are engine USERDATA in 0.51, not Lua tables, so a
+--- `type(module) == 'table'` check rejects a perfectly good module and the caller reports
+--- "(none)" / "unknown" -- a false negative that looks like an answer. This project has now hit
+--- that exact mistake three times (docs/ui-inventory.md lesson 3); the mod's own `util.isObject`
+--- is the check that gets it right.
+local util = require('scripts.idle.util')
+
+local function moduleOf(name)
+  local ok, module = pcall(require, name)
+  if not ok or module == nil then return nil end
+  if util.isObject(module) then return module end
   return nil
 end
 
-local function coreModule()
-  local ok, module = pcall(require, 'openmw.core')
-  if ok and type(module) == 'table' then return module end
-  return nil
-end
+local function worldModule() return moduleOf('openmw.world') end
+local function coreModule() return moduleOf('openmw.core') end
 
 local function isPaused()
   local core = coreModule()
@@ -234,6 +241,99 @@ local function onUpdate()
       log('global: unknown dev verb ' .. tostring(verb))
     end
   end
+end
+
+-- ---------------------------------------------------------------------------
+-- WHY is the world stopped?
+--
+-- core.isWorldPaused() (corebindings.cpp:66 -> timeManager->isPaused()) answers THAT it is
+-- stopped. world.getPausedTags() answers WHY, by name: the time manager keeps a SET of pause
+-- tags, and the game is paused until every tag is removed (world.lua:126-141, binding at
+-- worldbindings.cpp:92-98, where an omitted tag defaults to "paused").
+--
+-- This matters because "the world is paused" is not actionable on its own -- the mod spent a
+-- whole session reading it as "a message box is up" when it may equally be a cinematic, a
+-- loading screen, or the game's own chargen. The tags name the owner, and the owner decides
+-- whether clearing it is our business or not.
+--
+-- Only a GLOBAL script can ask: `openmw.world` is global-only, so the player script that serves
+-- the bridge sends an event here and this prints the answer.
+-- ---------------------------------------------------------------------------
+
+--- The pause tags, sorted, plus WHY we might not know them.
+---
+--- Returns `tags, note`. The two are separate on purpose: "no tags" and "cannot read the tags"
+--- are different answers, and collapsing them is exactly the mistake this mod keeps making --
+--- it printed "(none)" for a world it simply could not question. A caller must be able to tell
+--- "the world is not paused by anything" from "ask someone else".
+local function pauseTags()
+  local world = worldModule()
+  if not world then return {}, 'openmw.world is not available in this script context' end
+  if type(world.getPausedTags) ~= 'function' then
+    -- an older engine, or a context that does not bind it
+    return {}, 'this engine has no world.getPausedTags'
+  end
+  local ok, got = pcall(world.getPausedTags)
+  if not ok then return {}, 'world.getPausedTags threw: ' .. tostring(got) end
+  if type(got) ~= 'table' then
+    return {}, 'world.getPausedTags returned ' .. type(got) .. ', not a table'
+  end
+  local tags = {}
+  -- the engine hands back a set (tag -> tag), so collect the values and sort for stable output
+  for key, value in pairs(got) do
+    tags[#tags + 1] = tostring(value ~= nil and value or key)
+  end
+  table.sort(tags)
+  return tags, nil
+end
+
+--- Can this context see the pause flag at all? In the GLOBAL script context
+--- `core.isWorldPaused` is documented "Not available in load scripts" (core.lua:46) and is in
+--- fact absent here, so "paused=nil" must not be read as "not paused".
+local function pauseFlag()
+  local core = coreModule()
+  if not core then return nil, 'openmw.core is not available in this script context' end
+  if type(core.isWorldPaused) ~= 'function' then return nil, 'this context has no core.isWorldPaused' end
+  local ok, paused = pcall(core.isWorldPaused)
+  if not ok or type(paused) ~= 'boolean' then return nil, 'core.isWorldPaused did not answer' end
+  return paused, nil
+end
+
+eventHandlers['IdleOpenMW_PauseTags'] = function()
+  local tags, tagNote = pauseTags()
+  local paused, pauseNote = pauseFlag()
+  log(string.format('global: pause tags = %s%s; paused = %s%s',
+    #tags > 0 and table.concat(tags, ', ') or '(none)',
+    tagNote and (' [cannot tell: ' .. tagNote .. ']') or '',
+    paused == nil and 'unknown' or tostring(paused),
+    pauseNote and (' [cannot tell: ' .. pauseNote .. ']') or ''))
+  return tags
+end
+
+--- Unpause, by tag. Clearing a tag is only ours to do when we own it: the caller says which
+--- tag it wants released, and the default tries the engine's own default ("paused") plus the
+--- empty tag the engine uses when a script pauses without naming one.
+eventHandlers['IdleOpenMW_Unpause'] = function(data)
+  local world = worldModule()
+  if not (world and type(world.unpause) == 'function') then
+    log('global: this engine has no world.unpause')
+    return
+  end
+  local before, beforeNote = pauseTags()
+  local wanted = (type(data) == 'table' and data.tag) or nil
+  local tries = wanted and { wanted } or { 'paused', '' }
+  for _, tag in ipairs(tries) do
+    pcall(world.unpause, tag)
+  end
+  local after, afterNote = pauseTags()
+  local paused, pauseNote = pauseFlag()
+  log(string.format('global: unpause(%s) -> paused = %s%s, tags %s -> %s%s',
+    wanted or table.concat(tries, '/'),
+    paused == nil and 'unknown' or tostring(paused),
+    pauseNote and (' [cannot tell: ' .. pauseNote .. ']') or '',
+    #before > 0 and table.concat(before, ',') or '(none)',
+    #after > 0 and table.concat(after, ',') or '(none)',
+    (beforeNote or afterNote) and (' [cannot tell: ' .. tostring(beforeNote or afterNote) .. ']') or ''))
 end
 
 return { eventHandlers = eventHandlers, engineHandlers = { onUpdate = onUpdate } }

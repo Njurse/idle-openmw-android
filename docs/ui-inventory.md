@@ -99,7 +99,29 @@ capabilities   Lua API revision 129; all required capabilities present
 4. **Unknown engine handlers fail silently** — `onResolutionChanged` never existed. Guard
    with `tools/dev/check_handlers.py`.
 5. **A report must state the reason.** "unavailable" without a cause is worse than nothing.
-6. **There are TWO causes of a stopped world, and they need different remedies.**
+6. **There are FIVE causes of a stopped world, and they are all in one line of engine code.**
+   `apps/openmw/mwworld/datetimemanager.cpp:259`:
+
+   ```cpp
+   mPaused = !mPausedTags.empty() || wm->isConsoleMode() || wm->isPostProcessorHudVisible()
+          || wm->isInteractiveMessageBoxActive() || stateManager->getState() == State_NoGame;
+   ```
+
+   | Cause | How to tell | Whose remedy |
+   | --- | --- | --- |
+   | pause **tags** | `world.getPausedTags()` (global script only) | whoever took the tag |
+   | the **console** is open | `ui.getConsoleMode()` | ours: `ui.setConsoleMode(false)` (bridge `ui.closeConsole`) |
+   | the **post-processor HUD** is up | not exposed to Lua | the host |
+   | an **interactive message box** | not exposed to Lua; shows as *paused with no tags* | the host (Lua cannot click a widget) |
+   | **no game loaded** (`State_NoGame`) | `charGenDone` can be true and the cell can be the right one | the launch/flow, not the mod |
+
+   Two of these are readable from Lua and three are not, which is the whole reason
+   `uiState.blocking` reports a *cause* with a hint instead of asserting "message box": a world
+   paused with no tags is equally a message box, a cinematic, or so basic a thing as the game
+   not being started. Measured live: `pause tags = (none); paused = true` -- which is what sent
+   this investigation to that line of C++ in the first place.
+
+7. **There are TWO causes of a stopped world, and they need different remedies.**
    `cause = 'menu'` (a mode is open: the mod can close it itself with
    `interfaces.UI.removeMode`, or open it with `setPauseOnMode(mode, false)` so it never
    pauses at all) versus `cause = 'messageBox'` (the stack is *empty* and the world is still

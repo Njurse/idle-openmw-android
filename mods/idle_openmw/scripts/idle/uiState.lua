@@ -145,17 +145,37 @@ end
 ---
 --- @param paused boolean|nil from core.isWorldPaused()
 --- @param stack table the list from M.stackOf
+--- @param options table|nil { consoleMode = boolean } -- ui.getConsoleMode()
 --- @return table { blocked, cause, mode?, hint? }
-function M.blocking(paused, stack)
+function M.blocking(paused, stack, options)
   if paused ~= true then return { blocked = false } end
   local list = type(stack) == 'table' and stack or {}
 
-  if #list == 0 then
+  -- Checked FIRST, and it is checked against a positive reading rather than inferred: the engine
+  -- pauses the world when the console is open (apps/openmw/mwworld/datetimemanager.cpp:259 --
+  -- mPaused = tags OR isConsoleMode() OR isPostProcessorHudVisible() ...). That is why a world
+  -- can be paused with NO pause tags, which is otherwise inexplicable. The remedy is ours:
+  -- ui.setConsoleMode(false).
+  if type(options) == 'table' and options.consoleMode == true then
     return {
       blocked = true,
-      cause = 'messageBox',
-      hint = 'paused with no window open: a message box is up. A key or a click dismisses it, '
-        .. 'and only the host can send one (the engine gives Lua no way to click a widget).',
+      cause = 'console',
+      hint = 'the in-game console is open, which pauses the world. The mod can close it itself '
+        .. '(ui.setConsoleMode(false), bridge method "ui.closeConsole").',
+    }
+  end
+
+  if #list == 0 then
+    -- NOT necessarily a message box, and saying so was a lie the mod told for a whole session:
+    -- a paused world with an empty mode stack can equally be a cinematic, a loading screen, or
+    -- the game's own chargen. Only the pause TAGS name the owner, and only a global script can
+    -- read those (scripts/idleWarden.lua, bridge method `world.pauseTags`).
+    return {
+      blocked = true,
+      cause = 'unknown',
+      hint = 'paused with no window open. Could be a message box (needs the host: Lua cannot '
+        .. 'click a widget), a cinematic, or a loading pause. Ask the warden for the pause tags '
+        .. '(bridge method "world.pauseTags") to find out which.',
     }
   end
 

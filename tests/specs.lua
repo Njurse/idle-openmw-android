@@ -21,6 +21,7 @@ return {
   'tests.spec.offlineProgress_spec',
   'tests.spec.pathfinder_spec',
   'tests.spec.portraitUI_spec',
+  'tests.spec.records_spec',
   'tests.spec.registry_spec',
   'tests.spec.rng_spec',
   'tests.spec.runtime_spec',

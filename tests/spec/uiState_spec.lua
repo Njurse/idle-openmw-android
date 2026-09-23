@@ -159,19 +159,42 @@ describe('idle.uiState', function()
       assert.is_true(type(state.hint) == 'string' and #state.hint > 0)
     end)
 
-    it('blames a message box when nothing is open -- the case the stack cannot see', function()
+    it('refuses to blame one thing when the stack cannot see the cause', function()
+      -- This used to say "cause = messageBox". That was a lie: a paused world with an empty mode
+      -- stack is equally a cinematic, a loading screen, or the game's own chargen -- and the mod
+      -- spent a session acting on the wrong one. The only thing that names the owner is the pause
+      -- TAGS, and only a global script can read those.
       local state = uiState.blocking(true, {})
       assert.is_true(state.blocked)
-      assert.equals(state.cause, 'messageBox')
+      assert.equals(state.cause, 'unknown')
       assert.is_nil(state.mode)
-      -- the hint has to say that only the host can clear it, because that is the actual remedy
+      -- so the hint must offer the candidates AND say how to tell them apart
+      assert.is_true(state.hint:find('message box') ~= nil)
+      assert.is_true(state.hint:find('world.pauseTags') ~= nil)
+      -- and still name the remedy the host owns, for the one candidate where it applies
       assert.is_true(state.hint:find('host') ~= nil)
     end)
 
-    it('treats a paused world with no stack at all as a message box', function()
+    it('names the console when the console is what is holding the pause', function()
+      -- The console pauses the world and leaves NO tag behind (datetimemanager.cpp:259), so this
+      -- is the one cause that can be stated positively without the tags. It is also the one the
+      -- mod can clear by itself.
+      local state = uiState.blocking(true, {}, { consoleMode = true })
+      assert.is_true(state.blocked)
+      assert.equals(state.cause, 'console')
+      assert.is_true(state.hint:find('setConsoleMode') ~= nil)
+      -- and it must not be reported when the console is shut
+      assert.equals(uiState.blocking(true, {}).cause, 'unknown')
+      -- and a console that is shut does not mask a window that IS open
+      local withMode = uiState.blocking(true, { 'Dialogue' }, { consoleMode = false })
+      assert.equals(withMode.cause, 'menu')
+      assert.equals(withMode.mode, 'Dialogue')
+    end)
+
+    it('is equally honest with no stack at all', function()
       local state = uiState.blocking(true, nil)
       assert.is_true(state.blocked)
-      assert.equals(state.cause, 'messageBox')
+      assert.equals(state.cause, 'unknown')
     end)
   end)
 end)
