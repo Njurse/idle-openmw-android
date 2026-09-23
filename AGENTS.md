@@ -86,6 +86,27 @@ Because `env` is injected, **new engine behaviour is testable**: extend
    yields nil, and the world model goes quietly blind. Use `util.isObject(x)` (accepts
    both) or plain truthiness. `tests/spec/userdata_spec.lua` drives the real code with
    real userdata via `newproxy` to keep this honest.
+
+   **Two places this cost the most, so do not repeat them:**
+
+   - **A distance.** `self.position` is a userdata Vector3, and `scripts/idle/util.lua`'s
+     `point()` accepted only tables — so *every* distance in the mod was `nil`. Where that
+     lands is the dangerous part: `Route:update`'s arrival test is
+     `if toTarget and toTarget <= tolerance`, so a nil distance falls *through* the arrival
+     branch into "the path is spent", which returns `arrived`. The route claimed success
+     4000 units from its target and the character never moved a step. Guard **in the core
+     util**, where one fix covers every caller, not at each call site.
+   - **A yaw.** `self.rotation` on 0.52 is a Transform **userdata**, not the number the older
+     docs describe. Feeding it to the steering maths produced a yaw that never converged:
+     `shouldMove` stayed false and the character turned on the spot for forty seconds while
+     every log said `moving = true`. `Executor.yawOf` probes several sources and records
+     which one it used (`ui.yawSource`) so a fallback is never mistaken for a reading.
+
+   The same trap reaches the WIRE: `types.Actor.stats.ai` is a wrapper, so a raw read
+   serialised as the literal string `"<userdata>"` — and it validated, because the schema's
+   `map`/`list` checks only asked whether the value was a table. They now reject any engine
+   value nested inside a field (`scripts/idle/schema.lua`), so a host cannot receive
+   confident nonsense again.
 8. **An engine handler the engine does not know is silent, not fatal.** It logs
    "Not supported handler 'x'" and never fires — so the feature just stops working.
    The authoritative names are in

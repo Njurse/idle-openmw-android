@@ -66,6 +66,9 @@ local M = {}
 --- line still claims it is doing something.
 local PASSIVE_GOALS = { idle = true, manual = true }
 
+--- U+2192 RIGHTWARDS ARROW, as bytes: see the ASCII policy in AGENTS.md.
+local ARROW = string.char(226, 134, 146)
+
 -- Which mode the player is in. Mirrored by uiModel.MODES / uiLayout.MODES.
 --   manual    -- the player drives; we emit no commands at all
 --   directive -- auto-play, but queued user orders take precedence
@@ -466,7 +469,9 @@ function Director:tick(dt, snapshot)
       if entry.id ~= chosen and not PASSIVE_GOALS[entry.id] then
         local alternative = M.planCommands(entry.id, view, world, snapshot, self.cfg, ctx)
         if #alternative > 0 then
-          self:logLine(('→ %s (%s had nothing to act on)'):format(entry.id, chosen))
+          -- the arrow is built as bytes: a literal one in source is the exact mangling
+          -- the repo's ASCII policy exists to prevent (AGENTS.md, tools/dev/check_ascii.py)
+          self:logLine((ARROW .. ' %s (%s had nothing to act on)'):format(entry.id, chosen))
           chosen, row, commands = entry.id, entry, alternative
           break
         end
@@ -480,7 +485,7 @@ function Director:tick(dt, snapshot)
   if changed or stale or emergency then
     if changed then
       self.counters.goalChanges = self.counters.goalChanges + 1
-      self:logLine(('→ %s%s'):format(chosen, row and row.reason and (' (' .. row.reason .. ')') or ''))
+      self:logLine((ARROW .. ' %s%s'):format(chosen, row and row.reason and (' (' .. row.reason .. ')') or ''))
     end
     self.goal = chosen
     self.row = row

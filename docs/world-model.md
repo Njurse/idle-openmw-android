@@ -89,3 +89,25 @@ sends as userdata will happily agree with a reader that is looking for the wrong
   `observer.point` regression test FAILS against the old guard and passes against the new;
 - the live bridge report (`ui`) is the ground truth, and it should be asked before believing
   a green suite.
+
+## What the live engine added to this picture
+
+Every guard here was found by asking the running engine, and two of them only showed up as *data*
+problems rather than crashes:
+
+- **`util.point`/`distance`/`planarDistance`/`copy` now accept userdata.** `self.position` is a
+  Vector3 userdata, so a tables-only `point()` made every distance `nil` — and `nil` is exactly
+  what `Route:update`'s arrival test treats as "not arrived, and the path is spent", so the route
+  reported `arrived` thousands of units short. This is why the fix belongs in the core util.
+- **`self.rotation` is a Transform userdata, not a yaw.** `Executor.yawOf` probes
+  `self.rotation` (number) -> `.z` -> `.rotation.z` -> `camera.getYaw()`, and `ui.yawSource`
+  reports which one answered, so a fallback cannot be mistaken for a reading.
+- **`ai` reads as numbers.** `types.Actor.stats.ai` is a disposition *wrapper*; taken raw it
+  serialised as the literal string `"<userdata>"`, and it validated, because `map`/`list` only
+  asked whether the value was a table. Now `{alarm, fight, flee, hello}` are numbers, and the
+  schema rejects engine values nested inside a field.
+- **Every nearby row carries `list`.** The reader has always stamped rows with the list they came
+  from; the schema did not declare it, so the validator rejected every row of every list and
+  `entities.nearby` answered a schema violation instead of data — while the raw lists held 41
+  actors and 26 doors. `list` plus `kind` is also what distinguishes the player in `nearby.actors`
+  (kind `player`) from the NPCs beside them.
