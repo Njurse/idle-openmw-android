@@ -219,3 +219,32 @@ received confident nonsense and nothing complained. Now:
 
 Positions are the one documented exception: they may *be* userdata, because that is how the
 engine hands them over.
+
+## Measured on the running engine
+
+Every method below was run against the forked 0.52 build in Seyda Neen, and the results are what
+each one actually answered (not what it was designed to). Recorded because two of them *looked*
+fine from the code and returned nothing at all.
+
+| Method | Answer |
+| --- | --- |
+| `entities.nearby` | `ok=true`, rows per list (`actors`, `doors`, `containers`, `items`, `activators`, `players`), each row carrying `list` and `kind` |
+| `entity.get` | `ok=true` for an id taken straight out of `entities.nearby` |
+| `registry` | `ok=true`, `{cap: 200, count: 3, entities: [{id, kind, list, cell, firstSeen, lastSeen}]}` |
+| `ui.interactables` | `ok=true` with rows |
+| `ui.hints` | `["Nothing in front of you. Nearest: player (0 away). (the ray hit nothing)"]` |
+| `ui.target` | `ok=true` with **no** result: nothing under the crosshair, and that is the contract |
+| `action explore` | `ok=true`, `{accepted: true, directive: {goal: "explore", ...}}`; the director then reported `directive = explore` while `goal = survive`, i.e. an emergency correctly outranked it |
+| `ui` | goals, positions, camera, `nearest`, `brainCommands`, `steer`, `yawSource`, `controlsOverride`, `enemyReasons`, `nearbyLists`, `recentLog` |
+
+Two methods had to be fixed to get here:
+
+- **`entities.nearby` answered a schema violation**, not data:
+  `{"error":"schema violation: actors [1] undeclared field: list","ok":false}`. The reader has
+  always stamped each row with the list it came from; no kind declared that field, so the
+  validator rejected every row of every list while the raw lists plainly held 41 actors and 26
+  doors.
+- **`ai` reached the wire as the string `"<userdata>"`.** `types.Actor.stats.ai` is a wrapper,
+  not a number, and `map`/`list` were `type(v) == 'table'` and nothing more, so it validated.
+  Now the dispositions read as numbers — `{"alarm": 0, "fight": 83, "flee": 30, "hello": 0}` —
+  and the schema rejects any engine value nested inside a field.

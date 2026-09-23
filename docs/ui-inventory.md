@@ -132,3 +132,17 @@ capabilities   Lua API revision 129; all required capabilities present
    is the single place that distinguishes them; a report that says only "paused" leaves the
    caller with nothing to do.
 
+
+## The tabs are driven by the same reads as the bridge
+
+Both the Pack tab and the Order tab are built from the entity reader, so a defect there shows up
+as an empty panel and nothing else. Measured on the built engine:
+
+- the reader stamps every nearby row with the `list` it came from, and the schema must **declare**
+  `list` — it did not, so `entities.nearby` failed validation wholesale and the panels would have
+  shown nothing while the raw lists held 41 actors and 26 doors;
+- an item whose fields are engine *wrappers* serialises as the literal string `"<userdata>"`, and
+  a `map`/`list` field only checked that its value was a table, so it validated. `ai` was the one
+  that reached a host that way (`{"fight": 83}` now, `"<userdata>"` before).
+
+A panel is therefore not evidence that the reader worked: ask the bridge for the rows.
