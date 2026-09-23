@@ -27,17 +27,43 @@ function M.power(playerCapability)
     + 0.15, 0, 1)
 end
 
+--- How much of an enemy's threat actually reaches us, by distance.
+---
+--- A threat model that sums every hostile in the SCAN radius treats a school of slaughterfish
+--- across the bay exactly like one biting your leg. Measured live on the forked engine: 25
+--- distant fish produced `danger 1.00` and a permanent `flee` in an otherwise quiet Seyda Neen.
+--- Full weight at zero range, tapering linearly to nothing at `sensing.dangerRadius`.
+---
+--- An enemy with no `distance` (callers that only know what is in front of them) keeps the old
+--- weight of 1, so this cannot silently make an unknown threat free.
+--- @param distance number|nil engine units, or nil when unknown
+--- @return number 0..1
+function M.proximityWeight(distance, cfg)
+  if distance == nil then return 1 end
+  local radius = (cfg and cfg.sensing and cfg.sensing.dangerRadius) or 1024
+  if radius <= 0 then return 1 end
+  if distance >= radius then return 0 end
+  return util.clamp(1 - (distance / radius), 0, 1)
+end
+
 --- Aggregate assessment for a set of hostiles.
---- @param enemies list of { level, threat?, count?, name? }
---- @return { danger, count, threat, power, ratio, verdict }
+--- @param enemies list of { level, threat?, count?, name?, distance? }
+--- @return { danger, count, threats, threat, power, ratio, verdict }
 function M.assess(enemies, playerCapability, cfg)
-  local count, threat = 0, 0
+  local count, threats, threat = 0, 0, 0
   for _, enemy in ipairs(enemies or {}) do
     count = count + 1
-    threat = threat + M.threatOf(enemy)
+    local weight = M.proximityWeight(enemy.distance, cfg)
+    if weight > 0 then
+      threats = threats + 1
+      threat = threat + M.threatOf(enemy) * weight
+    end
   end
-  if count == 0 then
-    return { danger = 0, count = 0, threat = 0, power = M.power(playerCapability), ratio = 0, verdict = 'safe' }
+  if threats == 0 then
+    return {
+      danger = 0, count = count, threats = 0, threat = 0,
+      power = M.power(playerCapability), ratio = 0, verdict = 'safe',
+    }
   end
 
   local power = M.power(playerCapability)
@@ -53,7 +79,8 @@ function M.assess(enemies, playerCapability, cfg)
   else
     verdict = 'caution'
   end
-  return { danger = danger, count = count, threat = threat, power = power, ratio = ratio, verdict = verdict }
+  return { danger = danger, count = count, threats = threats, threat = threat,
+           power = power, ratio = ratio, verdict = verdict }
 end
 
 --- Pick an engagement stance for a class: how much danger it tolerates.

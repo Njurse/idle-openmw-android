@@ -157,6 +157,11 @@ M.defaults = {
   sensing = {
     scanRadius = 4096,          -- engine units within which actors are considered
 
+    -- Danger is weighted by PROXIMITY, not merely by presence in the scan radius: a threat
+    -- tapers to nothing at this distance. Without it, 25 slaughterfish across the bay made the
+    -- mod report `danger 1.00` and flee forever in a quiet Seyda Neen (measured, combat.lua).
+    dangerRadius = 1024,
+
     -- OpenMW exposes NO "is at war with the player" flag (see
     -- docs/openmw-lua-api.md §9), so hostility is a documented heuristic
     -- (scripts/idle/worldsense.lua). Essential actors and anyone offering a
@@ -334,6 +339,10 @@ function M.validate(cfg)
   if cfg.sensing.scanRadius ~= nil then
     clampProblem(problems, 'sensing.scanRadius', cfg.sensing.scanRadius, 128, 65536)
     cfg.sensing.scanRadius = util.clamp(cfg.sensing.scanRadius, 128, 65536)
+  end
+  if cfg.sensing.dangerRadius ~= nil then
+    clampProblem(problems, 'sensing.dangerRadius', cfg.sensing.dangerRadius, 0, 65536)
+    cfg.sensing.dangerRadius = util.clamp(cfg.sensing.dangerRadius, 0, 65536)
   end
   if cfg.sensing.hostileFightThreshold ~= nil then
     clampProblem(problems, 'sensing.hostileFightThreshold', cfg.sensing.hostileFightThreshold, 0, 100)

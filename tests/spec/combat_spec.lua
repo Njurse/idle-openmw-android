@@ -39,6 +39,39 @@ describe('idle.combat', function()
     assert.equals(mob.count, 3)
   end)
 
+  it('weighs danger by PROXIMITY, not mere presence in the scan radius', function()
+    -- Measured live: 25 slaughterfish across the bay produced `danger 1.00` and a permanent
+    -- `flee` in a quiet Seyda Neen. A threat you cannot reach is not a threat you are in.
+    local cap = sc.compute(states.warrior(), classes.warrior).capability
+    local fish = {}
+    for index = 1, 25 do fish[index] = { level = 1, distance = 3000 } end
+
+    local far = combat.assess(fish, cap, cfg)
+    assert.equals(far.danger, 0)
+    assert.equals(far.verdict, 'safe')
+    assert.equals(far.threats, 0)
+    assert.equals(far.count, 25) -- still REPORTED, just not feared
+
+    -- the same creep at your feet is a real threat
+    local near = combat.assess({ { level = 1, distance = 100 } }, cap, cfg)
+    assert.is_true(near.danger > 0)
+    assert.equals(near.threats, 1)
+
+    -- and an unknown distance keeps full weight, so this cannot silently make danger vanish
+    local unknown = combat.assess({ { level = 1 } }, cap, cfg)
+    assert.is_true(unknown.danger > 0)
+    assert.equals(unknown.threats, 1)
+  end)
+
+  it('tapers threat to nothing at the configured radius', function()
+    assert.equals(combat.proximityWeight(0, cfg), 1)
+    assert.equals(combat.proximityWeight(cfg.sensing.dangerRadius, cfg), 0)
+    assert.is_true(combat.proximityWeight(cfg.sensing.dangerRadius / 2, cfg) > 0)
+    assert.is_true(combat.proximityWeight(cfg.sensing.dangerRadius / 2, cfg) < 1)
+    assert.equals(combat.proximityWeight(99999, cfg), 0)
+    assert.equals(combat.proximityWeight(nil, cfg), 1)
+  end)
+
   it('verdicts follow the configured thresholds', function()
     local weak = sc.compute(states.warrior(), classes.warrior).capability
     local easy = combat.assess({ { level = 1 } }, weak, cfg)

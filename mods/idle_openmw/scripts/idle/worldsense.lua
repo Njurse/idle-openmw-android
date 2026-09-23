@@ -232,6 +232,10 @@ function M.scan(descriptors, opts)
         object = descriptor.object,
         level = descriptor.level or 1,
         reason = descriptor.hostileReason,
+        -- Distance is carried so DANGER can be weighted by it (combat.assess): a threat model
+        -- that counts a fish across the bay like one at your feet reports a permanent emergency.
+        distance = (origin and descriptor.position)
+          and util.distance(origin, descriptor.position) or nil,
       }
       consider('enemy', descriptor)
     else

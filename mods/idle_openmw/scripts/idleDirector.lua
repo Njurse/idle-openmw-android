@@ -404,6 +404,21 @@ local function gatherUiReport()
     data.nearbyLists = lists
   end
 
+  do -- WHY the model thinks something is hostile
+    -- A bare count is not actionable: "25 hostiles" in a town of shopkeepers is a classifier
+    -- bug, not a danger, and the two are indistinguishable from outside without the reason.
+    local nearby = state.snapshot and state.snapshot.world
+      and state.snapshot.world.enemies_nearby
+    if util.isObject(nearby) and #nearby > 0 then
+      local rows = {}
+      for index = 1, math.min(#nearby, 4) do
+        local enemy = nearby[index] or {}
+        rows[#rows + 1] = { name = enemy.name, reason = enemy.reason }
+      end
+      data.enemyReasons = rows
+    end
+  end
+
   do -- what the CAMERA is actually doing (an isometric lock is otherwise invisible)
     local cam = engine.camera()
     if cam then
