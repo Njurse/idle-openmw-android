@@ -471,3 +471,37 @@ patches (`tools/dev/engine-build/patches/`) are the same engine either way — a
 APK whose engine is **≥ 0.49** (the mod's floor, `docs/openmw-lua-api.md`) so `.omwscripts`
 loads. Until that APK exists, the emulator can prove the *device and data layout*, and
 desktop OpenMW (or the forked build, `docs/engine-build.md`) is what plays the mod.
+
+## The NDK works on Windows (measured)
+
+`ndk;29.0.14206865` installed through `sdkmanager` (2.4 GB), and it cross-compiles from this host
+without WSL:
+
+```
+$NDK/toolchains/llvm/prebuilt/windows-x86_64/bin/clang.exe --version
+  Android (13989888, based on r563880c) clang version 21.0.0
+  Target: x86_64-w64-windows-gnu
+
+clang --target=aarch64-linux-android24 -c t.c -o t.o   ->   COMPILED OK
+```
+
+So the missing piece was never the toolchain. It is the **build scripts**, and after reading
+`buildscripts/CMakeLists.txt` the reason is bigger than the Linux paths noted below: the project
+is a **superbuild** that downloads and builds its whole dependency set itself, pinned to
+2019-2021 releases —
+
+```
+LIBJPEG_TURBO 1.5.3   LIBPNG 1.6.37   FREETYPE2 2.10.4   OPENAL 1.21.1
+BOOST 1.69.0          FFMPEG 4.4      SDL2 2.0.12        BULLET 3.17
+MYGUI 3.4.0           GL4ES v1.1.4
+```
+
+— against `NDK_VERSION="r21e" ANDROID_API="21"`, downloaded as the **Linux** NDK zip
+(`android-ndk-${NDK_VERSION}-linux-x86_64.zip`) and driven from
+`toolchains/llvm/prebuilt/linux-x86_64/bin`. A modern NDK (r27+ is what fixes the 16 KB page
+size) plus the C++20 this OpenMW needs would mean bumping nearly every one of those pins too,
+and diverging from upstream while doing it.
+
+That is the real shape of the task, and it is why the next step is a **configure attempt against
+the NDK toolchain with the superbuild bypassed**, not a script port: it answers "how far does our
+own source get with a modern NDK" without first rewriting a decade of pinned dependencies.
