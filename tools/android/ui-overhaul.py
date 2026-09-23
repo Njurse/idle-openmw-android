@@ -159,8 +159,21 @@ def has_crlf(text: str) -> bool:
 
 
 def find_layouts(install: Path) -> dict[str, Path]:
-    """Locate `<install>/resources/mygui/*.layout`."""
-    for candidate in ('resources/mygui', 'resources', 'mygui'):
+    """Locate the engine's `mygui/*.layout` files.
+
+    The path moved: older engines keep them in `resources/mygui`, but 0.49+ builds
+    ship a VFS where `mygui` maps to `resources/vfs/mygui` (and Morrowind-specific
+    layouts to `resources/vfs-mw/mygui`). Search the known shapes rather than one
+    hard-coded path -- a wrong guess here silently produces overrides copied from
+    the WRONG engine version, which the engine then refuses to load.
+    """
+    for candidate in (
+        'resources/vfs/mygui',   # 0.49+ (VFS)
+        'resources/mygui',       # classic layout
+        'resources/vfs-mw/mygui',
+        'resources',
+        'mygui',
+    ):
         directory = install / candidate
         if directory.is_dir():
             found = {p.name: p for p in directory.glob('*.layout')}

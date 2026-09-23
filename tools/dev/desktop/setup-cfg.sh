@@ -46,6 +46,12 @@ cat > "$CONFIG_DIR/openmw.cfg" <<EOF
 # The idle-openmw dev environment: the live repo mod + the staged Morrowind data.
 data="$MOD_DATA"
 data="$MW_DATA"
+# The Morrowind BSAs. OpenMW reads `fallback-archive=` entries -- normally the
+# wizard imports them from Morrowind.ini's [Archives]; writing openmw.cfg by hand
+# means writing them too, or every mesh/texture inside them is "not found".
+fallback-archive=Morrowind.bsa
+fallback-archive=Tribunal.bsa
+fallback-archive=Bloodmoon.bsa
 content=Morrowind.esm
 content=Tribunal.esm
 content=Bloodmoon.esm
