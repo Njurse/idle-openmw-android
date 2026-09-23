@@ -20,6 +20,7 @@
 -- PURE: the data sources are injected, so the whole protocol is testable without an engine.
 
 local json = require('scripts.idle.json')
+local schema = require('scripts.idle.schema')
 
 local M = {}
 
@@ -40,11 +41,11 @@ M.METHODS = {
   { name = 'capabilities', description = 'What this engine supports (scripts/runtime/capabilities.lua).',
     params = {} },
   { name = 'player', description = 'The player: name, position, cell, level, gold, health.',
-    params = {} },
+    params = {}, returns = 'player' },
   { name = 'cell.current', description = 'The cell the player is in: name, region, grid, exterior flag.',
-    params = {} },
-  { name = 'entities.nearby', description = 'Actors and objects near the player.',
-    params = { 'radius (number, optional; default 2048)' } },
+    params = {}, returns = 'cell' },
+  { name = 'entities.nearby', description = 'Actors and objects near the player, grouped by kind.',
+    params = { 'radius (number, optional; default 2048)' }, returns = 'entityMap' },
   { name = 'quests.active', description = 'Started, unfinished quests with their current stage.',
     params = {} },
   { name = 'journal.topics', description = 'Journal topics the player has heard of.',
@@ -52,14 +53,76 @@ M.METHODS = {
   { name = 'ui', description = 'The UI report: open window, pause, phase, geometry (scripts/idle/uiReport.lua).',
     params = {} },
   { name = 'ui.target', description = 'What the crosshair is on, and what can be done with it.',
-    params = {} },
+    params = {}, returns = 'entity' },
   { name = 'ui.interactables', description = 'Doors, activators, containers and actors near the player, nearest first.',
-    params = { 'radius (number, optional; default 1024)' } },
+    params = { 'radius (number, optional; default 1024)' }, returns = 'entityList' },
   { name = 'ui.hints', description = 'The same advice the game gives on screen, derived instead of read.',
     params = {} },
   { name = 'action', description = 'Ask the mod to do something (routed through the director).',
     params = { 'goal (string)', 'ttl (number, optional)' } },
 }
+
+--- Validate a source's answer against the frozen contract.
+---
+--- Sending a shape that violates the schema is worse than sending an error: the host would
+--- parse it wrongly and silently. So a violation becomes a structured error naming the fields.
+--- @param returns string|nil 'player'|'entity'|'entityList'|'entityMap'|'cell'|'free'
+--- @return boolean ok, table|nil problems
+function M.validateResult(returns, value)
+  if returns == nil or returns == 'free' or value == nil then return true end
+
+  if returns == 'player' then return schema.validate('player', value) end
+  if returns == 'cell' then return schema.validate('cell', value) end
+
+  if returns == 'entity' then
+    local kind = value.kind
+    if not kind then return false, { 'entity has no kind' } end
+    return schema.validate(kind, value)
+  end
+
+  if returns == 'entityList' then
+    local problems = {}
+    for index, item in ipairs(value) do
+      local kind = type(item) == 'table' and item.kind or nil
+      if not kind then
+        problems[#problems + 1] = ('[%d] entity has no kind'):format(index)
+      else
+        local ok, issues = schema.validate(kind, item)
+        if not ok then
+          for _, issue in ipairs(issues) do
+            problems[#problems + 1] = ('[%d] %s'):format(index, issue)
+          end
+        end
+      end
+    end
+    if #problems > 0 then return false, problems end
+    return true
+  end
+
+  if returns == 'entityMap' then
+    local problems = {}
+    for bucket, list in pairs(value) do
+      if type(list) == 'table' then
+        local ok, issues = M.validateResult('entityList', list)
+        if not ok then
+          for _, issue in ipairs(issues) do
+            problems[#problems + 1] = ('%s %s'):format(tostring(bucket), issue)
+          end
+        end
+      end
+    end
+    if #problems > 0 then return false, problems end
+    return true
+  end
+
+  return true
+end
+
+--- What each method's answer must look like, so it can be checked before it is sent.
+M.RETURN_FOR = {}
+for _, method in ipairs(M.METHODS) do
+  if method.returns then M.RETURN_FOR[method.name] = method.returns end
+end
 
 --- Methods whose answers come from the runtime. A source may be missing; the bridge then
 --- answers `unavailable` for that method rather than failing the whole request.
@@ -169,6 +232,17 @@ function M.new(sources, options)
       envelope.error = 'source failed: ' .. tostring(value)
       return envelope
     end
+
+    -- check the shape before it goes on the wire
+    local declaration = M.RETURN_FOR[method]
+    local sound, problems = M.validateResult(declaration, value)
+    if not sound then
+      envelope.ok = false
+      envelope.problems = problems
+      envelope.error = 'schema violation: ' .. tostring(problems and problems[1])
+      return envelope
+    end
+
     envelope.ok = true
     envelope.result = value
     return envelope

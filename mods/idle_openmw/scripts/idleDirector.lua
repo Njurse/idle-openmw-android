@@ -36,6 +36,7 @@ local narrationMod = require('scripts.idle.narration')
 local uiReportMod = require('scripts.idle.uiReport')
 local bridgeMod = require('scripts.idle.bridge')
 local hudMod = require('scripts.idle.hud')
+local entitiesMod = require('scripts.runtime.entities')
 local uiLayoutMod = require('scripts.idle.uiLayout')
 
 local self = engine.self()
@@ -397,72 +398,6 @@ local function bridgeSources()
     return { x = p.x, y = p.y, z = p.z }
   end
 
-  --- Summarise one nearby object, safely.
-  local function describeObject(object)
-    local ok, entry = pcall(function()
-      local types = engine.types()
-      return {
-        recordId = object and object.recordId or nil,
-        name = types and types.getRecordName and types.getRecordName(object) or nil,
-      }
-    end)
-    if ok then return entry end
-    return { error = tostring(entry) }
-  end
-
-  local function nearbyList(name)
-    return function(params)
-      local nearby = engine.nearby()
-      local list = nearby and nearby[name]
-      if type(list) ~= 'table' then return nil end
-      local radius = type(params) == 'table' and tonumber(params.radius) or nil
-      local snap = snapshot()
-      local player = snap and snap.player
-      local out = {}
-      for _, object in ipairs(list) do
-        local entry = describeObject(object)
-        pcall(function()
-          local op = object.position
-          if op and player and player.position then
-            local dx = (op.x or 0) - (player.position.x or 0)
-            local dy = (op.y or 0) - (player.position.y or 0)
-            local dz = (op.z or 0) - (player.position.z or 0)
-            entry.distance = math.floor(math.sqrt(dx * dx + dy * dy + dz * dz) + 0.5)
-          end
-        end)
-        if not radius or not entry.distance or entry.distance <= radius then
-          out[#out + 1] = entry
-        end
-      end
-      return out
-    end
-  end
-
-  --- What kind of thing is this object? The engine types answer, and each answer is pcall'd
-  --- because this runs against live objects that may be in any state.
-  local function classifyObject(object)
-    local types = engine.types()
-    local out = {}
-    if not (types and object) then return out end
-    local checks = {
-      isActor = types.Actor, isDoor = types.Door, isContainer = types.Container,
-      isItem = types.Item, isActivator = types.Activator, isNPC = types.NPC,
-    }
-    for flag, class in pairs(checks) do
-      if class and type(class.objectIsInstance) == 'function' then
-        local ok, yes = pcall(class.objectIsInstance, object)
-        if ok and yes == true then out[flag] = true end
-      end
-    end
-    pcall(function() out.recordId = object.recordId end)
-    pcall(function() out.name = types.getRecordName and types.getRecordName(object) end)
-    pcall(function()
-      local p = object.position
-      if p then out.worldPosition = { x = p.x, y = p.y, z = p.z } end
-    end)
-    return out
-  end
-
   --- The object under the crosshair, and what can be done with it.
   ---
   --- This is the answer to "look up at the hatch and press space": the engine will not hand
@@ -472,11 +407,11 @@ local function bridgeSources()
     local nearby = engine.nearby()
     if not (camera and nearby and type(nearby.castRay) == 'function') then return nil end
 
-    local ok, target = pcall(function()
+    local hitObject = nil
+    pcall(function()
       local from = camera.getPosition()
-      -- the centre of the viewport is where the crosshair is
       local direction = camera.viewportToWorldVector(0.5, 0.5)
-      if not (from and direction) then return nil end
+      if not (from and direction) then return end
       local reach = state.cfg.ui and state.cfg.ui.tapReach or 4096
       local to = {
         x = from.x + direction.x * reach,
@@ -484,58 +419,32 @@ local function bridgeSources()
         z = from.z + direction.z * reach,
       }
       local hit = nearby.castRay(from, to, { ignore = playerObject() })
-      if not (hit and hit.hit and hit.hitObject) then return nil end
-      return hit.hitObject
+      if hit and hit.hit and hit.hitObject then hitObject = hit.hitObject end
     end)
-    if not ok or not target then return nil end
+    if not hitObject then return nil end
 
-    local described = classifyObject(target)
-    local snap = snapshot()
-    local player = snap and snap.player
-    local eye = player and player.position
-    if eye and described.worldPosition then
-      local dx = described.worldPosition.x - eye.x
-      local dy = described.worldPosition.y - eye.y
-      local dz = described.worldPosition.z - eye.z
-      described.distance = math.floor(math.sqrt(dx * dx + dy * dy + dz * dz) + 0.5)
-      described.vertical = hudMod.relativeHeight(described.worldPosition.z, eye.z)
-    end
-    return described
+    -- the object under the crosshair IS an entity, read the same way as any other
+    local object = playerObject()
+    local from = nil
+    pcall(function() from = object and object.position end)
+    local read = entitiesMod.read(hitObject, engine.env(), from)
+    if read then read.hit = true end
+    return read
   end
 
   --- Nearby things the player could interact with, nearest first.
   local function interactables(params)
     local radius = type(params) == 'table' and tonumber(params.radius) or 1024
-    local snap = snapshot()
-    local player = snap and snap.player
-    local eye = player and player.position
-    local nearby = engine.nearby()
+    local object = playerObject()
+    local from = nil
+    pcall(function() from = object and object.position end)
+    local nearby = entitiesMod.readNearby(engine.env(), from)
     if not nearby then return nil end
-
     local out = {}
-    local lists = { 'actors', 'doors', 'containers', 'activators', 'items' }
-    for _, listName in ipairs(lists) do
-      local list = nearby[listName]
-      if type(list) == 'table' then
-        for _, object in ipairs(list) do
-          local described = classifyObject(object)
-          described.kind = hudMod.kindOf(described)
-          if described.kind ~= 'unknown' then
-            if eye and described.worldPosition then
-              local dx = described.worldPosition.x - eye.x
-              local dy = described.worldPosition.y - eye.y
-              local dz = described.worldPosition.z - eye.z
-              described.distance = math.floor(math.sqrt(dx * dx + dy * dy + dz * dz) + 0.5)
-              described.vertical = hudMod.relativeHeight(described.worldPosition.z, eye.z)
-            end
-            if not described.distance or described.distance <= radius then
-              out[#out + 1] = described
-            end
-          end
-        end
-      end
+    for _, read in ipairs(nearby) do
+      if not read.distance or read.distance <= radius then out[#out + 1] = read end
     end
-    return hudMod.sortByDistance(out)
+    return out
   end
 
   --- The derived on-screen advice.
@@ -558,72 +467,61 @@ local function bridgeSources()
     capabilities = function()
       return { line = capabilitiesMod.describe(state.capabilities) }
     end,
+    --- The player, through the ONE reader, so its shape matches every other entity.
     player = function()
-      local snap = snapshot()
-      local player = snap and snap.player
-      if not player then
-        -- Read the engine directly. The snapshot is only built while the world advances, so
-        -- a paused game has none -- and a host asking "what is the player doing" during a
-        -- pause should get an answer, not an empty object.
-        player = {}
-        local self = playerObject()
-        if self then
-          pcall(function() player.position = position(self.position) end)
-          pcall(function() player.cell = self.cell and self.cell.name or nil end)
-          pcall(function()
-            local types = engine.types()
-            if types and types.Actor and types.Actor.stats then
-              local dynamic = types.Actor.stats.dynamic
-              player.health = dynamic.health and dynamic.health(self).current or nil
-              player.fatigue = dynamic.fatigue and dynamic.fatigue(self).current or nil
-              player.magicka = dynamic.magicka and dynamic.magicka(self).current or nil
-            end
-          end)
-          pcall(function()
-            local types = engine.types()
-            if types and types.Player and type(types.Player.name) == 'function' then
-              player.name = types.Player.name(self)
-            end
-          end)
-        end
+      local object = playerObject()
+      if not object then
+        -- no engine object (very early, or a script context without self): report what the
+        -- snapshot knows rather than an empty table
+        local snap = snapshot()
+        return snap and snap.player or {}
       end
-      return {
-        name = player.name, level = player.level, gold = player.gold,
-        health = player.health, fatigue = player.fatigue, magicka = player.magicka,
-        position = position(player.position),
-        cell = player.cell and player.cell.name or nil,
-        race = player.race, class = player.class,
-      }
+      local env = engine.env()
+      local object_position = nil
+      pcall(function() object_position = object.position end)
+      local read = entitiesMod.read(object, env)
+      if not read then return {} end
+      -- the player is the reference point, so distance/vertical are meaningless for it
+      read.distance, read.vertical = nil, nil
+      return read
     end,
     cell = function()
       local snap = snapshot()
       local cell = snap and snap.world and snap.world.cell
       if not cell then
-        -- same fallback: the player's own cell object is readable without the snapshot
-        local self = playerObject()
-        local object = nil
-        pcall(function() object = self and self.cell end)
-        if not object then return nil end
-        local read = {}
-        pcall(function() read.name = object.name end)
-        pcall(function() read.region = object.region end)
-        pcall(function() read.exterior = object.isExterior end)
-        pcall(function() read.gridX = object.gridX end)
-        pcall(function() read.gridY = object.gridY end)
-        return read
+        -- the player's own cell object is readable without a snapshot; a paused world never
+        -- builds one, and a host should still be able to ask where it is
+        local object = playerObject()
+        local own = nil
+        pcall(function() own = object and object.cell end)
+        cell = own
       end
-      return {
-        name = cell.name, region = cell.region,
-        exterior = cell.isExterior, gridX = cell.gridX, gridY = cell.gridY,
-      }
+      if not cell then return nil end
+      -- readCell may be handed an engine Cell or the snapshot's plain table
+      if type(cell) == 'table' and cell.name and not cell.id then
+        return { kind = 'cell', id = cell.name, name = cell.name, region = cell.region,
+                 isExterior = cell.isExterior, gridX = cell.gridX, gridY = cell.gridY,
+                 contentsFetched = false }
+      end
+      return entitiesMod.readCell(cell, engine.env())
     end,
-    entities = function()
-      return {
-        actors = nearbyList('actors')({}),
-        doors = nearbyList('doors')({}),
-        activators = nearbyList('activators')({}),
-        containers = nearbyList('containers')({}),
-      }
+    entities = function(params)
+      local object = playerObject()
+      local from = nil
+      pcall(function() from = object and object.position end)
+      local nearby = entitiesMod.readNearby(engine.env(), from)
+      if not nearby then return nil end
+      local radius = type(params) == 'table' and tonumber(params.radius) or nil
+      local out = {}
+      for _, read in ipairs(nearby) do
+        -- group by which nearby list it came from, which is what a caller filters on
+        local bucket = out[read.list] or {}
+        if not radius or not read.distance or read.distance <= radius then
+          bucket[#bucket + 1] = read
+        end
+        out[read.list] = bucket
+      end
+      return out
     end,
     quests = function()
       local types = engine.types()

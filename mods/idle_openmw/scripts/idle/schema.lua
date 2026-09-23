@@ -111,31 +111,64 @@ local AI = {
   field('hello', 'number', '0..100 disposition'),
 }
 
-local function actorFields()
-  return {
-    required('id', 'string', 'engine GameObject.id'),
-    required('kind', 'string', 'player | npc | creature'),
-    field('formId', 'string', 'core.getFormId'),
-    field('recordId', 'string', RECORD_ID),
-    field('cell', 'string', 'cell name'),
-    field('position', 'position', 'world position'),
-    field('distance', 'number', 'from the player'),
-    field('level', 'integer', 'types.Actor.stats.level'),
-    field('dead', 'boolean', 'types.Actor.isDead'),
-    field('health', 'map', 'DynamicStat'),
-    field('magicka', 'map', 'DynamicStat'),
-    field('fatigue', 'map', 'DynamicStat'),
-    field('ai', 'map', 'AI dispositions alarm/fight/flee/hello'),
-    field('disposition', 'number', 'NPC.getDisposition against the player; nil for creatures'),
-    field('race', 'string', 'npc/player'),
-    field('class', 'string', 'npc/player'),
-    field('faction', 'string', 'primary faction, when any'),
-    field('factionRank', 'integer', 'rank within that faction'),
-    field('equipment', 'map', 'slot name -> equipped entity'),
-    field('inventory', 'list', 'item stacks held'),
-    field('services', 'map', 'servicesOffered: service name -> boolean'),
-    field('travelDestinations', 'list', 'travel offers: {cellId, name?, position}'),
-  }
+--- Actor KINDS are the shared identity plus these. Composed rather than re-listed: a kind
+--- that re-lists its fields is a kind that can silently omit one, which is exactly how
+--- actors lost `name` until the response validator caught it.
+local ACTOR_EXTRA = {
+  field('level', 'integer', 'types.Actor.stats.level'),
+  -- DERIVED, not an engine field: Morrowind has no gold stat, money is the item Gold_001,
+  -- so this is the total of that item held. nil when it has not been computed.
+  field('gold', 'integer', 'DERIVED: total Gold_001 held (Morrowind has no gold stat)'),
+  field('dead', 'boolean', 'types.Actor.isDead'),
+  field('health', 'map', 'DynamicStat {base, current, modifier}'),
+  field('magicka', 'map', 'DynamicStat {base, current, modifier}'),
+  field('fatigue', 'map', 'DynamicStat {base, current, modifier}'),
+  field('ai', 'map', 'AI dispositions alarm/fight/flee/hello (0..100) -- NOT a hostility flag'),
+  field('disposition', 'number', 'NPC.getDisposition against the player; nil for creatures'),
+  field('race', 'string', 'npc and player'),
+  field('class', 'string', 'npc and player'),
+  field('faction', 'string', 'primary faction, when any'),
+  field('factionRank', 'integer', 'rank within that faction'),
+  field('equipment', 'map', 'slot name -> equipped entity'),
+  field('inventory', 'list', 'item stacks held'),
+  field('services', 'map', 'servicesOffered: service name -> boolean'),
+  field('travelDestinations', 'list', 'travel offers: {cellId, name?, position}'),
+}
+
+local DOOR_EXTRA = {
+  field('destCell', 'string', 'destination cell name, when it leads somewhere'),
+  field('destPosition', 'position', 'destination position'),
+  field('isTeleport', 'boolean', 'types.Door.isTeleport: a travel link rather than a walk-through'),
+  field('locked', 'boolean', 'locked, when the engine will say (nil = unknown)'),
+}
+
+local CONTAINER_EXTRA = {
+  field('capacity', 'number', 'types.Container.getCapacity'),
+  field('inventory', 'list', 'contents as item stacks'),
+  field('locked', 'boolean', 'locked, when known'),
+}
+
+local ITEM_EXTRA = {
+  field('count', 'integer', 'size of the stack'),
+  field('weight', 'number', 'per unit'),
+  field('value', 'number', 'per unit'),
+  field('condition', 'number', 'itemData.condition, when applicable'),
+  field('enchantmentCharge', 'number', 'itemData.enchantmentCharge, when applicable'),
+  field('soul', 'string', 'captured soul, when applicable'),
+}
+
+--- Compose field lists: shared identity first, then the kind's own, with no duplicates.
+local function compose(...)
+  local out, seen = {}, {}
+  for _, group in ipairs({ ... }) do
+    for _, entry in ipairs(group) do
+      if not seen[entry.name] then
+        seen[entry.name] = true
+        out[#out + 1] = entry
+      end
+    end
+  end
+  return out
 end
 
 -- ---------------------------------------------------------------------------
@@ -146,90 +179,43 @@ M.KINDS = {
   player = {
     description = 'The player character. Available in player and global scripts.',
     context = 'player',
-    fields = actorFields(),
+    fields = compose(IDENTITY, ACTOR_EXTRA),
   },
 
   npc = {
     description = 'A humanoid actor. Disposition is a number, never a hostility flag.',
     context = 'global|player|local',
-    fields = actorFields(),
+    fields = compose(IDENTITY, ACTOR_EXTRA),
   },
 
   creature = {
     description = 'A non-humanoid actor. Has no disposition and no class.',
     context = 'global|player|local',
-    fields = actorFields(),
+    fields = compose(IDENTITY, ACTOR_EXTRA),
   },
 
   door = {
     description = 'A door or hatch. Carries the link to its destination cell.',
     context = 'global|player|local',
-    fields = {
-      required('id', 'string', 'engine GameObject.id'),
-      required('kind', 'string', "'door'"),
-      field('recordId', 'string', RECORD_ID),
-      field('name', 'string', 'display name'),
-      field('cell', 'string', 'the cell it stands in'),
-      field('position', 'position', 'world position'),
-      field('distance', 'number', 'from the player'),
-      field('vertical', 'string', 'above/below/level -- the ship hatch is above you'),
-      field('destCell', 'string', 'destination cell name, when it leads somewhere'),
-      field('destPosition', 'position', 'destination position'),
-      field('isTeleport', 'boolean', 'types.Door.isTeleport: a travel link rather than a walk-through'),
-      field('locked', 'boolean', 'locked, when the engine will say (nil = unknown)'),
-    },
+    fields = compose(IDENTITY, DOOR_EXTRA),
   },
 
   container = {
     description = 'A chest, crate, corpse or other container.',
     context = 'global|player|local',
-    fields = {
-      required('id', 'string', 'engine GameObject.id'),
-      required('kind', 'string', "'container'"),
-      field('recordId', 'string', RECORD_ID),
-      field('name', 'string', 'display name'),
-      field('cell', 'string', 'cell name'),
-      field('position', 'position', 'world position'),
-      field('distance', 'number', 'from the player'),
-      field('capacity', 'number', 'weight capacity'),
-      field('inventory', 'list', 'contents as item stacks'),
-      field('locked', 'boolean', 'locked, when known'),
-    },
+    fields = compose(IDENTITY, CONTAINER_EXTRA),
   },
 
   item = {
     description = 'Anything derived from types.Item: weapon, book, ingredient, gold...',
     context = 'global|player|local',
-    fields = {
-      required('id', 'string', 'engine GameObject.id'),
-      required('kind', 'string', "'item'"),
-      field('recordId', 'string', RECORD_ID),
-      field('name', 'string', 'display name'),
-      field('count', 'integer', 'size of the stack'),
-      field('cell', 'string', 'cell name, or nil when it is in an inventory'),
-      field('position', 'position', 'world position when placed in the world'),
-      field('distance', 'number', 'from the player'),
-      field('weight', 'number', 'per unit'),
-      field('value', 'number', 'per unit'),
-      field('condition', 'number', 'itemData.condition, when applicable'),
-      field('enchantmentCharge', 'number', 'itemData.enchantmentCharge, when applicable'),
-      field('soul', 'string', 'captured soul, when applicable'),
-    },
+    fields = compose(IDENTITY, ITEM_EXTRA),
   },
 
   activator = {
     description = 'A lever, a shrine, a sign -- something you use rather than take.',
     context = 'global|player|local',
-    fields = {
-      required('id', 'string', 'engine GameObject.id'),
-      required('kind', 'string', "'activator'"),
-      field('recordId', 'string', RECORD_ID),
-      field('name', 'string', 'display name'),
-      field('cell', 'string', 'cell name'),
-      field('position', 'position', 'world position'),
-      field('distance', 'number', 'from the player'),
-      field('vertical', 'string', 'above/below/level'),
-    },
+    fields = compose(IDENTITY),
   },
 
   --- Cell METADATA only. Contents are a separate, expensive request: fetching them calls
@@ -237,9 +223,10 @@ M.KINDS = {
   cell = {
     description = 'A cell. Metadata is cheap; contents require a deliberate request.',
     context = 'global',
-    fields = {
+    fields = compose({
       required('id', 'string', 'cell id'),
       required('kind', 'string', "'cell'"),
+    }, {
       field('name', 'string', 'cell name'),
       field('displayName', 'string', 'display name, when it differs'),
       field('region', 'string', 'region name; nil for interiors'),
@@ -253,7 +240,7 @@ M.KINDS = {
       field('contentsFetched', 'boolean', 'whether object lists are included in THIS response'),
       field('objects', 'list', 'only present when contentsFetched is true'),
       field('doors', 'list', 'door entities in this cell, when contents are fetched'),
-    },
+    }),
   },
 
   --- A record (the template behind instances). Reads are per-type: there is no generic
@@ -261,15 +248,16 @@ M.KINDS = {
   record = {
     description = 'A record template, read via types.<T>.record or types.<T>.records.',
     context = 'global|player|local',
-    fields = {
+    fields = compose({
       required('id', 'string', 'record id'),
       required('kind', 'string', "'record'"),
+    }, {
       field('recordType', 'string', 'npc | weapon | door | ... the type module it came from'),
       field('name', 'string', 'display name'),
       field('value', 'number', 'item value, when applicable'),
       field('weight', 'number', 'item weight, when applicable'),
       field('fields', 'map', 'the remaining type-specific fields, as read'),
-    },
+    }),
   },
 }
 

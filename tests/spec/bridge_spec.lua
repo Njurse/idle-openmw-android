@@ -10,14 +10,20 @@ describe('idle.bridge', function()
   local json = require('scripts.idle.json')
 
   local function make(sources, options)
+    -- these must satisfy the frozen schema, because responses are now validated before they
+    -- are sent; a fixture that violates it is exactly what the validation should catch
     return bridge.new(sources or {
       capabilities = function() return { revision = 129 } end,
-      player = function() return { name = 'DeepSeek', gold = 12 } end,
-      cell = function() return { name = 'Imperial Prison Ship' } end,
-      entities = function(params) return { count = params.radius or 0 } end,
+      player = function() return { id = 'p1', kind = 'player', name = 'DeepSeek', gold = 12 } end,
+      cell = function() return { id = 'ship cabin', kind = 'cell', name = 'Imperial Prison Ship' } end,
+      entities = function(params)
+        return { actors = { { id = 'n1', kind = 'npc', name = 'guard',
+                              distance = params and params.radius or 0 } } }
+      end,
       quests = function() return { { id = 'a1', stage = 10 } } end,
-      topics = function() return { 'orders' } end,
+      topics = function() return { { topic = 'orders' } } end,
       ui = function() return { paused = false } end,
+      uiTarget = function() return { id = 'd1', kind = 'door', name = 'hatch' } end,
     }, options)
   end
 
@@ -81,8 +87,9 @@ describe('idle.bridge', function()
 
     it('passes params to the source', function()
       local envelope = ask(make(), { method = 'entities.nearby', params = { radius = 512 } })
-      assert.is_true(envelope.ok)
-      assert.equals(512, envelope.result.count)
+      assert.is_true(envelope.ok, tostring(envelope.error))
+      -- entities.nearby answers a map of kind -> list, so the radius shows up on the entries
+      assert.equals(512, envelope.result.actors[1].distance)
     end)
 
     it('echoes the id so a host can match answers to requests', function()
@@ -123,6 +130,56 @@ describe('idle.bridge', function()
       local b = make()
       local envelope = b:dispatch('not a table')
       assert.is_false(envelope.ok)
+    end)
+  end)
+
+  describe('response validation', function()
+    it('passes a schema-sound answer through', function()
+      local envelope = ask(make(), { method = 'player' })
+      assert.is_true(envelope.ok)
+      assert.is_nil(envelope.problems)
+    end)
+
+    it('REFUSES an answer that violates the schema, naming the fields', function()
+      -- sending a broken shape is worse than sending an error: the host would parse it
+      -- wrongly and silently
+      local b = make({ player = function() return { name = 'no id, no kind' } end })
+      local envelope = ask(b, { method = 'player' })
+      assert.is_false(envelope.ok)
+      assert.is_true(envelope.error:find('schema violation', 1, true) ~= nil, envelope.error)
+      assert.is_true(#envelope.problems > 0)
+    end)
+
+    it('catches a wrong type inside a valid-looking entity', function()
+      local b = make({ player = function()
+        return { id = 'p1', kind = 'player', gold = 'lots' }
+      end })
+      local envelope = ask(b, { method = 'player' })
+      assert.is_false(envelope.ok)
+      assert.is_true(envelope.problems[1]:find('gold', 1, true) ~= nil, envelope.problems[1])
+    end)
+
+    it('validates a list, saying WHICH entry was bad', function()
+      local b = make({ uiInteractables = function()
+        return { { id = 'a', kind = 'door' }, { kind = 'door' } }
+      end })
+      local envelope = ask(b, { method = 'ui.interactables' })
+      assert.is_false(envelope.ok)
+      assert.is_true(envelope.problems[1]:find('[2]', 1, true) ~= nil, envelope.problems[1])
+    end)
+
+    it('validates each bucket of an entity map', function()
+      local b = make({ entities = function() return { doors = { { kind = 'door' } } } end })
+      local envelope = ask(b, { method = 'entities.nearby' })
+      assert.is_false(envelope.ok)
+      assert.is_true(envelope.problems[1]:find('doors', 1, true) ~= nil, envelope.problems[1])
+    end)
+
+    it('does not object to an unavailable source', function()
+      -- nil means "no answer", which the unavailable path already reports
+      local b = make({ cell = function() return nil end })
+      local envelope = ask(b, { method = 'cell.current' })
+      assert.is_true(envelope.ok)
     end)
   end)
 
