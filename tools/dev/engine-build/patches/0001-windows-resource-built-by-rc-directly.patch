@@ -1,0 +1,51 @@
+diff --git a/apps/openmw/CMakeLists.txt b/apps/openmw/CMakeLists.txt
+index 8b5f55e..bf4bd99 100644
+--- a/apps/openmw/CMakeLists.txt
++++ b/apps/openmw/CMakeLists.txt
+@@ -4,10 +4,45 @@ set(OPENMW_SOURCES
+ )
+ 
+ set(OPENMW_RESOURCES
+-    ${CMAKE_SOURCE_DIR}/files/windows/openmw.rc
+     ${CMAKE_SOURCE_DIR}/files/windows/openmw.exe.manifest
+ )
+ 
++# ---------------------------------------------------------------------------
++# Windows resource: compiled by rc.exe ourselves.
++#
++# FORK PATCH (tools/dev/engine-build/patches/, see docs/engine-build.md).
++#
++# CMake 3.31 with MSVC 14.50 generates a malformed Ninja rule for .rc files -- it emits a
++# command beginning with a bare `RC` token followed by the .rc, the depfile, the output, the
++# string "Note: including file: ", and the path to cl.exe, before ever reaching rc.exe:
++#
++#   RC $in $DEP_FILE $out "Note: including file: " "<...>/cl.exe" ...rc.exe ... /fo $out $in
++#
++# rc.exe does what any compiler does with that: `fatal error RC1107: invalid usage`.
++#
++# So the resource is compiled directly instead of through CMake's RC language. That is three
++# lines, it removes a dependency on an obscure generator behaviour, and it gives the fork ONE
++# place to control the icon, the manifest and the version information that ends up in the
++# binary -- which is where the project's own name and version want to live.
++# ---------------------------------------------------------------------------
++if(WIN32)
++    set(_openmw_resource "${CMAKE_CURRENT_BINARY_DIR}/openmw.res")
++    add_custom_command(
++        OUTPUT "${_openmw_resource}"
++        # the .rc names openmw.ico and openmw.exe.manifest RELATIVE to itself, and rc.exe
++        # resolves those against the working directory, not the .rc's location
++        COMMAND ${CMAKE_RC_COMPILER} /nologo /fo "${_openmw_resource}" openmw.rc
++        WORKING_DIRECTORY "${CMAKE_SOURCE_DIR}/files/windows"
++        DEPENDS "${CMAKE_SOURCE_DIR}/files/windows/openmw.rc"
++                "${CMAKE_SOURCE_DIR}/files/windows/openmw.ico"
++                "${CMAKE_SOURCE_DIR}/files/windows/openmw.exe.manifest"
++        COMMENT "Compiling the Windows resource (icon, manifest, version info)"
++        VERBATIM)
++    set_source_files_properties("${_openmw_resource}" PROPERTIES GENERATED TRUE)
++    list(APPEND OPENMW_RESOURCES "${_openmw_resource}")
++endif()
++
++
+ set(OPENMW_HEADERS
+     doc.hpp
+     engine.hpp
