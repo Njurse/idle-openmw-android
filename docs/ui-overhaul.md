@@ -118,6 +118,31 @@ whole-file rewrite cannot pass again. The tool also refuses a layout with no
 `HStretch`.
 
 
+## The overrides are tied to ONE engine version
+
+A `.layout` override is a *copy* of the engine's own layout with the root position
+changed, so it only fits the engine it was copied from. Run it against a different
+engine and the engine's C++ looks for a widget the copy does not have:
+
+```
+Fatal error: MyGUI EXCEPTION : widget name 'AttributeView' in layout
+'openmw_stats_window.layout' not found.
+```
+
+That is what happened here: the overrides had been generated from **0.48.0**, and
+OpenMW **0.51.0** quit on them (0.51 added `AttributeView`). Regenerating against
+0.51 fixed it -- and `ui-overhaul.py` could not have done so before, because 0.49+
+moved the engine's layouts to `resources/vfs/mygui` and `find_layouts` only knew
+`resources/mygui`. Both are fixed; the overrides now match 0.51.
+
+Consequences worth knowing:
+
+- **Regenerate after any engine change**, and check `docs/dev-environment.md` for
+  which engine the shipped overrides were built against.
+- The mod's **Lua** is version-tolerant (it probes and degrades), but its **data**
+  is not. Hiding `mygui/` is the way to test the Lua against a different engine:
+  with the layouts out of the way, the mod loads cleanly on 0.48.0 as well.
+
 ## Not yet done
 
 - The **navigation bar / cutout insets** are a C++ concern, not a data one: the
