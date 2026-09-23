@@ -36,6 +36,17 @@ M.input       = function() return engineModule('openmw.input') end
 M.ui          = function() return engineModule('openmw.ui') end
 M.camera      = function() return engineModule('openmw.camera') end
 
+--- Is the game world paused? (core.lua:46, "Not available in load scripts".)
+--- Worth knowing for its own sake: a paused world takes no input and runs no simulation,
+--- so from the outside a paused game and a stuck mod look identical.
+function M.isWorldPaused()
+  local core = engineModule('openmw.core')
+  if not core or type(core.isWorldPaused) ~= 'function' then return nil end
+  local ok, paused = pcall(core.isWorldPaused)
+  if ok and type(paused) == 'boolean' then return paused end
+  return nil
+end
+
 --- Read a small UTF-8 text file from the data folder, or nil.
 ---
 --- This is the operator channel: write `narration.txt` next to the mod's data and the

@@ -204,7 +204,10 @@ end
 --- The operator's narration line, from `narration.txt` in the data folder (nil when
 --- absent). Re-read at most every couple of seconds: it is a file, not a hot path.
 local function operatorNarration()
-  local now = simulationTime()
+  -- NOT simulationTime(): that local is declared further down this file, so a reference
+  -- here would resolve to a nil GLOBAL and throw on every call. The wall clock is plenty
+  -- for a two-second cache, and it cannot be shadowed by ordering.
+  local now = engine.wallClock()
   if state.narrationReadAt and (now - state.narrationReadAt) < 2 then
     return state.narrationText
   end
@@ -428,6 +431,36 @@ local function update(dt)
       guardianTick(snapshot)
     end
 
+    -- Announce a change of on-screen UI. This is the machine-readable answer to "what is
+    -- the game asking right now", which is otherwise only knowable by squinting at
+    -- pixels: the UI mode stack names the open window (Chargen*, Dialogue, Interface,
+    -- Loading, ...). Driving character creation without it is guesswork.
+    do
+      -- Read the stack RAW, not through the director's summary: when the summary says
+      -- nothing it is because the director is gated, and we would learn nothing about
+      -- whether the engine had a mode to report at all.
+      local ui = engine.ui()
+      local raw = 'no-api'
+      if ui and type(ui._getUiModeStack) == 'function' then
+        local okStack, stack = pcall(ui._getUiModeStack)
+        if not okStack then raw = 'error'
+        elseif type(stack) ~= 'table' or #stack == 0 then raw = 'empty'
+        else raw = table.concat(stack, ',') end
+      end
+      if raw ~= state.lastUiKey then
+        state.lastUiKey = raw
+        print('idle-openmw: screen -> ' .. raw)
+      end
+    end
+
+    -- Poll the pause state, and announce a CHANGE: a paused game looks exactly like a
+    -- broken one from the outside, so the transition is worth a log line.
+    local paused = engine.isWorldPaused()
+    if paused ~= nil and paused ~= state.paused then
+      state.paused = paused
+      print('idle-openmw: world ' .. (paused and 'PAUSED' or 'running'))
+    end
+
     state.executor:update(dt, simulationTime())
     local phaseId = state.snapshot and state.snapshot.phase and state.snapshot.phase.id
     applyCamera(phaseId)
@@ -444,7 +477,12 @@ local function update(dt)
 
   if not ok then
     state.failures = state.failures + 1
-    -- Never spam the log or die silently: report the first few, then stay quiet.
+    -- Report the first few failures to the ENGINE log as well as the activity log: from
+    -- outside the game the activity log is invisible, so a director throwing every frame
+    -- is indistinguishable from an idle mod. That blindness cost real time.
+    if state.failures <= 5 then
+      pcall(print, 'idle-openmw: director error (' .. state.failures .. '): ' .. tostring(err))
+    end
     if state.failures <= 5 and state.director then
       pcall(function() state.director:logLine('Director error: ' .. tostring(err), 'bad') end)
     end
@@ -708,7 +746,11 @@ return {
         if status.goal then parts[#parts + 1] = 'doing ' .. tostring(status.goal) end
         if status.uiLabel then parts[#parts + 1] = 'screen: ' .. tostring(status.uiLabel) end
       end
-      return narrationMod.choose(operatorNarration(), table.concat(parts, ' -- '))
+      local line = table.concat(parts, ' -- ')
+      -- Say when the world is paused: a paused game runs no simulation and takes no input,
+      -- so "nothing is happening" and "the mod is stuck" look the same from outside.
+      if state.paused == true then line = 'PAUSED -- ' .. line end
+      return narrationMod.choose(operatorNarration(), line)
     end,
     setMode = function(mode)
       if not state.director then return nil end

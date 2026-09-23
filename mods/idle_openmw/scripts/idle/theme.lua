@@ -83,6 +83,11 @@ M.PLAIN_PALETTE = {
   panel      = { r = 0, g = 0, b = 0, a = 0.72 },
 }
 
+--- Cream, as a last-resort colour. Anything we draw on the dark HUD must never fall back
+--- to black: MyGUI's default text colour is black, and a nil colour therefore renders as
+--- invisible text rather than as an error.
+M.FALLBACK = { r = 223, g = 201, b = 159 }
+
 --- Which palette entry each part of the console paints with.
 M.THEMES = {
   morrowind = {
@@ -93,6 +98,14 @@ M.THEMES = {
       row = 'normal', rowSelected = 'pressed', heading = 'header',
       footer = 'header', alert = 'negative', marker = 'header',
       panel = 'panel', scroll = 'normalOver', page = 'disabled',
+      -- The narration line is cream: it is the one thing on screen while the console is
+      -- hidden, so it must not rely on a role that might resolve to nothing (a nil colour
+      -- rendered BLACK on a dark screen, which is how it first shipped).
+      narration = 'parchment',
+      -- The narration line is cream: it is the one thing on screen while the console is
+      -- hidden, so it must not rely on a role that might resolve to nothing (a nil colour
+      -- rendered BLACK on a dark screen, which is how it first shipped).
+      narration = 'parchment',
     },
     pools = { health = 'health', magicka = 'magic', fatigue = 'fatigue' },
   },

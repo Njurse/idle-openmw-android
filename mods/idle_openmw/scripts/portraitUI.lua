@@ -90,8 +90,11 @@ local function vec2(x, y) return engines.vector2(x, y) end
 
 --- A theme role (see scripts/idle/theme.lua) as an engine colour.
 local function roleColour(role)
-  local c = role and themeMod.colour(state.theme, role)
-  if not c then return nil end
+  local c = role and state.theme and themeMod.colour(state.theme, role)
+  -- NEVER nil. A nil text colour becomes MyGUI's black default, so a missing theme or an
+  -- unknown role renders as invisible text on a dark HUD instead of as an error. Cream is
+  -- the floor, because that is what has to be readable over the game.
+  if not c then c = themeMod.FALLBACK end
   return rgb(c.r, c.g, c.b)
 end
 
@@ -604,6 +607,21 @@ local function updateNarration()
       local okCfg, value = pcall(api.getConfig)
       if okCfg and util.isObject(value) then cfg = value end
     end
+    -- The theme is normally loaded in build(), which only runs in the world -- but the
+    -- narration exists during character creation, so load it here if it is not up yet.
+    -- Without this, roleColour had nothing to resolve and the text came out black.
+    if not state.theme then
+      -- same construction build() uses: adopt the game's own GMST colours when readable
+      local core = engine.core()
+      local getGmst = nil
+      if core and type(core.getGMST) == 'function' then
+        getGmst = function(name)
+          local okGmst, value = pcall(core.getGMST, name)
+          if okGmst then return value end
+        end
+      end
+      state.theme = themeMod.load(cfg and cfg.ui and cfg.ui.theme, getGmst)
+    end
     local base = uiLayout.compute(screen, cfg)
     local rect = base.narration
     state.narrationElement = createElement({
@@ -611,23 +629,19 @@ local function updateNarration()
       text = state.narration:get(),
       -- a touch larger than the consoles body text: this is meant to be read at a glance
       size = 16 * base.textScale,
-      color = roleColour('goal'),
+      color = roleColour('narration'),
       wordWrap = true, multiline = true, autoSize = false,
       textAlignH = ui.ALIGNMENT and ui.ALIGNMENT.Center or nil,
       textAlignV = ui.ALIGNMENT and ui.ALIGNMENT.Start or nil,
       textShadow = true,
       ignorePointerEvents = true,
     })
-    if state.narrationElement then
-      state.narrationElement.layer = 'HUD'
-      state.narrationElement:update()
-    end
+    if state.narrationElement then setText(state.narrationElement, state.narration:get()) end
     return
   end
 
   if changed then
-    state.narrationElement.layout.props.text = state.narration:get()
-    state.narrationElement:update()
+    setText(state.narrationElement, state.narration:get())
   end
 end
 
