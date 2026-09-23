@@ -93,6 +93,12 @@ local IDENTITY = {
   field('distance', 'number', 'engine units from the player; nil when either side is unknown'),
   field('vertical', 'string', "'above' | 'below' | 'level' relative to the player's eye"),
   field('enabled', 'boolean', 'false for objects created but not yet placed'),
+  -- Which nearby list the row came from ('actors', 'doors', 'items', ...). `entities.nearby`
+  -- has always set this (runtime/entities.lua:612) but the schema did not declare it, so the
+  -- validator rejected EVERY row of every list -- `entities.nearby` answered
+  -- `{"ok":false,"error":"schema violation: actors [1] undeclared field: list"}` and returned
+  -- nothing at all, while the raw lists plainly held 41 actors and 26 doors.
+  field('list', 'string', "the nearby list this row came from: 'actors', 'doors', 'items', ..."),
 }
 
 --- Dynamic pools, as the engine actually models them (types.lua:450-453).

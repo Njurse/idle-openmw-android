@@ -263,5 +263,28 @@ describe('idle.schema', function()
       assert.is_not_nil(decoded.kinds[1].kind)
       assert.is_not_nil(decoded.kinds[1].fields[1].name)
     end)
+
+    it('accepts the `list` field every nearby row carries', function()
+      -- The reader has always set it (runtime/entities.lua:612) while the schema did not declare
+      -- it, so the validator rejected every row and `entities.nearby` returned nothing at all:
+      -- 'schema violation: actors [1] undeclared field: list'.
+      for _, kind in ipairs({ 'player', 'npc', 'creature', 'door', 'container', 'item' }) do
+        local ok, problems = schema.validate(kind, {
+          id = '@1', kind = kind, list = 'actors', position = { x = 0, y = 0, z = 0 },
+        })
+        assert.is_true(ok, kind .. ': ' .. tostring(problems and problems[1]))
+      end
+      -- and the DECLARED schema must show it, or a host cannot know the field exists
+      local described = schema.describe()
+      local found = false
+      for _, kind in ipairs(described.kinds) do
+        if kind.kind == 'npc' then
+          for _, field in ipairs(kind.fields) do
+            if field.name == 'list' then found = true end
+          end
+        end
+      end
+      assert.is_true(found)
+    end)
   end)
 end)
