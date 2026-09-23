@@ -18,6 +18,8 @@
 -- PURE: the runtime passes in plain descriptions, so the classification and the wording are
 -- testable without an engine.
 
+local util = require('scripts.idle.util')
+
 local M = {}
 
 --- Fallback action word per kind, used when the hint does not name the thing.
@@ -129,11 +131,18 @@ end
 
 --- Sort interactables nearest-first, dropping anything without a distance. Pure, so the
 --- runtime can hand us whatever the engine gave it and get a stable order back.
+---
+--- "Whatever the engine gave it" means a USERDATA list is allowed, so the guard is a shape test
+--- (`util.isObject`) and the walk is by index: `ipairs` rejects a userdata in LuaJIT.
 function M.sortByDistance(list)
   local out = {}
-  if type(list) ~= 'table' then return out end
-  for _, entry in ipairs(list) do
-    if type(entry) == 'table' then out[#out + 1] = entry end
+  if not util.isObject(list) then return out end
+  local count = 0
+  pcall(function() count = #list end)
+  for index = 1, count do
+    local entry = nil
+    pcall(function() entry = list[index] end)
+    if util.isObject(entry) then out[#out + 1] = entry end
   end
   table.sort(out, function(a, b)
     local da, db = a.distance or math.huge, b.distance or math.huge

@@ -119,9 +119,12 @@ end
 
 function Executor:_removeItems(recordId, count)
   local inventory = self:_inventory()
-  if type(inventory) ~= 'table' then return 0 end
+  -- Engine values are USERDATA -- a GameObject, an Inventory -- so `type(x) == 'table'` made
+  -- selling and buying silently do NOTHING on a real engine while the mock (plain tables) kept
+  -- the specs green. `util.isObject` accepts both shapes; a missing method still fails in pcall.
+  if not util.isObject(inventory) then return 0 end
   local object = safe(function() return inventory.find and inventory:find(recordId) end)
-  if type(object) ~= 'table' or type(object.remove) ~= 'function' then return 0 end
+  if not util.isObject(object) then return 0 end
   local ok = pcall(function() object:remove(count) end)
   return ok and count or 0
 end
@@ -130,9 +133,9 @@ function Executor:_addGold(amount)
   if amount <= 0 then return 0 end
   local world = self.env.world
   local money = safe(world and world.createObject, 'gold_001', amount)
-  if type(money) ~= 'table' then return 0 end
+  if not util.isObject(money) then return 0 end
   local inventory = self:_inventory()
-  if type(inventory) ~= 'table' then return 0 end
+  if not util.isObject(inventory) then return 0 end
   pcall(function() money:moveInto(inventory) end)
   return amount
 end
@@ -145,7 +148,7 @@ function Executor:_giveItem(recordId, count)
   local world = self.env.world
   local object = safe(world and world.createObject, recordId, count)
   local inventory = self:_inventory()
-  if type(object) ~= 'table' or type(inventory) ~= 'table' then return 0 end
+  if not util.isObject(object) or not util.isObject(inventory) then return 0 end
   pcall(function() object:moveInto(inventory) end)
   return count
 end
@@ -174,7 +177,7 @@ function Executor:equip(recordId)
   local actor = self:_player()
   local inventory = self:_inventory()
   local object = inventory and inventory.find and safe(function() return inventory:find(recordId) end)
-  if type(object) ~= 'table' then return false, ('%s is not carried'):format(tostring(recordId)) end
+  if not util.isObject(object) then return false, ('%s is not carried'):format(tostring(recordId)) end
 
   local record = safe(object.type and object.type.record, object) or {}
   local resolved = equipment.resolve(object.type, record, types)
@@ -205,7 +208,7 @@ function Executor:sellOne(recordId, count)
   end
   local inventory = self:_inventory()
   local object = inventory and inventory.find and safe(function() return inventory:find(recordId) end)
-  if type(object) ~= 'table' then return 0 end
+  if not util.isObject(object) then return 0 end
 
   local record = safe(object.type and object.type.record, object) or {}
   local available = num(object.count, 1)
@@ -227,7 +230,7 @@ end
 function Executor:dropOne(recordId, count)
   local inventory = self:_inventory()
   local object = inventory and inventory.find and safe(function() return inventory:find(recordId) end)
-  if type(object) ~= 'table' or type(object.remove) ~= 'function' then return false end
+  if not util.isObject(object) then return false end
   local ok = pcall(function() object:remove(count or 1) end)
   if ok then
     self.applied.drops = (self.applied.drops or 0) + 1

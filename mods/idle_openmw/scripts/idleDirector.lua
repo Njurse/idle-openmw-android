@@ -242,18 +242,21 @@ local function pickAt(nx, ny)
   if type(nearby.castRay) ~= 'function' then return nil end
   if type(utilEngine.vector2) ~= 'function' or type(utilEngine.vector3) ~= 'function' then return nil end
 
+  -- Vector3 is a USERDATA usertype (util.lua:199) and `castRay` returns the registered
+  -- RayCastingResult usertype (nearbybindings.cpp:72-73), so `type(x) == 'table'` rejected every
+  -- one of these and tap-picking could NEVER work on a real engine.
   local okDir, dir = pcall(cam.viewportToWorldVector, utilEngine.vector2(nx, ny))
-  if not okDir or type(dir) ~= 'table' then return nil end
+  if not okDir or not util.isObject(dir) then return nil end
   local okPos, from = pcall(cam.getPosition)
-  if not okPos or type(from) ~= 'table' then return nil end
+  if not okPos or not util.isObject(from) then return nil end
 
   local reach = (state.cfg and state.cfg.ui and state.cfg.ui.tapReach) or 4096
   local to = utilEngine.vector3(from.x + dir.x * reach, from.y + dir.y * reach, from.z + dir.z * reach)
 
   local okCast, result = pcall(nearby.castRay, from, to, { ignore = self and self.object or nil })
-  if not okCast or type(result) ~= 'table' or not result.hit then return nil end
+  if not okCast or not util.isObject(result) or not result.hit then return nil end
   local hitPos = result.hitPos
-  if type(hitPos) ~= 'table' then return nil end
+  if not util.isObject(hitPos) then return nil end
 
   local name
   if result.hitObject and type(result.hitObject.recordId) == 'string' then
@@ -917,17 +920,23 @@ local function bridgeSources()
         return nil
       end
       local ok, list = pcall(types.Player.quests, player)
-      if not ok or type(list) ~= 'table' then return nil end
+      -- `types.Player.quests(player)` is a `Quests` USERDATA (player.cpp:297) that iterates via
+      -- `__pairs`, so `type(list) == 'table'` rejected it and this view was always empty. The
+      -- pcall keeps a Lua build without `__pairs` from throwing instead of reporting nothing.
+      if not ok or not util.isObject(list) then return nil end
       local out = {}
-      for id, quest in pairs(list) do
-        out[#out + 1] = {
-          id = id,
-          stage = quest and quest.stage,
-          started = quest and quest.started,
-          finished = quest and quest.finished,
-          name = quest and quest.name,
-        }
-      end
+      local iterated = pcall(function()
+        for id, quest in pairs(list) do
+          out[#out + 1] = {
+            id = id,
+            stage = quest and quest.stage,
+            started = quest and quest.started,
+            finished = quest and quest.finished,
+            name = quest and quest.name,
+          }
+        end
+      end)
+      if not iterated then return nil end
       table.sort(out, function(a, b) return tostring(a.id) < tostring(b.id) end)
       return out
     end,
@@ -1456,9 +1465,10 @@ local function update(dt)
         if not okStack then
           raw = 'error'
         else
-          -- M.stackOf, not `type(stack) == 'table'`: the engine hands back userdata, so the
-          -- old test called a real window "empty" -- the trace lied about the one thing it
-          -- exists to show
+          -- stackOf normalises whatever `_getUiModeStack` returns -- a Lua table of mode names
+          -- (uibindings.cpp:276-282), though a reader that assumes ONE shape is exactly how a
+          -- real window gets called "empty", after which the trace lies about the one thing it
+          -- exists to show. stackOf takes either shape and drops unusable entries.
           local modes = uiStateMod.stackOf(stack)
           raw = #modes == 0 and 'empty' or table.concat(modes, ',')
         end

@@ -30,7 +30,26 @@
 --
 -- PURE -- no engine, no clock.
 
+local util = require('scripts.idle.util')
+
 local M = {}
+
+--- Walk an engine LIST by index.
+---
+--- A record's `infos` is a read-only engine list, i.e. USERDATA. `ipairs` cannot be used on it:
+--- LuaJIT's `ipairs` is the 5.1 builtin and rejects a userdata outright ("table expected, got
+--- userdata"). `#` + `[i]` go through `__len`/`__index` for a userdata AND a plain table, so the
+--- index walk reads both.
+local function eachInfo(infos)
+  local count = 0
+  pcall(function() count = #infos end)
+  local index = 0
+  return function()
+    index = index + 1
+    if index > count then return nil end
+    return index, infos[index]
+  end
+end
 
 --- The record families the engine exposes, in a fixed order so output is stable.
 M.FAMILIES = { 'journal', 'topic', 'greeting', 'persuasion', 'voice' }
@@ -79,7 +98,9 @@ end
 
 --- One info entry (a journal entry, an NPC line, a voice line) -> a plain table.
 function M.shapeInfo(raw, opts)
-  if type(raw) ~= 'table' then return nil end
+  -- A record/info is engine USERDATA, not a table: `type(raw) ~= 'table'` made this return nil
+  -- for every real record (AGENTS.md #7).
+  if not util.isObject(raw) then return nil end
   opts = opts or {}
   local out = {
     id = raw.id,
@@ -107,7 +128,7 @@ end
 --- `raw.infos` is a read-only engine list; it may be indexed by number (and, for records,
 --- `#` works), so it is walked by index rather than with pairs.
 function M.shapeRecord(raw, opts)
-  if type(raw) ~= 'table' then return nil end
+  if not util.isObject(raw) then return nil end
   opts = opts or {}
   local maxInfos = opts.maxInfos or M.DEFAULT_MAX_INFOS
 
@@ -120,7 +141,7 @@ function M.shapeRecord(raw, opts)
 
   local infos = raw.infos
   local total = 0
-  if type(infos) == 'table' then
+  if util.isObject(infos) then
     local ok = pcall(function() total = #infos end)
     if not ok then total = 0 end
   end
@@ -147,7 +168,7 @@ end
 function M.familyCounts(counts)
   local out = {}
   for _, family in ipairs(M.FAMILIES) do
-    local count = type(counts) == 'table' and counts[family] or nil
+    local count = util.isObject(counts) and counts[family] or nil
     if count ~= nil then out[#out + 1] = { family = family, records = count } end
   end
   return out
@@ -160,9 +181,9 @@ end
 --- rather than a guess.
 function M.entriesForStage(record, stage)
   local out = {}
-  if type(record) ~= 'table' or type(record.infos) ~= 'table' then return out end
-  for _, info in ipairs(record.infos) do
-    if info.questStage ~= nil and tonumber(info.questStage) == tonumber(stage) then
+  if not util.isObject(record) or not util.isObject(record.infos) then return out end
+  for _, info in eachInfo(record.infos) do
+    if info and info.questStage ~= nil and tonumber(info.questStage) == tonumber(stage) then
       out[#out + 1] = info
     end
   end
@@ -171,9 +192,9 @@ end
 
 --- Is this record's text a finished-state entry? Used to explain why a quest is done.
 function M.isFinished(record)
-  if type(record) ~= 'table' or type(record.infos) ~= 'table' then return false end
-  for _, info in ipairs(record.infos) do
-    if info.questFinished == true then return true end
+  if not util.isObject(record) or not util.isObject(record.infos) then return false end
+  for _, info in eachInfo(record.infos) do
+    if info and info.questFinished == true then return true end
   end
   return false
 end
