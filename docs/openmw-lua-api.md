@@ -381,6 +381,14 @@ This matters because our mod was PLAYER-only. It is why `scripts/idleWarden.lua`
 exists as a `GLOBAL:` entry in `idle_openmw.omwscripts`, fed by
 `core.sendGlobalEvent('IdleOpenMW_Guardian', ...)` from the player script.
 
+**Two consumers, not one.** The same barrier blocks the whole economy, and for a second
+reason as well: `openmw.world` itself is declared *"for global scripts"* (`world.lua:3-4`),
+so `world.createObject` does not exist in a player script either. `runtime/executor.lua`
+called `remove`/`moveInto`/`createObject` directly for a long time, which meant buying,
+selling, dropping and banking gold **silently did nothing on a real engine** (the mock uses
+plain tables, so the specs passed). Those are now requests over `IdleOpenMW_Economy`, applied
+by the warden and confirmed back with `IdleOpenMW_EconomyApplied`.
+
 ### 10.2 `teleport` details that decide the design
 
 ```

@@ -49,4 +49,5 @@ return {
   'tests.spec.hud_spec',
   'tests.spec.schema_spec',
   'tests.spec.entity_spec',
+  'tests.spec.warden_spec',
 }

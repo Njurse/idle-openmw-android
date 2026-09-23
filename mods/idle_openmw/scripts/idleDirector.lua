@@ -1791,6 +1791,21 @@ local function onGuardianApplied(event)
   end)
 end
 
+--- The GLOBAL warden reports back on an economy request (see `Executor:_requestEconomy`).
+--- A player script cannot remove items or create gold, so "did it actually happen?" is only
+--- answerable here -- and a silent failure would look exactly like a working trade.
+local function onEconomyApplied(event)
+  if not state.director then return end
+  pcall(function()
+    state.director:logLine(
+      ('Economy %s: %s'):format(
+        tostring(event.op),
+        event.ok and ('done' .. (event.detail and (' (' .. tostring(event.detail) .. ')') or ''))
+          or ('FAILED - ' .. tostring(event.detail))),
+      event.ok and 'good' or 'bad')
+  end)
+end
+
 return {
   -- exposed for tests: the throttle that keeps working while the world is paused
   everyFrames = everyFrames,
@@ -1803,6 +1818,7 @@ return {
   eventHandlers = {
     DialogueResponse = onDialogueResponse,
     IdleOpenMW_GuardianApplied = onGuardianApplied,
+    IdleOpenMW_EconomyApplied = onEconomyApplied,
   },
   -- the console HUD drives the brain through this
   interfaceName = 'IdleOpenMW',

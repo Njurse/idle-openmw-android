@@ -16,6 +16,24 @@ describe('runtime.openmw adapter', function()
     if not ok then error(err, 0) end
   end
 
+  --- The economy requests the executor sent to the GLOBAL warden this run.
+  --- A player script cannot remove items or create gold (openmw.world is global-only and
+  --- GameObject:remove/moveInto are GObject-only), so the request IS the observable effect.
+  local function economyEvents(env)
+    local out = {}
+    for _, event in ipairs(env._globalEvents or {}) do
+      if event.name == 'IdleOpenMW_Economy' then out[#out + 1] = event.data end
+    end
+    return out
+  end
+
+  local function findEconomy(env, op)
+    for _, data in ipairs(economyEvents(env)) do
+      if data.op == op then return data end
+    end
+    return nil
+  end
+
   local WARRIOR_SPEC = {
     classId = 'warrior',
     recordId = 'player',
@@ -312,29 +330,39 @@ describe('runtime.openmw adapter', function()
       end)
     end)
 
-    it('sells junk and banks the gold', function()
+    it('sells junk by asking the warden to move the items and the gold', function()
       withEnv(WARRIOR_SPEC, function(env)
         local ex = newExecutor(env)
-        local before = env.types.Actor.inventory(env.self.object):countOf('gold_001')
         ex:submit({ { type = 'sell', plan = { { id = 'chitin dagger', count = 5, unitValue = 8 } } } })
         ex:update(0, 0)
-        local after = env.types.Actor.inventory(env.self.object):countOf('gold_001')
+        -- a PLAYER script cannot remove items or create gold: world is global-only and
+        -- GameObject:remove/moveInto are GObject-only (objectbindings.cpp:399-400)
+        local take = findEconomy(env, 'take')
+        assert.is_true(take ~= nil)
+        assert.equals('chitin dagger', take.recordId)
+        assert.equals(5, take.count)
+        local gold = findEconomy(env, 'gold')
+        assert.is_true(gold ~= nil)
         -- 5 * 8 * 0.8 barter ratio
-        assert.equals(after - before, 32)
-        assert.equals(env.types.Actor.inventory(env.self.object):countOf('chitin dagger'), 0)
+        assert.equals(32, gold.amount)
         assert.equals(ex.applied.sales, 1)
       end)
     end)
 
-    it('buys supplies with gold', function()
+    it('buys supplies by asking the warden for the gold and the goods', function()
       withEnv(WARRIOR_SPEC, function(env)
         local ex = newExecutor(env)
-        local inventory = env.types.Actor.inventory(env.self.object)
-        local before = inventory:countOf('gold_001')
         ex:submit({ { type = 'buy', plan = { { id = 'cure potion', count = 2, unitValue = 50 } } } })
         ex:update(0, 0)
-        assert.equals(inventory:countOf('gold_001'), before - 100)
-        assert.equals(inventory:countOf('cure potion'), 2)
+        local take = findEconomy(env, 'take')
+        assert.is_true(take ~= nil)
+        assert.equals('gold_001', take.recordId)
+        assert.equals(100, take.count)
+        local give = findEconomy(env, 'give')
+        assert.is_true(give ~= nil)
+        assert.equals('cure potion', give.recordId)
+        assert.equals(2, give.count)
+        assert.equals(ex.applied.purchases, 1)
       end)
     end)
 
@@ -546,25 +574,25 @@ describe('runtime.openmw adapter', function()
       end)
     end)
 
-    it('sells one stack and banks the gold', function()
+    it('sells one stack by asking the warden to move it and pay for it', function()
       withEnv(ACTION_SPEC, function(env)
         local ex = executorMod.new(env, cfg, {})
-        local inventory = env.types.Actor.inventory(env.self.object)
-        local before = inventory:countOf('gold_001')
         local gold = ex:sellOne('chitin dagger', 5)
-        -- 5 * 8 * 0.8 barter ratio
+        -- the return is the REQUESTED price; the engine applies the move on the next tick, and
+        -- the warden reports back (IdleOpenMW_EconomyApplied)
         assert.equals(gold, 32)
-        assert.equals(inventory:countOf('gold_001'), before + 32)
-        assert.equals(inventory:countOf('chitin dagger'), 0)
+        assert.equals('chitin dagger', findEconomy(env, 'take').recordId)
+        assert.equals(5, findEconomy(env, 'take').count)
+        assert.equals(32, findEconomy(env, 'gold').amount)
       end)
     end)
 
-    it('drops items out of the pack', function()
+    it('drops items by asking the warden to take them out', function()
       withEnv(ACTION_SPEC, function(env)
         local ex = executorMod.new(env, cfg, {})
-        local inventory = env.types.Actor.inventory(env.self.object)
         assert.is_true(ex:dropOne('lockpick', 4))
-        assert.equals(inventory:countOf('lockpick'), 8)
+        assert.equals('lockpick', findEconomy(env, 'take').recordId)
+        assert.equals(4, findEconomy(env, 'take').count)
       end)
     end)
 

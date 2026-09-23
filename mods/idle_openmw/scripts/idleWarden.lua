@@ -102,6 +102,53 @@ local function reload(data)
   return true, slot
 end
 
+--- Move items or gold -- the economy actions a PLAYER script structurally cannot do.
+---
+--- `openmw.world` is a global-only module ("Provides an interface to the game world for global
+--- scripts", world.lua:3-4), so `world.createObject` does not exist in idleDirector.lua, and
+--- `GameObject:remove` / `moveInto` are registered only for `GObject` -- "Only for global
+--- scripts" (objectbindings.cpp:399-400). The player script therefore ASKS for these over the same
+--- event channel as the guardian, and the result is reported back to it.
+local function economy(data)
+  local actor = player()
+  if not actor then return false, 'no player object' end
+  local inventory = types.Actor.inventory(actor)
+  if not inventory then return false, 'no player inventory' end
+  local op = data and data.op
+
+  if op == 'gold' then
+    local amount = math.floor(tonumber(data.amount) or 0)
+    if amount <= 0 then return false, 'nothing to give' end
+    local money = world.createObject('gold_001', amount)
+    if not money then return false, 'could not create gold' end
+    money:moveInto(inventory)
+    return true, amount .. ' gold'
+  end
+
+  if op == 'give' then
+    local count = math.floor(tonumber(data.count) or 0)
+    local recordId = tostring(data.recordId)
+    if count <= 0 then return false, 'nothing to give' end
+    local item = world.createObject(recordId, count)
+    if not item then return false, 'could not create ' .. recordId end
+    item:moveInto(inventory)
+    return true, count .. ' x ' .. recordId
+  end
+
+  if op == 'take' then
+    local count = math.floor(tonumber(data.count) or 0)
+    local recordId = tostring(data.recordId)
+    if count <= 0 then return false, 'nothing to take' end
+    local object = inventory:find(recordId)
+    if not object then return false, 'not carried: ' .. recordId end
+    local have = math.min(count, tonumber(object.count) or 1)
+    object:remove(have)
+    return true, have .. ' x ' .. recordId
+  end
+
+  return false, 'unknown economy op: ' .. tostring(op)
+end
+
 local eventHandlers = {}
 
 -- Sent by idleDirector.lua when guardian.assess() returns a global-only action.
@@ -130,6 +177,21 @@ eventHandlers['IdleOpenMW_Guardian'] = function(data)
   -- planning again from the new position rather than from a stale one.
   core.sendGlobalEvent('IdleOpenMW_GuardianApplied', {
     action = action,
+    ok = ok and true or false,
+    detail = detail,
+  })
+end
+
+-- Sent by idleDirector.lua for the economy actions a PLAYER script cannot perform.
+eventHandlers['IdleOpenMW_Economy'] = function(data)
+  local called, ok, detail = pcall(economy, data)
+  if not called then ok, detail = false, tostring(ok) end
+  log(('economy %s: %s'):format(
+    tostring(data and data.op),
+    ok and tostring(detail) or ('FAILED - ' .. tostring(detail))))
+
+  core.sendGlobalEvent('IdleOpenMW_EconomyApplied', {
+    op = data and data.op,
     ok = ok and true or false,
     detail = detail,
   })
