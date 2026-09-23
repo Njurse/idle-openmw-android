@@ -336,6 +336,70 @@ local function gatherUiReport()
       data.uiLabel = status.uiLabel
     end
     data.paused = engine.isWorldPaused()
+
+  do -- what the DIRECTOR decided, and what the executor is doing about it
+    -- A host watching the game needs this, and the plain log does not show it: "the world is
+    -- running and NOTHING is happening" is the single hardest state to debug from outside, and
+    -- it is the state this report is most often asked about.
+    local ok, status = pcall(function() return state.director:status() end)
+    if ok and status then
+      data.goal = status.goal
+      data.goalReason = status.reason
+      data.directive = status.directive
+      data.topGoals = status.topGoals
+    end
+    local executor = state.executor
+    if executor then
+      data.pending = executor:pending()
+      data.moving = executor:isMoving()
+      local head = executor:peek()
+      data.nextCommand = head and head.type or nil
+      data.moveTarget = head and head.dest or nil
+      data.routeTarget = executor.route and executor.route.target or nil
+      data.routeSnapped = executor.route and executor.route.snapped or nil
+    end
+    -- the LIVE position, through the ONE reader the rest of the mod uses
+    -- (entities.positionOf). NOTE: `self.position` is correct, but `self.object.position` reads
+    -- (0,0,0) for a PLAYER script -- so the object wrapper is NOT the place to read it from.
+    do
+      local object = engine.self()
+      data.position = object and entitiesMod.positionOf(object) or nil
+    end
+  end
+
+  do -- the SHAPE of the nearby lists
+    -- These are the values the world model is built from, and they are the AGENTS.md #7 trap:
+    -- the engine pushes an ObjectList (a userdata with __len/__index/__ipairs, objectbindings.cpp
+    -- :169-180), while the mocks use plain tables -- so the specs can be green while the real
+    -- world reads empty. Report the shape so the failure is visible instead of silent.
+    local nearby = engine.nearby()
+    local lists = {}
+    if nearby then
+      for _, name in ipairs({ 'actors', 'doors', 'containers', 'items', 'activators', 'players' }) do
+        local list = nil
+        pcall(function() list = nearby[name] end)
+        if list ~= nil then
+          local entry = { type = type(list) }
+          local okLen, len = pcall(function() return #list end)
+          if okLen then entry.length = len end
+          local okIp, counted = pcall(function()
+            local c = 0
+            for _ in ipairs(list) do c = c + 1 end
+            return c
+          end)
+          entry.ipairs = okIp and counted or 'error'
+          local okP, countedPairs = pcall(function()
+            local c = 0
+            for _ in pairs(list) do c = c + 1 end
+            return c
+          end)
+          entry.pairs = okP and countedPairs or 'error'
+          lists[name] = entry
+        end
+      end
+    end
+    data.nearbyLists = lists
+  end
     -- A paused world with no window open is a MESSAGE BOX: Morrowind's messages are not UI
     -- modes, so the mode stack is empty while a modal stops the world. Say so, because Lua
     -- cannot click a native widget -- the host has to, and it has to know when.
@@ -373,7 +437,10 @@ local function gatherUiReport()
     local snapshot = state.snapshot
     if snapshot then
       data.cell = snapshot.world and snapshot.world.cellName
-      data.position = snapshot.player and snapshot.player.position
+      -- the BRAIN's view of where the player is -- what the director steers from. `position`
+      -- above is the LIVE engine value; keeping both is what makes a disagreement (the world
+      -- model lying to the director) visible instead of silent.
+      data.snapshotPosition = snapshot.player and snapshot.player.position or nil
     end
   end
   do -- our geometry

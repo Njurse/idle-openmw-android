@@ -573,11 +573,26 @@ end
 --- Read a list of engine objects, dropping anything unreadable rather than emitting holes.
 function M.readList(objects, env, fromPosition)
   local out = {}
-  if type(objects) ~= 'table' then return out end
+  -- `type(x) == 'table'` is FALSE for every engine value: `nearby.actors` / `doors` / ... are an
+  -- ObjectList USERDATA (apps/openmw/mwlua/nearbybindings.cpp:197-204). This guard made every
+  -- list read as empty, so the world model went quietly blind on a real engine while the mock
+  -- (plain tables) kept the specs green -- the exact trap AGENTS.md #7 records.
+  if not util.isObject(objects) then return out end
   env = env or engine.env()
-  for _, object in ipairs(objects) do
-    local read = M.read(object, env, fromPosition)
-    if read then out[#out + 1] = read end
+
+  -- NOT `ipairs`: LuaJIT's ipairs is the 5.1 builtin and rejects a userdata outright ("table
+  -- expected, got userdata"), even though the engine's ObjectList carries __len/__index and
+  -- iterates fine in the game. `#` + `[i]` go through those metamethods for BOTH a userdata and a
+  -- plain table, so the explicit index loop reads each of them.
+  local count = 0
+  pcall(function() count = #objects end)
+  for i = 1, count do
+    local object = nil
+    pcall(function() object = objects[i] end)
+    if object ~= nil then
+      local read = M.read(object, env, fromPosition)
+      if read then out[#out + 1] = read end
+    end
   end
   return out
 end
@@ -592,7 +607,7 @@ function M.readNearby(env, fromPosition, lists)
   local out = {}
   for _, listName in ipairs(wanted) do
     local list = nearby[listName]
-    if type(list) == 'table' then
+    if util.isObject(list) then
       for _, read in ipairs(M.readList(list, env, fromPosition)) do
         read.list = listName
         out[#out + 1] = read

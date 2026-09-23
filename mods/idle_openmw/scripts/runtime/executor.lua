@@ -179,7 +179,7 @@ function Executor:equip(recordId)
   local record = safe(object.type and object.type.record, object) or {}
   local resolved = equipment.resolve(object.type, record, types)
   if not resolved.slot then
-    return false, ('%s is not something we can equip — use the inventory window'):format(tostring(recordId))
+    return false, ('%s is not something we can equip - use the inventory window'):format(tostring(recordId))
   end
 
   local slots = types and types.Actor and types.Actor.EQUIPMENT_SLOT

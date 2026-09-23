@@ -92,4 +92,20 @@ describe('engine values are userdata, not tables', function()
     assert.is_true(ok, tostring(snapshot))
     assert.is_not_nil(snapshot)
   end)
+
+  it('reads a position out of a userdata Vector3, not only a table', function()
+    -- The bug this pins: observer.point() guarded with `type(v) ~= 'table'`, so a Vector3
+    -- USERDATA was rejected. The player then read as (0,0,0) and every actor's position as nil --
+    -- and the director derives every distance, arrival and steering decision from those. The
+    -- mocks pass plain tables, so they never caught it; only a real engine did.
+    if not hasNewproxy then return end
+    local observer = require('scripts.runtime.observer')
+    local fromUserdata = observer.point(ud({ x = 100, y = 200, z = 300 }))
+    assert.equals(100, fromUserdata.x)
+    assert.equals(300, fromUserdata.z)
+    -- a plain table must keep working
+    assert.equals(100, observer.point({ x = 100, y = 200, z = 300 }).x)
+    assert.is_nil(observer.point(nil))
+    assert.is_nil(observer.point(7))
+  end)
 end)

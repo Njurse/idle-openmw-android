@@ -43,7 +43,10 @@ local function num(value, fallback)
 end
 
 local function point(value)
-  if type(value) ~= 'table' then return nil end
+  -- a Vector3 is engine USERDATA, not a table. `type(value) ~= 'table'` here silently turned the
+  -- player's position into (0,0,0) and every actor's into nil, so the whole world model was blind
+  -- on a real engine while the mocks (plain tables) kept the specs green (AGENTS.md #7).
+  if not util.isObject(value) then return nil end
   return { x = num(value.x, 0), y = num(value.y, 0), z = num(value.z, 0) }
 end
 M.point = point
@@ -55,14 +58,14 @@ M.point = point
 local function dynamicStat(env, actor, kind)
   local dynamic = env.types and env.types.Actor and env.types.Actor.stats and env.types.Actor.stats.dynamic
   local stat = safe(dynamic and dynamic[kind], actor)
-  if type(stat) ~= 'table' then return { current = 1, base = 1, modifier = 0 } end
+  if not util.isObject(stat) then return { current = 1, base = 1, modifier = 0 } end
   local base = num(stat.base, num(stat.current, 1))
   return { current = num(stat.current, base), base = base, modifier = num(stat.modifier, 0) }
 end
 
 local function readStatMap(container)
   local out = {}
-  if type(container) ~= 'table' then return out end
+  if not util.isObject(container) then return out end
   for id, getter in pairs(container) do
     if type(id) == 'string' and type(getter) == 'function' then
       -- getter signature: fn(actor)
@@ -106,7 +109,7 @@ end
 local function readEquipped(env, actor)
   local set = {}
   local equipment = safe(env.types and env.types.Actor and env.types.Actor.getEquipment, actor)
-  if type(equipment) ~= 'table' then return set end
+  if not util.isObject(equipment) then return set end
   for _, item in pairs(equipment) do
     local id = util.isObject(item) and (item.recordId or item.id) or nil
     if id then set[id] = true end
@@ -118,11 +121,11 @@ end
 function M.readInventory(env, actor)
   local out = {}
   local inventory = safe(env.types and env.types.Actor and env.types.Actor.inventory, actor)
-  if type(inventory) ~= 'table' then return out end
+  if not util.isObject(inventory) then return out end
 
   local equipped = readEquipped(env, actor)
   local items = safe(function() return inventory.getAll and inventory:getAll() end)
-  if type(items) ~= 'table' then return out end
+  if not util.isObject(items) then return out end
 
   for _, object in pairs(items) do
     if util.isObject(object) then
@@ -163,7 +166,7 @@ function M.readClass(env, actor)
   local classes = env.types and env.types.NPC and env.types.NPC.classes
   local record
   if classes and type(classes.record) == 'function' then record = safe(classes.record, classId) end
-  if type(record) ~= 'table' then return { id = classId, name = classId } end
+  if not util.isObject(record) then return { id = classId, name = classId } end
 
   return {
     id = record.id or classId,
@@ -433,9 +436,9 @@ function M.readJournal(env, actor)
   local Player = env.types and env.types.Player
   if not Player or type(Player.journal) ~= 'function' then return out end
   local journal = safe(Player.journal, actor)
-  if type(journal) ~= 'table' then return out end
+  if not util.isObject(journal) then return out end
   local entries = journal.journalTextEntries
-  if type(entries) ~= 'table' then return out end
+  if not util.isObject(entries) then return out end
 
   local count = #entries
   for i = math.max(1, count - 19), count do
@@ -460,7 +463,7 @@ function M.readJournalTopics(env, actor)
   local Player = env.types and env.types.Player
   if not Player or type(Player.journal) ~= 'function' then return out end
   local journal = safe(Player.journal, actor)
-  if type(journal) ~= 'table' or type(journal.topics) ~= 'table' then return out end
+  if not util.isObject(journal) or not util.isObject(journal.topics) then return out end
 
   for name, topic in pairs(journal.topics) do
     if type(name) == 'string' and name ~= '' then
@@ -480,7 +483,7 @@ function M.readQuests(env, actor)
   local Player = env.types and env.types.Player
   if not Player or type(Player.quests) ~= 'function' then return out end
   local quests = safe(Player.quests, actor)
-  if type(quests) ~= 'table' then return out end
+  if not util.isObject(quests) then return out end
 
   for id, quest in pairs(quests) do
     if util.isObject(quest) and quest.started and not quest.finished then
