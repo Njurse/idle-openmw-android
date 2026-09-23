@@ -159,4 +159,70 @@ describe('idle.records', function()
       assert.equals(#records.familyCounts(nil), 0)
     end)
   end)
+
+  -- ---------------------------------------------------------------------------
+  -- userdata
+  -- ---------------------------------------------------------------------------
+  -- A record, and its `infos` list, are engine USERDATA. These guards used to be
+  -- `type(x) == 'table'`, so every one of these functions returned nil or empty for EVERY real
+  -- record -- while this very file stayed green, because the cases above use plain tables.
+  describe('userdata records', function()
+    local hasNewproxy = type(newproxy) == 'function'
+
+    --- A userdata answering fields from `fields`, like an engine record.
+    local function ud(fields)
+      local proxy = newproxy(true)
+      getmetatable(proxy).__index = function(_, key) return fields[key] end
+      return proxy
+    end
+
+    --- A userdata list: `#` via __len, `[i]` via __index -- how the engine's lists read.
+    local function udList(items)
+      local proxy = newproxy(true)
+      local mt = getmetatable(proxy)
+      mt.__index = function(_, index) return items[index] end
+      mt.__len = function() return #items end
+      return proxy
+    end
+
+    it('shapes a record whose own fields AND info list are userdata', function()
+      if not hasNewproxy then return end
+      local record = ud({
+        id = 'q1', name = 'A Quest',
+        infos = udList({ ud({ id = 'i1', text = 'first' }), ud({ id = 'i2', text = 'second' }) }),
+      })
+      local shaped = records.shapeRecord(record, { family = 'journal' })
+      assert.equals('q1', shaped.id)
+      assert.equals('A Quest', shaped.name)
+      assert.equals('journal', shaped.family)
+      assert.equals(2, shaped.infosTotal)
+      assert.equals('first', shaped.infos[1].text)
+      assert.equals('second', shaped.infos[2].text)
+    end)
+
+    it('shapes one info entry read from userdata', function()
+      if not hasNewproxy then return end
+      local shaped = records.shapeInfo(ud({ id = 'i9', text = 'hi there', questStage = 10 }))
+      assert.equals('i9', shaped.id)
+      assert.equals('hi there', shaped.text)
+      assert.equals(10, shaped.questStage)
+    end)
+
+    it('finds the journal entry for a stage in a userdata record', function()
+      if not hasNewproxy then return end
+      local record = ud({ infos = udList({
+        ud({ id = 'a', text = 'stage 5', questStage = 5 }),
+        ud({ id = 'b', text = 'stage 10', questStage = 10 }),
+      }) })
+      local found = records.entriesForStage(record, 10)
+      assert.equals(1, #found)
+      assert.equals('b', found[1].id)
+    end)
+
+    it('sees a finished-state entry in a userdata record', function()
+      if not hasNewproxy then return end
+      assert.is_true(records.isFinished(ud({ infos = udList({ ud({ id = 'a', questFinished = true }) }) })))
+      assert.is_false(records.isFinished(ud({ infos = udList({ ud({ id = 'a' }) }) })))
+    end)
+  end)
 end)

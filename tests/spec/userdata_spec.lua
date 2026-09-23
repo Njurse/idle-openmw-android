@@ -33,6 +33,27 @@ describe('engine values are userdata, not tables', function()
     return proxy
   end
 
+  --- A userdata list: `#` via __len, `[i]` via __index -- how the engine's lists read. `ipairs`
+  --- cannot be used on one (LuaJIT's ipairs is the 5.1 builtin), which is why the mod's readers
+  --- walk by index.
+  local function udList(items)
+    local proxy = newproxy(true)
+    local mt = getmetatable(proxy)
+    mt.__index = function(_, index) return items[index] end
+    mt.__len = function() return #items end
+    return proxy
+  end
+
+  --- Type sentinels that classify userdata objects, like the engine's do.
+  local function classifyingTypes()
+    local names = { 'Player', 'NPC', 'Creature', 'Door', 'Container', 'Activator', 'Item' }
+    local types = {}
+    for _, name in ipairs(names) do
+      types[name] = { objectIsInstance = function(o) return o and o._type == name end }
+    end
+    return types
+  end
+
   it('util.isObject accepts tables AND userdata, and rejects the rest', function()
     assert.is_true(util.isObject({}))
     assert.is_true(util.isObject({ a = 1 }))
@@ -107,5 +128,45 @@ describe('engine values are userdata, not tables', function()
     assert.equals(100, observer.point({ x = 100, y = 200, z = 300 }).x)
     assert.is_nil(observer.point(nil))
     assert.is_nil(observer.point(7))
+  end)
+
+  it('the record shapers read a userdata record and its info list', function()
+    -- records.lua is spec'd in its own file too; this is the userdata case, in the file whose
+    -- whole job is to state the fact. `type(raw) ~= 'table'` made every shaper return nil for
+    -- EVERY real record.
+    if not hasNewproxy then return end
+    local records = require('scripts.idle.records')
+    local record = ud({ id = 'q1', name = 'A Quest',
+                        infos = udList({ ud({ id = 'i1', text = 'hi', questStage = 10 }) }) })
+    local shaped = records.shapeRecord(record)
+    assert.equals('q1', shaped.id)
+    assert.equals(1, shaped.infosTotal)
+    assert.equals('hi', shaped.infos[1].text)
+    assert.equals(1, #records.entriesForStage(record, 10))
+  end)
+
+  it('the hud orders a userdata list of interactables', function()
+    if not hasNewproxy then return end
+    local hud = require('scripts.idle.hud')
+    local sorted = hud.sortByDistance(udList({
+      { id = 'far', distance = 30 },
+      { id = 'near', distance = 10 },
+    }))
+    assert.equals(2, #sorted)
+    assert.equals('near', sorted[1].id)
+    assert.equals('far', sorted[2].id)
+  end)
+
+  it('the entity reader walks a userdata list and classifies it', function()
+    -- nearby.actors is an ObjectList userdata. `type(list) == 'table'` read every list as EMPTY,
+    -- so the world model went blind on a real engine while the mock (plain tables) stayed green.
+    if not hasNewproxy then return end
+    local entities = require('scripts.runtime.entities')
+    local env = { types = classifyingTypes() }
+    local actor = ud({ _type = 'NPC', recordId = 'fargoth', name = 'Fargoth',
+                       position = ud({ x = 10, y = 20, z = 30 }) })
+    local rows = entities.readList(udList({ actor }), env, { x = 0, y = 0, z = 0 })
+    assert.equals(1, #rows)
+    assert.equals('fargoth', rows[1].recordId)
   end)
 end)
