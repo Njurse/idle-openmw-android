@@ -48,3 +48,4 @@ Thumbs.db
 # working note, not content, so it must not ship or dirty the tree.
 mods/idle_openmw/narration.txt
 mods/idle_openmw/dev_command.txt
+mods/idle_openmw/idle_api.txt

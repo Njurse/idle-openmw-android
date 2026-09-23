@@ -41,4 +41,6 @@ return {
   'tests.spec.jumper_spec',
   'tests.spec.narration_spec',
   'tests.spec.uiReport_spec',
+  'tests.spec.json_spec',
+  'tests.spec.bridge_spec',
 }

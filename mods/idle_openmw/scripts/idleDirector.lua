@@ -34,6 +34,7 @@ local tapMove = require('scripts.idle.tapMove')
 local capabilitiesMod = require('scripts.runtime.capabilities')
 local narrationMod = require('scripts.idle.narration')
 local uiReportMod = require('scripts.idle.uiReport')
+local bridgeMod = require('scripts.idle.bridge')
 local uiLayoutMod = require('scripts.idle.uiLayout')
 
 local self = engine.self()
@@ -354,12 +355,188 @@ local function pollDevCommand(dt)
     print('idle-openmw: heartbeat every ' .. tostring(state.heartbeatSeconds) .. 's')
   elseif command.verb == 'note' then
     state.operatorNote = command.text
+  elseif command.verb == 'telemetry' then
+    state.telemetrySeconds = command.seconds or 10
+    state.telemetryElapsed = 0
+    print('idle-openmw: telemetry every ' .. tostring(state.telemetrySeconds) .. 's')
   elseif command.verb == 'stop' then
     state.heartbeatSeconds = nil
     state.operatorNote = nil
   else
     print('idle-openmw: unknown dev command: ' .. tostring(command.text))
   end
+end
+
+--- Where the bridge gets its answers (scripts/idle/bridge.lua, docs/bridge-api.md).
+---
+--- Every source is defensive: a bridge that cannot answer says "unavailable" rather than
+--- taking the mod down, and this runs in a live game where any of these can be missing.
+local function bridgeSources()
+  local function snapshot() return state.snapshot end
+
+  --- Vector3 is userdata in 0.51: read the components, never the object itself.
+  local function position(p)
+    if not p then return nil end
+    return { x = p.x, y = p.y, z = p.z }
+  end
+
+  --- Summarise one nearby object, safely.
+  local function describeObject(object)
+    local ok, entry = pcall(function()
+      local types = engine.types()
+      return {
+        recordId = object and object.recordId or nil,
+        name = types and types.getRecordName and types.getRecordName(object) or nil,
+      }
+    end)
+    if ok then return entry end
+    return { error = tostring(entry) }
+  end
+
+  local function nearbyList(name)
+    return function(params)
+      local nearby = engine.nearby()
+      local list = nearby and nearby[name]
+      if type(list) ~= 'table' then return nil end
+      local radius = type(params) == 'table' and tonumber(params.radius) or nil
+      local snap = snapshot()
+      local player = snap and snap.player
+      local out = {}
+      for _, object in ipairs(list) do
+        local entry = describeObject(object)
+        pcall(function()
+          local op = object.position
+          if op and player and player.position then
+            local dx = (op.x or 0) - (player.position.x or 0)
+            local dy = (op.y or 0) - (player.position.y or 0)
+            local dz = (op.z or 0) - (player.position.z or 0)
+            entry.distance = math.floor(math.sqrt(dx * dx + dy * dy + dz * dz) + 0.5)
+          end
+        end)
+        if not radius or not entry.distance or entry.distance <= radius then
+          out[#out + 1] = entry
+        end
+      end
+      return out
+    end
+  end
+
+  return {
+    hasRealClock = function() return engine.hasRealClock() end,
+    capabilities = function()
+      return { line = capabilitiesMod.describe(state.capabilities) }
+    end,
+    player = function()
+      local snap = snapshot()
+      local player = snap and snap.player or {}
+      return {
+        name = player.name, level = player.level, gold = player.gold,
+        health = player.health, fatigue = player.fatigue, magicka = player.magicka,
+        position = position(player.position),
+        cell = player.cell and player.cell.name or nil,
+        race = player.race, class = player.class,
+      }
+    end,
+    cell = function()
+      local snap = snapshot()
+      local cell = snap and snap.world and snap.world.cell
+      if not cell then return nil end
+      return {
+        name = cell.name, region = cell.region,
+        exterior = cell.isExterior, gridX = cell.gridX, gridY = cell.gridY,
+      }
+    end,
+    entities = function()
+      return {
+        actors = nearbyList('actors')({}),
+        doors = nearbyList('doors')({}),
+        activators = nearbyList('activators')({}),
+        containers = nearbyList('containers')({}),
+      }
+    end,
+    quests = function()
+      local types = engine.types()
+      local player = state.env and state.env.self
+      if not player and engine.env then
+        local okEnv, env = pcall(engine.env)
+        if okEnv and env then player = env.self end
+      end
+      if not (types and types.Player and type(types.Player.quests) == 'function') then
+        return nil
+      end
+      local ok, list = pcall(types.Player.quests, player)
+      if not ok or type(list) ~= 'table' then return nil end
+      local out = {}
+      for id, quest in pairs(list) do
+        out[#out + 1] = {
+          id = id,
+          stage = quest and quest.stage,
+          started = quest and quest.started,
+          finished = quest and quest.finished,
+          name = quest and quest.name,
+        }
+      end
+      table.sort(out, function(a, b) return tostring(a.id) < tostring(b.id) end)
+      return out
+    end,
+    topics = function()
+      local snap = snapshot()
+      local topics = snap and snap.journalTopics
+      if type(topics) ~= 'table' then return nil end
+      local out = {}
+      for name in pairs(topics) do out[#out + 1] = { topic = name } end
+      table.sort(out, function(a, b) return a.topic < b.topic end)
+      return out
+    end,
+    ui = function() return gatherUiReport() end,
+  }
+end
+
+--- The bridge instance, built lazily.
+local function bridge()
+  if not state.bridge then
+    state.bridge = bridgeMod.new(bridgeSources(), {
+      onAction = function(goal, ttl)
+        if not state.director then return { accepted = false, reason = 'not initialised' } end
+        -- Actions go through the director's own directive channel, so a request from a
+        -- host is the same thing as a tap in the console: one path, one set of rules.
+        local ok, result = pcall(function()
+          return state.director:pushDirective(goal, ttl)
+        end)
+        if not ok then return { accepted = false, reason = tostring(result) } end
+        return { accepted = true, goal = goal, directive = result }
+      end,
+    })
+  end
+  return state.bridge
+end
+
+--- Answer request lines from `idle_api.txt`, one response line each.
+---
+--- OpenMW's Lua cannot open a socket or write a file, so a file in and a print out is the
+--- whole channel: the host writes a line, the mod answers into the log (and stdout).
+local function pollApiRequests(dt)
+  state.apiElapsed = (state.apiElapsed or 0) + (dt or 0)
+  if state.apiElapsed < 1 then return end
+  state.apiElapsed = 0
+
+  local ok, text = pcall(engine.readTextFile, 'idle_api.txt', 8192)
+  if not ok or type(text) ~= 'string' or text == '' then return end
+  -- Answer each request once: the file is re-read every second, so remembering what we have
+  -- served is what stops one request being answered forever.
+  if text == state.lastApiText then return end
+  state.lastApiText = text
+
+  local instance = bridge()
+  local answered = 0
+  for line in text:gmatch('[^\r\n]+') do
+    local response = instance:handleLine(line)
+    if response then
+      print(response)
+      answered = answered + 1
+    end
+  end
+  if answered == 0 then print('idle-openmw: idle_api.txt had no requests') end
 end
 
 local function ensureInit()
@@ -581,6 +758,19 @@ local function update(dt)
     -- pixels: the UI mode stack names the open window (Chargen*, Dialogue, Interface,
     -- Loading, ...). Driving character creation without it is guesswork.
     do
+      -- Sample dt across frames, not just the first: the first frame of a run legitimately
+      -- has dt=0, and one sample cannot tell "dt is always 0" from "dt starts at 0". The
+      -- snapshot, the dev channel, the API poll and the heartbeat all accumulate dt, so if
+      -- dt never grows, the whole director silently does nothing.
+      do
+        state.frames = (state.frames or 0) + 1
+        local frame = state.frames
+        if frame == 1 or frame == 2 or frame == 3 or frame == 60 or frame == 300
+          or frame % 600 == 0 then
+          pcall(print, 'idle-openmw: frame ' .. frame .. ' dt=' .. tostring(dt)
+            .. ' sinceSnapshot=' .. tostring(state.sinceSnapshot))
+        end
+      end
       -- Read the stack RAW, not through the director's summary: when the summary says
       -- nothing it is because the director is gated, and we would learn nothing about
       -- whether the engine had a mode to report at all.
@@ -609,6 +799,14 @@ local function update(dt)
     -- the dev channel, then any heartbeat the operator asked for
     state.frameCount = (state.frameCount or 0) + 1
     pollDevCommand(dt)
+    pollApiRequests(dt)
+    if state.telemetrySeconds and state.telemetrySeconds > 0 then
+      state.telemetryElapsed = (state.telemetryElapsed or 0) + dt
+      if state.telemetryElapsed >= state.telemetrySeconds then
+        state.telemetryElapsed = 0
+        print(bridge():telemetry())
+      end
+    end
     if state.heartbeatSeconds and state.heartbeatSeconds > 0 then
       -- Accumulate dt rather than comparing wall clocks: the wall-clock version fired on
       -- EVERY frame (3603 reports in under a minute) and buried the log it was meant to

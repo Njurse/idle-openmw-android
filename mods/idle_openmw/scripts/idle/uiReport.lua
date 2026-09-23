@@ -103,6 +103,7 @@ end
 ---
 ---   ui | dump        report the UI and state to the engine log
 ---   heartbeat <sec>  report repeatedly every <sec> seconds (0 to stop)
+---   telemetry <sec>  push machine-readable telemetry every <sec> seconds
 ---   note <text>      show <text> as the narration line
 ---   stop             clear the heartbeat (leaves the narration alone)
 function M.parseCommand(text)
@@ -113,6 +114,9 @@ function M.parseCommand(text)
   local verb, rest = command:match('^(%S+)%s*(.*)$')
   verb = (verb or ''):lower()
   if verb == 'ui' or verb == 'dump' then return { verb = 'dump' } end
+  if verb == 'telemetry' then
+    return { verb = 'telemetry', seconds = tonumber(rest) }
+  end
   if verb == 'heartbeat' then
     local seconds = tonumber(rest)
     return { verb = 'heartbeat', seconds = seconds }
