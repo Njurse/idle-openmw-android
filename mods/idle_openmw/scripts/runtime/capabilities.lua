@@ -156,10 +156,22 @@ function M.describe(probe)
   if probe.ok then
     return ('%s; all %d capabilities present'):format(revision, #(probe.present or {}))
   end
-  local labels = {}
+  -- Split required from optional. A capability that is merely *absent on this engine*
+  -- is not a fault -- `camera.castRenderingRay` does not exist in 0.51 at all -- and
+  -- reporting it as "MISSING 1/10" reads like breakage when nothing is wrong.
+  local required, optional = {}, {}
   for _, name in ipairs(probe.missing or {}) do
-    labels[#labels + 1] = M.LABEL[name] or name
+    local label = M.LABEL[name] or name
+    if M.REQUIRED[name] then required[#required + 1] = label
+    else optional[#optional + 1] = label end
   end
+  if #required == 0 and #optional > 0 then
+    return ('%s; all required capabilities present (%d optional absent: %s)'):format(
+      revision, #optional, table.concat(optional, ', '))
+  end
+  local labels = {}
+  for _, name in ipairs(required) do labels[#labels + 1] = name end
+  for _, name in ipairs(optional) do labels[#labels + 1] = name end
   return ('%s; MISSING %d/%d: %s  [env: %s]'):format(revision, #(probe.missing or {}),
     #(probe.present or {}) + #(probe.missing or {}), table.concat(labels, ', '),
     probe.envTypes or '?')

@@ -36,6 +36,7 @@ local uiLayout = require('scripts.idle.uiLayout')
 local uiModel = require('scripts.idle.uiModel')
 local util = require('scripts.idle.util')
 local themeMod = require('scripts.idle.theme')
+local narrationMod = require('scripts.idle.narration')
 
 local ui = engine.ui()
 local engines = engine.util()
@@ -63,6 +64,9 @@ local state = {
   hidden = false,
   theme = nil,
   tapToMove = true,
+  -- the live narration line (scripts/idle/narration.lua); revision-guarded so the
+  -- element is only touched when the text actually changes
+  narration = narrationMod.new(),
 }
 
 -- ---------------------------------------------------------------------------
@@ -111,6 +115,14 @@ local function usable()
     and engines ~= nil and engines.vector2 ~= nil
 end
 
+--- Colour from components, for the few places that need one inline.
+local function utilColor(r, g, b, a)
+  if engines and engines.util and engines.util.color then
+    return engines.util.color(r / 255, g / 255, b / 255, a or 1)
+  end
+  return nil
+end
+
 --- Create a root element. `rect` gives both the position and the tap area.
 local function createElement(opts)
   local props = {
@@ -124,6 +136,19 @@ local function createElement(opts)
   end
   if opts.anchor then props.anchor = opts.anchor end
   if opts.ignorePointerEvents then props.ignorePointerEvents = true end
+  -- Text properties the engine supports (components/lua_ui/text.cpp:52): text, textSize,
+  -- textColor, wordWrap, textAlignH/V, multiline, autoSize, textShadow, textShadowColor.
+  -- `wordWrap`+`multiline`+`autoSize=false` is what makes the narration one fixed box of
+  -- wrapped lines rather than one long line running off the screen.
+  if opts.wordWrap then props.wordWrap = true end
+  if opts.multiline then props.multiline = true end
+  if opts.autoSize ~= nil then props.autoSize = opts.autoSize end
+  if opts.textAlignH ~= nil then props.textAlignH = opts.textAlignH end
+  if opts.textAlignV ~= nil then props.textAlignV = opts.textAlignV end
+  if opts.textShadow then
+    props.textShadow = true
+    props.textShadowColor = opts.textShadowColor or utilColor(0, 0, 0, 0.85)
+  end
 
   local layout = { layer = 'HUD', props = props }
   local t = opts.template and template(opts.template)
@@ -353,11 +378,14 @@ local function build()
   -- --- top strip (four text rows + a mode button) ---
   local stripHeight = math.floor(20 * scale)
   local strip = {
-    { key = 'mode', size = 15 * textScale, role = 'mode', template = 'textHeader' },
-    { key = 'goal', size = 13 * textScale, role = 'goal', template = 'textNormal' },
-    { key = 'pools', size = 12 * textScale, role = 'pools', template = 'textNormal' },
-    { key = 'gold', size = 12 * textScale, role = 'gold', template = 'textNormal' },
-    { key = 'log', size = 11 * textScale, role = 'log', template = 'textNormal' },
+    -- Sizes raised ~12% over the original 15/13/12/12/11 after seeing them rendered:
+    -- the small rows were too small to read comfortably at a glance on a real screen,
+    -- which defeats the point of a status console. `ui.textScale` remains the knob.
+    { key = 'mode', size = 17 * textScale, role = 'mode', template = 'textHeader' },
+    { key = 'goal', size = 15 * textScale, role = 'goal', template = 'textNormal' },
+    { key = 'pools', size = 13 * textScale, role = 'pools', template = 'textNormal' },
+    { key = 'gold', size = 13 * textScale, role = 'gold', template = 'textNormal' },
+    { key = 'log', size = 12 * textScale, role = 'log', template = 'textNormal' },
   }
   state.elements.top = {}
   for index, row in ipairs(strip) do
@@ -383,7 +411,7 @@ local function build()
     local tabId = tab.id
     state.elements.tabs[tabId] = createElement({
       x = tab.x, y = tab.y, width = tab.width, height = tab.height,
-      text = tab.label, size = 12 * textScale, color = roleColour('tabIdle'),
+      text = tab.label, size = 13 * textScale, color = roleColour('tabIdle'),
       template = 'textNormal',
       onTap = function() onTabTap(tabId) end,
     })
@@ -543,6 +571,66 @@ end
 -- ---------------------------------------------------------------------------
 
 --- Should the console be on screen right now?
+-- ---------------------------------------------------------------------------
+-- narration -- shown even when the console is hidden
+-- ---------------------------------------------------------------------------
+
+--- Draw (or refresh) the narration line.
+---
+--- Unlike the console, this is deliberately ALWAYS visible. The console hides during
+--- character creation because the engine is asking the player questions; the narration
+--- does the opposite, because that is exactly when someone watching needs to know the
+--- mod is holding back on purpose rather than stuck. It is also the only way to talk to
+--- a person watching a run: write `narration.txt` in the data folder and it appears here
+--- (scripts/runtime/engine.lua readTextFile -> scripts/idle/narration.lua choose).
+local function updateNarration()
+  local api = idle()
+  if not api or type(api.narration) ~= 'function' then return end
+  local okText, text = pcall(api.narration)
+  if not okText then return end
+
+  local changed = state.narration:set(text)
+
+  if not state.narrationElement then
+    -- compute the base layout just for the narration rect: build() owns its own layout
+    -- and only runs in the world, but narration must exist before that.
+    local screen = nil
+    if ui.screenSize then
+      local okSize, size = pcall(ui.screenSize)
+      if okSize then screen = size end
+    end
+    local cfg = {}
+    if api.getConfig then
+      local okCfg, value = pcall(api.getConfig)
+      if okCfg and util.isObject(value) then cfg = value end
+    end
+    local base = uiLayout.compute(screen, cfg)
+    local rect = base.narration
+    state.narrationElement = createElement({
+      x = rect.x, y = rect.y, width = rect.width, height = rect.height,
+      text = state.narration:get(),
+      -- a touch larger than the consoles body text: this is meant to be read at a glance
+      size = 16 * base.textScale,
+      color = roleColour('goal'),
+      wordWrap = true, multiline = true, autoSize = false,
+      textAlignH = ui.ALIGNMENT and ui.ALIGNMENT.Center or nil,
+      textAlignV = ui.ALIGNMENT and ui.ALIGNMENT.Start or nil,
+      textShadow = true,
+      ignorePointerEvents = true,
+    })
+    if state.narrationElement then
+      state.narrationElement.layer = 'HUD'
+      state.narrationElement:update()
+    end
+    return
+  end
+
+  if changed then
+    state.narrationElement.layout.props.text = state.narration:get()
+    state.narrationElement:update()
+  end
+end
+
 --- It is a game HUD, so it stays hidden until the character is free in the
 --- world -- never over the character-creation windows (scripts/idle/lifecycle.lua).
 --- A mod build without the `phase` interface keeps the old always-visible
@@ -560,6 +648,10 @@ local function update(dt)
   if not usable() then state.disabled = true return end
 
   local ok, err = pcall(function()
+    -- Narration first, and BEFORE the console gate below: it must be up during
+    -- character creation, which is exactly where the console is hidden.
+    updateNarration()
+
     -- The console is a *game* HUD. During character creation (and the menu / a
     -- load screen) the engine is asking the player questions and the console
     -- must not cover them -- so it hides until the character is free in the

@@ -59,6 +59,13 @@ Because `env` is injected, **new engine behaviour is testable**: extend
 - **Edit files with the file tools, not bash heredocs** — heredocs in this
   workspace mangle backslash escapes, and a check written the same way cannot
   detect the damage it caused.
+- **Keep non-ASCII out of Lua source; build it with `string.char`.** The same
+  mangling turns an ellipsis or an accented letter into a *different* character,
+  silently. It bit twice in one session: a clamp that then overran its own byte
+  limit, and a spec whose expected value was mangled the same way as the code it
+  was testing (so it could not detect the damage). Morrowind data is full of
+  non-ASCII *values* — that is fine; it is typing them into source that is not.
+  `python tools/dev/check_ascii.py` reports code-position offenders.
 
 ## Gotchas that have already bitten
 

@@ -42,3 +42,8 @@ Thumbs.db
 .idea/
 .vscode/
 *.swp
+
+# The operator narration channel: a dev writes this to make the HUD say what they are
+# doing, and the mod reads it through openmw.vfs (scripts/idle/narration.lua). It is a
+# working note, not content, so it must not ship or dirty the tree.
+mods/idle_openmw/narration.txt

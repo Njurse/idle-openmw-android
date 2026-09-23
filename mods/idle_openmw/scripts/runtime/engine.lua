@@ -35,6 +35,30 @@ M.interfaces  = function() return engineModule('openmw.interfaces') end
 M.input       = function() return engineModule('openmw.input') end
 M.ui          = function() return engineModule('openmw.ui') end
 M.camera      = function() return engineModule('openmw.camera') end
+
+--- Read a small UTF-8 text file from the data folder, or nil.
+---
+--- This is the operator channel: write `narration.txt` next to the mod's data and the
+--- HUD shows it, so someone watching a run can narrate what they are doing without
+--- touching the mod. `openmw.vfs` is read-only and available in every script context
+--- (resources/lua_api/openmw/vfs.lua:4).
+--- @param name string VFS path, e.g. 'narration.txt'
+--- @param maxBytes number|nil guard against a huge file (default 4096)
+function M.readTextFile(name, maxBytes)
+  local vfs = engineModule('openmw.vfs')
+  if not vfs or type(vfs.open) ~= 'function' then return nil end
+  local limit = maxBytes or 4096
+  local ok, text = pcall(function()
+    local handle = vfs.open(name)
+    if not handle then return nil end
+    local data = handle:read('*a')
+    handle:close()
+    return data
+  end)
+  if not ok or type(text) ~= 'string' then return nil end
+  if #text > limit then text = text:sub(1, limit) end
+  return text
+end
 M.markup      = function() return engineModule('openmw.markup') end
 
 --- Assemble the env table the observer/executor consume.

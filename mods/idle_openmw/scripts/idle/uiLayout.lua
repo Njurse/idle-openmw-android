@@ -96,6 +96,17 @@ function M.compute(screen, cfg)
     height = touchHeight,
   }
 
+  -- Narration strip: one wrapped line of "what the mod is doing now", centred and
+  -- sitting just above the command bar, so it never covers the buttons or the gesture
+  -- bar. Sized for three wrapped lines; the text element does the wrapping.
+  local narrationHeight = math.floor(60 * scale)
+  layout.narration = {
+    width = math.min(width - margin * 2, math.floor(width * 0.80)),
+    height = narrationHeight,
+    y = layout.bar.y - margin - narrationHeight,
+  }
+  layout.narration.x = math.max(margin, math.floor((width - layout.narration.width) / 2))
+
   -- The strip that must stay free of game rendering.
   layout.viewport = {
     top = safeTop + layout.status.height,

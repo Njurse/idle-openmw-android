@@ -32,6 +32,7 @@ local settlementMod = require('scripts.idle.settlement')
 local cameraMod = require('scripts.idle.camera')
 local tapMove = require('scripts.idle.tapMove')
 local capabilitiesMod = require('scripts.runtime.capabilities')
+local narrationMod = require('scripts.idle.narration')
 
 local self = engine.self()
 
@@ -200,6 +201,19 @@ end
 
 --- Ensure the brain exists. Called from onUpdate only: it touches `openmw.nearby`
 --- and `openmw.types`, which are unsafe in onLoad (docs/openmw-lua-api.md §7).
+--- The operator's narration line, from `narration.txt` in the data folder (nil when
+--- absent). Re-read at most every couple of seconds: it is a file, not a hot path.
+local function operatorNarration()
+  local now = simulationTime()
+  if state.narrationReadAt and (now - state.narrationReadAt) < 2 then
+    return state.narrationText
+  end
+  state.narrationReadAt = now
+  local ok, text = pcall(engine.readTextFile, 'narration.txt')
+  state.narrationText = ok and text or nil
+  return state.narrationText
+end
+
 local function ensureInit()
   if state.director then return end
 
@@ -677,6 +691,25 @@ return {
     end,
     --- What this engine can do (scripts/runtime/capabilities.lua). Probed once.
     capabilities = function() return state.capabilities end,
+
+    --- The HUD narration line (scripts/idle/narration.lua): the operator's note if
+    --- `narration.txt` exists in the data folder, otherwise what the mod is doing.
+    narration = function()
+      if not state.director then return '' end
+      local status = state.director:status()
+      local parts = {}
+      if status.phase ~= 'world' then
+        -- Say WHY nothing is happening: a console that is merely absent looks broken,
+        -- and character creation is where a watcher most needs to be told.
+        parts[#parts + 1] = 'Holding: ' .. tostring(status.phaseLabel or status.phase or '?')
+        parts[#parts + 1] = 'the mod stays out of the way until the character can act'
+      else
+        parts[#parts + 1] = 'mode ' .. tostring(status.mode or '?')
+        if status.goal then parts[#parts + 1] = 'doing ' .. tostring(status.goal) end
+        if status.uiLabel then parts[#parts + 1] = 'screen: ' .. tostring(status.uiLabel) end
+      end
+      return narrationMod.choose(operatorNarration(), table.concat(parts, ' -- '))
+    end,
     setMode = function(mode)
       if not state.director then return nil end
       local applied = state.director:setMode(mode)
