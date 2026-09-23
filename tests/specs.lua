@@ -45,4 +45,5 @@ return {
   'tests.spec.bridge_spec',
   'tests.spec.hud_spec',
   'tests.spec.schema_spec',
+  'tests.spec.entity_spec',
 }
