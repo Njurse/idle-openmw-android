@@ -27,6 +27,46 @@ function M.clampWaypoints(points, max)
   return out
 end
 
+--- Which door (if any) is blocking us right now?
+---
+--- Full pathfinding has to OPEN doors, and the engine's navmesh only *routes through*
+--- them: `includeFlags` defaults to `Walk + Swim + OpenDoor + UsePathgrid`
+--- (files/lua_api/openmw/nearby.lua:120-124,180-182), so `findPath` will happily return
+--- a path that runs straight at a closed door and then the actor walks into it and stops.
+--- The missing half is activation, and this is the decision half of it: given the actor's
+--- position and the doors the engine sees, which one is close enough AND in front?
+---
+--- "In front" matters. A door behind us is not in the way, and opening it would be a
+--- surprise. The bearing is `atan2(dx, dy)`, the same convention `steering` uses, so the
+--- heading it is compared against is the actor's yaw.
+---
+--- @param position table {x,y,z}
+--- @param heading number|nil the actor's yaw (radians)
+--- @param doors list list of { position = {x,y,z}, ... } (engine or plain)
+--- @param opts table|nil { radius = number, cone = number }
+--- @return table|nil the door to open
+function M.doorAhead(position, heading, doors, opts)
+  opts = opts or {}
+  local radius = opts.radius or 128
+  local cone = opts.cone or (math.pi / 3)
+  local best, bestDistance = nil, math.huge
+  for _, door in ipairs(doors or {}) do
+    local to = door.position or door
+    if to then
+      local dx = (to.x or 0) - (position.x or 0)
+      local dy = (to.y or 0) - (position.y or 0)
+      local distance = math.sqrt(dx * dx + dy * dy)
+      if distance <= radius then
+        local bearing = atan2(dx, dy)
+        if math.abs(util.angleDelta(heading or 0, bearing)) <= cone and distance < bestDistance then
+          best, bestDistance = door, distance
+        end
+      end
+    end
+  end
+  return best, bestDistance
+end
+
 --- Total length of a polyline path.
 function M.pathLength(points)
   local total = 0
@@ -36,8 +76,7 @@ function M.pathLength(points)
   return total
 end
 
---- Steering solution toward a waypoint for one frame.
----
+--- Steering solution toward a waypoint for one frame.---
 --- OpenMW faces a direction (dx,dy) by turning to atan2(dx, dy)
 --- (apps/openmw/mwmechanics/aiface.cpp:17). We mirror that and only walk
 --- forward once roughly facing the target, matching the engine's own
@@ -98,14 +137,24 @@ function Route:waypointCount() return self.points and #self.points or 0 end
 
 --- Point the route at `dest`. Re-targeting the same place is a no-op (returns
 --- false) so callers can set the target every tick without thrashing.
-function Route:setTarget(dest)
+function Route:setTarget(dest, opts)
   if not dest then self:clear() return false end
-  if self.target then
-    local drift = util.distance(self.target, dest)
+  -- drift is measured against what the caller ASKED for, not where we ended up: an unreachable
+  -- target gets snapped onto the navmesh (see _repath), and comparing against the snapped point
+  -- would make the caller's next identical order look like a new one and churn every repath.
+  if self.requestedTarget then
+    local drift = util.distance(self.requestedTarget, dest)
     local slack = (self.cfg.behaviour.repathDistance or 256) * 0.5
-    if drift and drift < slack then return false end
+    if drift and drift < slack then
+      -- same destination: keep the route, but honour a caller that asked for a tighter
+      -- arrival ("get within interaction range of that actor") so it is not silently lost
+      if opts and opts.arriveTolerance then self.arriveTolerance = opts.arriveTolerance end
+      return false
+    end
   end
+  self.requestedTarget = util.copy(dest)
   self.target = util.copy(dest)
+  self.arriveTolerance = (opts and opts.arriveTolerance) or nil
   self.points = nil
   self.index = 1
   self.lastProgressAt = -math.huge
@@ -115,14 +164,41 @@ end
 
 function Route:clear()
   self.target = nil
+  self.requestedTarget = nil
+  self.snapped = nil
   self.points = nil
   self.index = 1
   self.pathTarget = nil
   self.lastProgressPos = nil
+  self.arriveTolerance = nil
 end
 
 function Route:_repath(position, now)
-  local ok, points = self.nav.findPath(position, self.target)
+  -- The FLAGS INTENT travels with the call; the engine port turns it into the `includeFlags`
+  -- bitmask (docs/openmw-lua-api.md §3). A port that only reads `(from, to)` ignores the third
+  -- argument, which is why the existing specs keep working.
+  local opts = {
+    doors = self.cfg.behaviour.navOpenDoors ~= false,
+    swim = self.cfg.behaviour.navSwim ~= false,
+  }
+  local ok, points = self.nav.findPath(position, self.target, opts)
+
+  -- If there is no path, the target may simply not be ON the navmesh -- an item on a table, a
+  -- shopkeeper behind a counter. Snap it to walkable ground and try ONCE more, then walk to the
+  -- snapped point (arrival is measured against `self.target`, which is now reachable). Without
+  -- this the move just fails and the goal loops.
+  if (not ok or type(points) ~= 'table' or #points == 0) and type(self.nav.snap) == 'function' then
+    local snapped = self.nav.snap(self.requestedTarget or self.target)
+    if snapped then
+      local okSnap, snapPoints = self.nav.findPath(position, snapped, opts)
+      if okSnap and type(snapPoints) == 'table' and #snapPoints > 0 then
+        self.target = snapped
+        self.snapped = true
+        ok, points = true, snapPoints
+      end
+    end
+  end
+
   self.repaths = self.repaths + 1
   if not ok or type(points) ~= 'table' or #points == 0 then
     self.points = nil
@@ -144,7 +220,7 @@ function Route:update(position, now)
   now = now or 0
   if not self.target then return { status = 'idle' } end
 
-  local tolerance = self.cfg.behaviour.arriveTolerance or 96
+  local tolerance = self.arriveTolerance or self.cfg.behaviour.arriveTolerance or 96
   local toTarget = util.distance(position, self.target)
   if toTarget and toTarget <= tolerance then
     self:clear()
@@ -166,7 +242,15 @@ function Route:update(position, now)
     self.index = self.index + 1
   end
   if self.index > #self.points then
+    local remaining = util.distance(position, self.target)
     self:clear()
+    if remaining and remaining > tolerance then
+      -- The path is spent but we are still away from the target: it was UNREACHABLE (off the
+      -- navmesh, behind a wall), so the path simply ended at the nearest walkable point.
+      -- Reporting 'arrived' here is how a move could "succeed" hundreds of units short and
+      -- then fire an activation out of range -- the exact failure the target canary catches.
+      return { status = 'short', distance = remaining, tolerance = tolerance }
+    end
     return { status = 'arrived' }
   end
 

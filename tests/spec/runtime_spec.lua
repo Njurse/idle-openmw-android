@@ -291,6 +291,27 @@ describe('runtime.openmw adapter', function()
       end)
     end)
 
+    it('opens a door it is about to walk into', function()
+      -- A path can route THROUGH a door (the navmesh default includes OpenDoor) but the actor
+      -- still has to OPEN it; without this the actor walks into a closed door and only the stuck
+      -- timer gives up, which is why "leave the shop" could never work.
+      local door = { id = 'd1', position = { x = 0, y = 60, z = 0 } }
+      local spec = {
+        classId = 'warrior', recordId = 'player', level = 5,
+        position = { x = 0, y = 0, z = 0 }, rotation = 0,
+        cell = { name = 'Balmora', isExterior = true },
+        health = { current = 120, base = 120 },
+        doors = { door },
+      }
+      withEnv(spec, function(env)
+        local ex = newExecutor(env, { nav = mocks.nav(50) })
+        ex:submit({ { type = 'move', dest = { x = 0, y = 300, z = 0 } } })
+        ex:update(0.1, 0)
+        assert.is_true(ex:isMoving())
+        assert.equals(door.activated, 1)
+      end)
+    end)
+
     it('sells junk and banks the gold', function()
       withEnv(WARRIOR_SPEC, function(env)
         local ex = newExecutor(env)

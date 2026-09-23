@@ -252,6 +252,7 @@ decision layer — and the adapter — can be exercised headlessly against
 | [docs/console.md](docs/console.md) | every tab, order, option and gesture in the phone console |
 | [docs/theme.md](docs/theme.md) | the Morrowind palette, the font question, the preview tool |
 | [docs/tap-to-move.md](docs/tap-to-move.md) | tapping the world: raycast → walk / enter / talk |
+| [docs/pathfinding.md](docs/pathfinding.md) | how the character gets anywhere: the nav port, arrival, doors, and where it stops |
 - [Walking out of the ship](docs/leaving-the-ship.md) -- pathfind close enough to interact, look up at the hatch, use it; the reach GMST, the yaw convention, and an aim verified by ray
 - [Building OpenMW from source](docs/engine-build.md) -- the fork: why, the recipe, and the two things that go wrong
 - [Character creation](docs/chargen.md) -- where the new-game flow goes, and why Lua cannot finish it

@@ -82,6 +82,7 @@ M.defaults = {
     pathCacheTtl = 30,         -- simulation seconds before a cached path expires
     maxPathWaypoints = 64,
     stuckTimeout = 45,         -- sim seconds without progress -> give up on a move
+    doorOpenRadius = 128,      -- engine units; open a door this close while walking through it
     restWhenFatigued = true,
 
     -- OpenMW's Lua API exposes no way to drive the barter/rest/training UI
@@ -323,6 +324,10 @@ function M.validate(cfg)
   if cfg.behaviour.arriveTolerance ~= nil then
     clampProblem(problems, 'behaviour.arriveTolerance', cfg.behaviour.arriveTolerance, 1, 4096)
     cfg.behaviour.arriveTolerance = util.clamp(cfg.behaviour.arriveTolerance, 1, 4096)
+  end
+  if cfg.behaviour.doorOpenRadius ~= nil then
+    clampProblem(problems, 'behaviour.doorOpenRadius', cfg.behaviour.doorOpenRadius, 8, 512)
+    cfg.behaviour.doorOpenRadius = util.clamp(cfg.behaviour.doorOpenRadius, 8, 512)
   end
 
   cfg.sensing = cfg.sensing or util.deepCopy(M.defaults.sensing)

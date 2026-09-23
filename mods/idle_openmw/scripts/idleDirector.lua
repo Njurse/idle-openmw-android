@@ -115,9 +115,35 @@ local function makeNavPort()
     return point
   end
 
+  -- Doors and water are expressed through the BITMASK `includeFlags`, not a boolean
+  -- (docs/openmw-lua-api.md §3). The engine default already allows all four -- which is why a
+  -- path can run THROUGH a door -- but passing them explicitly documents the intent and survives
+  -- a build that changes the default. Opening the door is the separate step the executor does
+  -- (scripts/runtime/executor.lua:_openDoorsAhead).
+  local navFlags = nearby.NAVIGATOR_FLAGS
+  local function includeFlags(opts)
+    if type(navFlags) ~= 'table' then return nil end
+    opts = opts or {}
+    local names = { 'Walk' }
+    if opts.swim ~= false then names[#names + 1] = 'Swim' end
+    if opts.doors ~= false then names[#names + 1] = 'OpenDoor' end
+    names[#names + 1] = 'UsePathgrid'
+    local total, any = 0, false
+    for _, name in ipairs(names) do
+      local value = navFlags[name]
+      if type(value) == 'number' then total, any = total + value, true end
+    end
+    if any then return total end
+    return nil
+  end
+
   return {
-    findPath = function(from, to)
-      local ok, status, points = pcall(nearby.findPath, vec(from), vec(to), { destinationTolerance = 32 })
+    findPath = function(from, to, opts)
+      opts = opts or {}
+      local options = { destinationTolerance = opts.tolerance or 32 }
+      local flags = includeFlags(opts)
+      if flags then options.includeFlags = flags end
+      local ok, status, points = pcall(nearby.findPath, vec(from), vec(to), options)
       if not ok then return false, nil end
       local statuses = nearby.FIND_PATH_STATUS
       local success = status == true
@@ -125,6 +151,18 @@ local function makeNavPort()
         or status == 'Success'
       if not success or type(points) ~= 'table' or #points == 0 then return false, nil end
       return true, points
+    end,
+    --- Snap a point onto walkable ground, for a target that sits OFF the navmesh (on a table,
+    --- inside a wall, behind a counter). `nearby.findNearestNavMeshPosition` (docs §3) returns a
+    --- Vector3; a partial read is reported as nothing rather than as confident nonsense.
+    snap = function(point)
+      if type(nearby.findNearestNavMeshPosition) ~= 'function' then return nil end
+      local ok, snapped = pcall(nearby.findNearestNavMeshPosition, vec(point), {})
+      if not ok or not snapped then return nil end
+      local out = nil
+      pcall(function() out = { x = snapped.x, y = snapped.y, z = snapped.z } end)
+      if out and (out.x == nil or out.y == nil or out.z == nil) then return nil end
+      return out
     end,
   }
 end

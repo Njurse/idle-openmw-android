@@ -507,6 +507,8 @@ function M.env(spec)
     doors = nearbyDoors, activators = {}, items = {},
     FIND_PATH_STATUS = FIND_PATH_STATUS,
     COLLISION_TYPE = { Default = 1, Camera = 2, VisualOnly = 3 },
+    -- The bitmask the real API uses for `includeFlags` (files/lua_api/openmw/nearby.lua:120).
+    NAVIGATOR_FLAGS = { Walk = 1, Swim = 2, OpenDoor = 4, UsePathgrid = 8 },
     -- Ray picking for tap-to-move. Specs set spec.rayHit = { hitPos, hitObject }.
     castRay = function()
       local hit = spec.rayHit

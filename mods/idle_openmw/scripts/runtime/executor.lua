@@ -375,12 +375,51 @@ function Executor:_startMove(command, now)
   if not self.route or not command.dest then return false end
   local self_ = self.env.self
   if not self_ then return false end
-  self.route:setTarget(command.dest)
+  self.route:setTarget(command.dest, { arriveTolerance = command.arrive })
   local status = self.route:update(self_.position or { x = 0, y = 0, z = 0 }, now)
   if status.status == 'moving' then return true end
   -- do not leave a dead route lingering, or isMoving() would lie
   self.route:clear()
   return false
+end
+
+--- Open a door we are about to walk into.
+---
+--- `nearby.findPath` ROUTES THROUGH doors -- `includeFlags` already defaults to
+--- `Walk + Swim + OpenDoor + UsePathgrid` (files/lua_api/openmw/nearby.lua:180-182) -- but the
+--- actor still has to OPEN them. Without this the actor walks into a closed door and only the
+--- stuck timer eventually gives up, which is why "leave the shop" could never work. The
+--- decision (which door, in front, near enough) is pure (scripts/idle/pathfinder.lua:doorAhead);
+--- this is the engine half, and it is bounded to one door per call.
+function Executor:_openDoorsAhead()
+  local nearby = self.env.nearby
+  local doors = nearby and nearby.doors
+  local self_ = self.env.self
+  if not doors or not self_ then return nil end
+
+  local list = {}
+  pcall(function()
+    for _, door in ipairs(doors) do
+      list[#list + 1] = { position = door.position, object = door, id = door.id }
+    end
+  end)
+  if #list == 0 then return nil end
+
+  local door = pathfinder.doorAhead(
+    self_.position or { x = 0, y = 0, z = 0 },
+    self_.rotation or 0,
+    list,
+    { radius = self.cfg.behaviour.doorOpenRadius or 128 })
+  if not door then return nil end
+
+  local object = door.object
+  local actor = self:_player()
+  if util.isObject(object) and type(object.activateBy) == 'function' and actor then
+    pcall(function() object:activateBy(actor) end)
+    self:log('Opened a door in the way', 'info')
+    return door.id
+  end
+  return nil
 end
 
 --- Advance movement for this frame (keeps the player walking between decisions).
@@ -392,8 +431,16 @@ function Executor:step(dt, now)
 
   if status.status == 'moving' then
     self:_steer(self_.position or { x = 0, y = 0, z = 0 }, status.waypoint, self_.rotation or 0)
+    self:_openDoorsAhead()
   elseif status.status == 'arrived' then
     self:_releaseControls()
+    self:pop()
+  elseif status.status == 'short' then
+    -- the path ran out while still away from the target: the target is unreachable from here.
+    -- Report the gap instead of pretending we arrived.
+    self:_releaseControls()
+    self:log(('Could not reach the destination (stopped %d short)')
+      :format(math.floor(status.distance or 0)), 'warn')
     self:pop()
   elseif status.status == 'failed' or status.status == 'stuck' then
     self:_releaseControls()
