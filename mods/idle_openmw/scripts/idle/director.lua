@@ -152,8 +152,20 @@ function M.planCommands(goalId, statView, world, snapshot, cfg, ctx)
     -- Nothing to act on? Emit NOTHING, so the goal falls through to one that can act (see
     -- Director:tick). Emitting an attack with a nil target is a command that cannot do anything.
     if not nearest then return end
-    local move = moveToEntity(world, key, run)
-    if move then commands[#commands + 1] = move end
+    -- CLOSE ENOUGH TO ACT? THEN DO NOT WALK FIRST. `move` is BLOCKING in the executor, so the
+    -- activate behind it waits for the route to report arrival -- and a route to a CREATURE can
+    -- never arrive, because the character cannot stand inside the thing it is attacking. Body
+    -- radii floor the distance at roughly 100 units against an arrival tolerance of 96, so the
+    -- route hovers just short forever and the attack behind it never runs. Measured live: distance
+    -- oscillating 106.7 - 110.9 while a mudcrab sat at 15 hp and `moving` stayed true.
+    --
+    -- So proximity to the target, not path arrival, gates acting on it.
+    local range = (cfg and cfg.behaviour and cfg.behaviour.interactRange) or nil
+    local inReach = range ~= nil and nearest.distance ~= nil and nearest.distance <= range
+    if not inReach then
+      local move = moveToEntity(world, key, run)
+      if move then commands[#commands + 1] = move end
+    end
     commands[#commands + 1] = { type = 'activate', kind = kind, target = nearest }
   end
 

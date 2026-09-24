@@ -59,16 +59,26 @@ describe('idle.director', function()
       assert.equals(result.commands[1].type, 'useItem')
     end)
 
-    it('walks to a healer when one is nearby', function()
+    it('walks to a DISTANT healer, and just uses a healer already in reach', function()
       local d = newDirector()
       local state = states.warrior({ health = { current = 5, base = 120, max = 120 }, position = { x = 0, y = 0, z = 0 } })
+
+      -- far away: walk first, then heal
       local world = worlds.town()
-      world.nearest.healer = { name = 'Healer', position = { x = 120, y = 0, z = 0 }, distance = 120 }
-      local result = d:tick(0.1, snapshot(state, world))
-      assert.equals(result.goal, 'survive')
-      assert.equals(result.commands[1].type, 'move')
-      assert.equals(result.commands[2].type, 'activate')
-      assert.equals(result.commands[2].kind, 'healer')
+      world.nearest.healer = { name = 'Healer', position = { x = 3000, y = 0, z = 0 }, distance = 3000 }
+      local far = d:tick(0.1, snapshot(state, world))
+      assert.equals(far.goal, 'survive')
+      assert.equals(far.commands[1].type, 'move')
+      assert.equals(far.commands[2].type, 'activate')
+      assert.equals(far.commands[2].kind, 'healer')
+
+      -- already standing next to them: walking would be a step away from the cure
+      local close = worlds.town()
+      close.nearest.healer = { name = 'Healer', position = { x = 120, y = 0, z = 0 }, distance = 120 }
+      local near = d:tick(0.1, snapshot(state, close))
+      assert.equals(near.goal, 'survive')
+      assert.equals(#near.commands, 1, 'a healer already in reach needs no walk')
+      assert.equals(near.commands[1].kind, 'healer')
     end)
 
     it('flees away from the nearest threat', function()
@@ -129,16 +139,33 @@ describe('idle.director', function()
       return directorMod.planCommands(goalId, view(state), world, snapshot(state, world), cfg, ctx)
     end
 
-    it('walks into reach of the nearest enemy and attacks it', function()
+    it('walks into reach of a DISTANT enemy and attacks it', function()
       -- An attack at a creature thousands of units away is a goal that cannot act wearing a
       -- command: the character stands still and swings at air (measured live in Seyda Neen).
-      local commands = plan('fight', worlds.wilderness())
+      local world = worlds.wilderness()
+      world.nearest.enemy = { name = 'Rat', position = { x = 2000, y = 0, z = 0 }, distance = 2000 }
+      local commands = plan('fight', world)
       assert.equals(#commands, 2)
       assert.equals(commands[1].type, 'move')
-      assert.equals(commands[1].dest.x, 60)
+      assert.equals(commands[1].dest.x, 2000)
       assert.equals(commands[2].type, 'activate')
       assert.equals(commands[2].kind, 'attack')
       assert.equals(commands[2].target.name, 'Rat')
+    end)
+
+    it('attacks WITHOUT walking when the enemy is already in reach', function()
+      -- The deadlock this pins. `move` is BLOCKING in the executor, so the activate behind it waits
+      -- for the route to report arrival -- and a route to a CREATURE never arrives, because the
+      -- character cannot stand inside the thing it is attacking. Body radii floor the distance at
+      -- about 100 units against an arriveTolerance of 96, so the route hovered just short forever
+      -- while a mudcrab sat at 15 hp and the attack never ran. Measured live: distance oscillating
+      -- 106.7 - 110.9 with moving = true.
+      local world = worlds.wilderness()
+      world.nearest.enemy = { name = 'Rat', position = { x = 60, y = 0, z = 0 }, distance = 60 }
+      local commands = plan('fight', world)
+      assert.equals(#commands, 1, 'no move belongs in front of an attack already in reach')
+      assert.equals(commands[1].type, 'activate')
+      assert.equals(commands[1].kind, 'attack')
     end)
 
     it('plans nothing for fight when the character has nothing to DRAW', function()

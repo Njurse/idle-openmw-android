@@ -101,8 +101,20 @@ function M.steering(from, to, currentYaw, opts)
   opts = opts or {}
   local arriveTolerance = opts.arriveTolerance or 96
   local moveTolerance = opts.moveYawTolerance or 0.6
-  local maxTurn = opts.maxTurn or math.pi
-  local maxPitch = opts.maxPitch or 0.35
+  -- TURN RATES, and why they are not math.pi.
+  --
+  -- `controls.yawChange`/`pitchChange` are PER-FRAME rotation deltas -- the engine copies them
+  -- into Movement::mRotation and applies them (mwmechanics/actors.cpp:380,:382) -- and the yaw we
+  -- read back is one frame old. Feeding the whole error in as the step therefore OVERSHOOTS every
+  -- frame and can never converge: measured live, a character steering at a mudcrab oscillated
+  -- around yaw -2.60 with the aim never settling, `shouldMove` stayed false because the error
+  -- never dropped under the facing tolerance, and so it never took a step. The `move` in front of
+  -- every attack is BLOCKING, so the attack never ran either.
+  --
+  -- A bounded step converges instead: each frame closes at most maxTurn of the error, so the error
+  -- shrinks monotonically and the loop settles in a few frames.
+  local maxTurn = opts.maxTurn or 0.18
+  local maxPitch = opts.maxPitch or 0.12
 
   local dx = (to.x or 0) - (from.x or 0)
   local dy = (to.y or 0) - (from.y or 0)

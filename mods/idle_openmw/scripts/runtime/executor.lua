@@ -70,9 +70,28 @@ function Executor:peek() return self.queue[1] end
 function Executor:isMoving() return self.route ~= nil and self.route:isActive() end
 
 --- Replace the pending queue with a fresh batch.
+---
+--- A batch that does not begin with a MOVE also cancels any walk in flight, and that cancellation
+--- is load-bearing rather than tidiness.
+---
+--- `update` only drains the queue while no route is active. That is the right shape -- it is what
+--- stops a second move being started mid-walk -- but it means a route that CANNOT finish wedges
+--- the entire queue. And a route to a creature can never finish: the character cannot stand inside
+--- the thing it is attacking, so the distance floors at roughly 100 units while the arrival test
+--- wants 96, and Route:update reports 'moving' forever. The attack behind it then sits at
+--- pending = 1 / next = activate indefinitely, which is exactly what the live probes showed while
+--- a mudcrab at 15 hp killed the character.
+---
+--- So: if the new plan does not ask to walk, stop walking.
 function Executor:submit(commands)
   self.queue = {}
   for _, command in ipairs(commands or {}) do self.queue[#self.queue + 1] = command end
+
+  local head = self.queue[1]
+  if self.route and self.route:isActive() and not (head and BLOCKING[head.type]) then
+    self.route:clear()
+    self:_releaseControls()
+  end
   return self
 end
 
@@ -347,13 +366,31 @@ function Executor:_giveItem(recordId, count)
   return count
 end
 
-function Executor:_restorePool(kind)
+--- Simulated drink/eat/rest: set a pool to a target fraction of its maximum.
+---
+--- `fraction` exists because there were TWO heal targets and they disagreed. The guardian has a
+--- documented, configurable one -- `guardian.healTo`, default 0.75 -- and it tops a critically
+--- wounded character up to exactly that. This function restored to `base` (full), so once the queue
+--- stopped wedging (see Executor:submit) a survive tick healed to 75 and then immediately to 100 in
+--- the same frame, which is one decision made twice. A restorative now honours `healTo`.
+---
+--- Passing no fraction keeps the old full-restore behaviour, which is what REST wants: sleeping
+--- really does restore everything.
+--- Never LOWERS a pool, so a bigger restorative cannot be undone by a smaller one.
+function Executor:_restorePool(kind, fraction)
   local actor = self:_player()
   local dynamic = self.env.types and self.env.types.Actor and self.env.types.Actor.stats
     and self.env.types.Actor.stats.dynamic
   local stat = safe(dynamic and dynamic[kind], actor)
   if util.isObject(stat) and type(stat.base) == 'number' then
-    stat.current = stat.base
+    local target = stat.base
+    if type(fraction) == 'number' then
+      local current = 0
+      local ok, value = pcall(function() return stat.current end)
+      if ok and type(value) == 'number' then current = value end
+      target = math.max(current, math.floor(stat.base * fraction))
+    end
+    stat.current = target
     return true
   end
   return false
@@ -645,8 +682,10 @@ function Executor:_execute(command, now)
     end
 
   elseif command.type == 'useItem' then
+    -- Restoratives heal to the SAME target the guardian uses, so the two agree.
+    local healTo = self.cfg and self.cfg.guardian and self.cfg.guardian.healTo or nil
     if simulating and self:_restorePool(command.tag == 'magicka' and 'magicka'
-        or command.tag == 'fatigue' and 'fatigue' or 'health') then
+        or command.tag == 'fatigue' and 'fatigue' or 'health', healTo) then
       self:log('Used a restorative', 'good')
     else
       self:log(('No %s item available'):format(command.tag or 'usable'), 'warn')

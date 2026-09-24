@@ -78,6 +78,19 @@ M.defaults = {
 
   behaviour = {
     arriveTolerance = 96,      -- engine units; close enough to "arrived"
+    -- How close is close enough to ACT on something. Deliberately larger than arriveTolerance and
+    -- it exists because of a deadlock, not for tidiness:
+    --
+    -- The director emits `move` then `activate` (moveThenActivate), and `move` is BLOCKING in the
+    -- executor, so the activate behind it only runs once the route reports arrival. But a route to
+    -- a CREATURE can never arrive within arriveTolerance: the character cannot stand inside the
+    -- thing it is attacking, so body radii floor the distance at roughly 100 units and the route
+    -- hovers just short forever. Measured live: dist oscillating 106.7 - 110.9 with the mudcrab at
+    -- 15 hp, `moving = true`, `moving` never completing, and so the attack never running at all.
+    --
+    -- So proximity to the target, not path arrival, is what gates acting on it. 200 units is just
+    -- outside Morrowind's melee reach plus both body radii.
+    interactRange = 200,
     repathDistance = 256,      -- re-path when the target drifts this far
     pathCacheTtl = 30,         -- simulation seconds before a cached path expires
     maxPathWaypoints = 64,
@@ -329,6 +342,10 @@ function M.validate(cfg)
   if cfg.behaviour.arriveTolerance ~= nil then
     clampProblem(problems, 'behaviour.arriveTolerance', cfg.behaviour.arriveTolerance, 1, 4096)
     cfg.behaviour.arriveTolerance = util.clamp(cfg.behaviour.arriveTolerance, 1, 4096)
+  end
+  if cfg.behaviour.interactRange ~= nil then
+    clampProblem(problems, 'behaviour.interactRange', cfg.behaviour.interactRange, 1, 4096)
+    cfg.behaviour.interactRange = util.clamp(cfg.behaviour.interactRange, 1, 4096)
   end
   if cfg.behaviour.doorOpenRadius ~= nil then
     clampProblem(problems, 'behaviour.doorOpenRadius', cfg.behaviour.doorOpenRadius, 8, 512)

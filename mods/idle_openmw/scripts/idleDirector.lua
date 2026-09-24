@@ -358,6 +358,12 @@ local function gatherUiReport()
     if executor then
       data.pending = executor:pending()
       data.moving = executor:isMoving()
+      -- WHAT THE EXECUTOR HAS ACTUALLY DONE, as counters. Combat was invisible without this: the
+      -- swing either landed or it did not, and the difference between "not swinging" and "swinging
+      -- at something that will not die" is exactly these numbers. `entities.nearby` cannot answer
+      -- it -- that reply is 66 KB and comes back interleaved in openmw.log -- so the small report
+      -- has to carry it.
+      data.applied = executor.applied
       local head = executor:peek()
       data.nextCommand = head and head.type or nil
       data.moveTarget = head and head.dest or nil
