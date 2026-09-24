@@ -102,6 +102,38 @@ if [ ! -f "$LIBS/libGLESv2.so" ]; then
   echo "         so the overrides below are a fallback rather than a requirement." >&2
 fi
 
+# ---------------------------------------------------------------------------------------------
+# FFmpeg versions, read from the dependency tree's OWN headers.
+#
+# openmw's cmake/FindFFmpeg.cmake never populates FFmpeg_<LIB>_VERSION, so the guard at
+# CMakeLists.txt:345-367 ("FFmpeg version is too old, 4.0 is required") compares against EMPTY
+# strings and can never pass. That is not hypothetical: upstream's own CI works around it by
+# sed-patching the check out of CMakeLists (CI/before_script.android.sh, NOT FFVER_OK -> FALSE).
+#
+# Rather than patch the source, measure it. The versions are facts sitting in the archive, so read
+# them and pass them, and the guard runs on the real numbers instead of being skipped.
+# (ffmpeg >= 5 moved MAJOR into its own version_major.h.)
+ffver() { # ffver <avlib> -> MAJOR.MINOR.MICRO, or nothing when the headers are absent
+  local lib="$1" upper dir major minor micro
+  # the tree's include directories keep the lib prefix: libavutil, libavformat, ...
+  dir="$DEPS/include/lib$lib"
+  [ -n "$DEPS" ] && [ -d "$dir" ] || return 1
+  upper=$(echo "lib$lib" | tr 'a-z' 'A-Z')
+  major=$(sed -n "s/^#define ${upper}_VERSION_MAJOR[[:space:]]*\([0-9][0-9]*\).*/\1/p" "$dir/version_major.h" 2>/dev/null | head -1)
+  [ -n "$major" ] || major=$(sed -n "s/^#define ${upper}_VERSION_MAJOR[[:space:]]*\([0-9][0-9]*\).*/\1/p" "$dir/version.h" 2>/dev/null | head -1)
+  minor=$(sed -n "s/^#define ${upper}_VERSION_MINOR[[:space:]]*\([0-9][0-9]*\).*/\1/p" "$dir/version.h" 2>/dev/null | head -1)
+  micro=$(sed -n "s/^#define ${upper}_VERSION_MICRO[[:space:]]*\([0-9][0-9]*\).*/\1/p" "$dir/version.h" 2>/dev/null | head -1)
+  [ -n "$major" ] && [ -n "$minor" ] && echo "$major.$minor.${micro:-100}"
+}
+FFMPEG_VERSION_FLAGS=()
+for avlib in avutil avformat avcodec swscale swresample; do
+  avver=$(ffver "$avlib" || true)
+  if [ -n "$avver" ]; then
+    FFMPEG_VERSION_FLAGS+=("-DFFmpeg_$(echo "$avlib" | tr 'a-z' 'A-Z')_VERSION=$avver")
+    echo "ffmpeg   : lib$avlib $avver (from the dependency tree's headers)"
+  fi
+done
+
 echo "NDK      : $NDK"
 echo "ABI      : $ABI  (platform $PLATFORM)"
 echo "GLES dir : $LIBS"
@@ -130,12 +162,13 @@ cmake -S "$SRC" -B "$BUILD_DIR" -G Ninja \
   -DBUILD_NAVMESHTOOL=0 \
   -DBUILD_BULLETOBJECTTOOL=0 \
   -DBUILD_OPENCS_TESTS=0 \
-  -DOPENMW_USE_SYSTEM_MYGUI=ON \
+  -DOPENMW_USE_SYSTEM_MYGUI=OFF \
   -DOPENMW_USE_SYSTEM_OSG=ON \
   -DOPENMW_USE_SYSTEM_BULLET=ON \
   -DOPENMW_USE_SYSTEM_ICU=ON \
   -DOPENMW_USE_SYSTEM_YAML_CPP=OFF \
   -DOPENMW_USE_SYSTEM_SQLITE3=OFF \
+  ${FFMPEG_VERSION_FLAGS[@]+"${FFMPEG_VERSION_FLAGS[@]}"} \
   ${DEPS:+-DOPENMW_DEPENDENCIES_DIR="$DEPS"} \
   ${DEPS:+-DCMAKE_PREFIX_PATH="$DEPS"} \
   ${DEPS:+-DCMAKE_INCLUDE_PATH="$DEPS/include"} \
