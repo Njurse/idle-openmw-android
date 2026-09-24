@@ -683,3 +683,104 @@ SDL2-based activity, the same shape as upstream's `openmw-android`. Still to do:
    `tools/android/provision-emulator.sh` already does it.
 4. **Re-measure the floor**: the mod needs **>= 0.49** for `.omwscripts`, and this is 0.52, so that
    is satisfied by construction.
+
+---
+
+# AND IT PACKAGES: a signed APK
+
+```
+build/android-out/idle-openmw.apk     189 MB
+  is.xyz.idle_openmw, versionCode 1, minSdk 24, targetSdk 34
+  verified: APK Signature Scheme v2 + v3
+  classes.dex + lib/arm64-v8a/{libopenmw,libopenal,libcollada-dom2.5-dp,libbz2,libz,libGL}.so
+```
+
+```bash
+bash tools/android/build-apk.sh
+```
+
+## No Gradle, deliberately
+
+The app is one activity. Every tool needed is already in the SDK:
+
+```
+javac (JDK) -> d8 -> aapt2 -> zip -> zipalign -> apksigner
+```
+
+Gradle would add a download, a wrapper, a plugin resolution and a daemon to that list. The APK
+format is just a zip with agreed entry names, and `tools/android/add-to-apk.py` writes the two
+entries aapt2 does not know about (`classes.dex` and `jniLibs`), with the `.so` files **stored**
+rather than deflated so they can be mmapped after install.
+
+## The activity is three overrides
+
+OpenMW's Android build is a *shared library*, and its entry point is
+`extern "C" int SDL_main(int, char**)` (`apps/openmw/main.cpp:238`). SDL2's `SDLActivity` is the
+supported thing that loads such a library and calls a symbol in it, so
+`tools/android/apk/src/is/xyz/idle_openmw/MainActivity.java` just names ours:
+
+```java
+protected String[] getLibraries()     { return new String[] { "openmw" }; }
+protected String getMainSharedObject(){ ... nativeLibraryDir + "/libopenmw.so"; }
+protected String getMainFunction()    { return "SDL_main"; }
+```
+
+**SDL2 is linked into `libopenmw.so` statically**, which is why `getLibraries()` names only
+`openmw` — there is no `libSDL2.so` to load. The JNI bridge it needs is exported from our library,
+which is checkable rather than assumed:
+
+```
+$ llvm-nm -D --defined-only libopenmw.so | grep SDLActivity
+T JNI_OnLoad
+T Java_org_libsdl_app_SDLActivity_nativeAddTouch
+T Java_org_libsdl_app_SDLActivity_nativeFocusChanged
+...
+```
+
+If that ever stops being true the failure is an `UnsatisfiedLinkError` at launch, so those symbols
+are the thing to check, not the manifest.
+
+## Three more Windows-tool traps, all of which cost time
+
+1. **A path in a command ARGUMENT must be `C:/...`.** Git Bash hands the tools `/c/...`, which a
+   Windows binary reads as the *relative* path `c/...`, and the error is a plain "file not found"
+   for a file that obviously exists. The script routes every argument through `cygpath -m`. (Paths
+   inside `-D` variables are fine, because CMake resolves those itself.)
+2. **`--` is illegal inside an XML comment**, so a manifest comment containing a dash-dash
+   (`statically -- see ...`) fails `aapt2` with "not well-formed (invalid token)" pointing at the
+   comment's line. It is a real XML rule and the message does not say so.
+3. **Do not pass resources the manifest never references.** Compiling a `strings.xml` and handing
+   it to `aapt2 link -R` makes aapt2 treat it as an *overlay* and refuse: "failed to merge resource
+   table ... use --auto-add-overlay". With literal labels in the manifest there is nothing to
+   merge, so the step is simply absent.
+4. **`keytool` is not on PATH** even where `java`/`javac` are (on this machine they are shimmed
+   through Oracle's `javapath` and keytool is not shimmed at all). `build-apk.sh` looks in
+   `$JAVA_HOME/bin` when `command -v keytool` comes up empty.
+
+## Which ABI, and where it can be tested
+
+The APK is **arm64-v8a**, because that is what the published dependency archive is
+(aarch64, API 24, NDK r26b — it has no x86_64 tree at all).
+
+- **A real arm64 phone** is the intended target and can install this directly.
+- **The local emulator cannot run it.** The `idle_openmw` AVD is `abi.type = x86_64`
+  (android-34, google_apis), and an x86_64 system image cannot load an arm64 library.
+- An arm64 emulator would need an ARM host; the newest *published* arm64 system image is API 28
+  (which does clear our minSdk 24), and on an x86_64 host it runs under full CPU emulation, so
+  treat it as a smoke test at best.
+- **An x86_64 APK is therefore a separate job**: it needs an x86_64 dependency tree, which the
+  archive does not provide, so Boost/OSG/ffmpeg/MyGUI and friends would have to be built for it.
+  `tools/android/configure-android.sh --abi x86_64` is ready for that day.
+
+## Still open
+
+- **Size.** 189 MB, because OSG, Boost, Bullet and ffmpeg are all linked into `libopenmw.so`
+  statically. `--gc-sections`, a size-oriented build type, and dropping the unused OSG plugins are
+  the obvious levers, and the payload is worth halving before it goes on a phone.
+- **The game data.** The engine reads the Morrowind install by absolute path;
+  `tools/android/provision-emulator.sh` already stages `/storage/emulated/0/Morrowind` the way the
+  old APK expected. On device this is the same shape, and the mod ships in
+  `/storage/emulated/0/Morrowind/Mods/idle_openmw`.
+- **`SDL_main` is only half a game.** Launching successfully means the engine starts; it does not
+  yet mean the idle director takes over, which needs the `.omwscripts` load path and chargen the
+  mod already documents (`docs/chargen.md`).

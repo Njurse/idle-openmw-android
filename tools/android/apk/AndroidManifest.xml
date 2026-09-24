@@ -1,0 +1,50 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  The APK manifest for the idle-openmw Android app.
+
+  Deliberately close to SDL2's own android-project template, because that template is the
+  supported shape for an SDLActivity app. Two differences matter:
+
+  * the activity is OUR MainActivity, not SDLActivity directly, so it can name libopenmw.so as the
+    entry point (SDL2 is linked INTO libopenmw.so statically; see tools/android/configure-android.sh);
+  * extractNativeLibs is on. Our libopenmw.so is ~104 MB and we are not using the Android Gradle
+    Plugin's packaging, so unpacking the libraries on install is both simpler and safer here.
+
+  Permissions: none beyond what the mod needs to read the Morrowind data staged at
+  /storage/emulated/0/Morrowind (see tools/android/provision-emulator.sh). On API 30+ that is
+  app-visible external storage, and the engine opens it by absolute path, so no storage permission
+  is declared for the scoped-storage era. VIBRATE is kept because SDL2's activity references it.
+-->
+<manifest xmlns:android="http://schemas.android.com/apk/res/android"
+    package="is.xyz.idle_openmw"
+    android:versionCode="1"
+    android:versionName="0.52.0-idle">
+
+    <!-- OpenGL ES 2.0 is the floor; gl4es in libGL.so translates the desktop GL the engine emits. -->
+    <uses-feature android:glEsVersion="0x00020000" android:required="true" />
+    <uses-feature android:name="android.hardware.touchscreen" android:required="false" />
+
+    <uses-permission android:name="android.permission.VIBRATE" />
+
+    <application
+        android:label="Idle OpenMW"
+        android:allowBackup="true"
+        android:hardwareAccelerated="true"
+        android:extractNativeLibs="true">
+
+        <activity
+            android:name="is.xyz.idle_openmw.MainActivity"
+            android:label="Idle OpenMW"
+            android:alwaysRetainTaskState="true"
+            android:launchMode="singleInstance"
+            android:configChanges="layoutDirection|locale|orientation|uiMode|screenLayout|screenSize|smallestScreenSize|keyboard|keyboardHidden|navigation|density"
+            android:screenOrientation="fullSensor"
+            android:exported="true">
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+        </activity>
+    </application>
+
+</manifest>
