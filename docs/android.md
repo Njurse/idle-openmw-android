@@ -762,15 +762,27 @@ are the thing to check, not the manifest.
 The APK is **arm64-v8a**, because that is what the published dependency archive is
 (aarch64, API 24, NDK r26b — it has no x86_64 tree at all).
 
-- **A real arm64 phone** is the intended target and can install this directly.
-- **The local emulator cannot run it.** The `idle_openmw` AVD is `abi.type = x86_64`
-  (android-34, google_apis), and an x86_64 system image cannot load an arm64 library.
-- An arm64 emulator would need an ARM host; the newest *published* arm64 system image is API 28
-  (which does clear our minSdk 24), and on an x86_64 host it runs under full CPU emulation, so
-  treat it as a smoke test at best.
-- **An x86_64 APK is therefore a separate job**: it needs an x86_64 dependency tree, which the
-  archive does not provide, so Boost/OSG/ffmpeg/MyGUI and friends would have to be built for it.
-  `tools/android/configure-android.sh --abi x86_64` is ready for that day.
+**No emulator on this machine can run it, and that is now measured rather than assumed.** The path
+was followed to the end: the arm64 system image installs (2.7 GB), an arm64 AVD is created
+successfully (`tools/android/install-arm64-image.bat`, `tools/android/create-arm64-avd.bat`), and
+then the emulator refuses outright:
+
+```
+$ emulator -avd idle_openmw_arm64 -no-window -gpu swiftshader_indirect
+FATAL | Avd's CPU Architecture 'arm64' is not supported by the QEMU2 emulator on x86_64 host.
+        System image must match the host architecture.
+```
+
+So there is no "slow but functional" arm64 emulator to fall back on — QEMU2 will not attempt it. The
+two real options are:
+
+- **A real arm64 phone**, which can install this APK directly (`adb install`). This is the cheap
+  test, and it is the one worth doing first, because "does it launch and find the game data" is
+  what everything else about the app is downstream of.
+- **An x86_64 APK**, which is what would make the local emulator usable. It needs an x86_64
+  dependency tree, which the archive does not provide, so Boost, OSG, ffmpeg, MyGUI, OpenAL,
+  FreeType, ICU and the rest would have to be built for x86_64.
+  `tools/android/configure-android.sh --abi x86_64` is already parameterised for that day.
 
 ## Still open
 
