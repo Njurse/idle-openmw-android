@@ -790,8 +790,12 @@ two real options are:
   it down from 189 MB for nothing but discarded symbols (`build-apk.sh` does it, into a staging
   directory). What remains is `libopenmw.so` at 108 MB, because OSG, Boost, Bullet and ffmpeg are
   all linked in statically. The levers, in order of expected payoff:
-  - **`--gc-sections` plus `-ffunction-sections -fdata-sections`**, which the NDK's own flags
-    already partly set but which only pay off with the linker flag that discards the sections.
+  - **`--gc-sections`: measured, and it does NOTHING here.** The NDK already passes
+    `-ffunction-sections -fdata-sections`, so the linker flag was the only missing half and adding
+    it changed `libopenmw.so` by **exactly 0 bytes** on the stripped library
+    (108,530,768 before and after). The reason is the one below: the OSG plugins are linked with
+    `--whole-archive` for their registration, which pins everything reachable from them. Recorded
+    so nobody spends the afternoon re-measuring it.
   - **A size-oriented build type.** `-DCMAKE_BUILD_TYPE=MinSizeRel` trades speed for bytes.
   - **Dropping OSG plugins the game does not use.** `USED_OSG_PLUGINS` (CMakeLists.txt:301) is ten
     plugins, and their registration is `--whole-archive`, so every one of them is force-linked in.
