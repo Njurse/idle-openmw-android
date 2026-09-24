@@ -91,6 +91,19 @@ M.defaults = {
     -- So proximity to the target, not path arrival, is what gates acting on it. 200 units is just
     -- outside Morrowind's melee reach plus both body radii.
     interactRange = 200,
+    -- MELEE reach, which is a different question from interactRange and must stay below it.
+    --
+    -- The engine computes a weapon's reach as `fCombatDistance * weapon.reach`
+    -- (mwmechanics/combat.cpp:664-669, falling back to fHandToHandReach for bare hands), and
+    -- Morrowind's fCombatDistance is 128. So an iron dagger reaches about 128 units, and a
+    -- character that stops at a comfortable 200 and swings is swinging at AIR -- measured live:
+    -- nearest.enemy at 154 units with the attack counter climbing and nothing taking damage.
+    --
+    -- It still has to stay well above the distance at which two bodies collide, or the route to a
+    -- creature can never arrive and the attack never runs at all (the deadlock this whole area
+    -- used to be stuck in). 128 is the engine's own number: close enough to hit, far enough to
+    -- stand. A longer weapon reaches further, so this is deliberately the conservative case.
+    attackRange = 128,
     repathDistance = 256,      -- re-path when the target drifts this far
     pathCacheTtl = 30,         -- simulation seconds before a cached path expires
     maxPathWaypoints = 64,
@@ -346,6 +359,10 @@ function M.validate(cfg)
   if cfg.behaviour.interactRange ~= nil then
     clampProblem(problems, 'behaviour.interactRange', cfg.behaviour.interactRange, 1, 4096)
     cfg.behaviour.interactRange = util.clamp(cfg.behaviour.interactRange, 1, 4096)
+  end
+  if cfg.behaviour.attackRange ~= nil then
+    clampProblem(problems, 'behaviour.attackRange', cfg.behaviour.attackRange, 1, 4096)
+    cfg.behaviour.attackRange = util.clamp(cfg.behaviour.attackRange, 1, 4096)
   end
   if cfg.behaviour.doorOpenRadius ~= nil then
     clampProblem(problems, 'behaviour.doorOpenRadius', cfg.behaviour.doorOpenRadius, 8, 512)

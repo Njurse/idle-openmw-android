@@ -160,7 +160,10 @@ function M.planCommands(goalId, statView, world, snapshot, cfg, ctx)
     -- oscillating 106.7 - 110.9 while a mudcrab sat at 15 hp and `moving` stayed true.
     --
     -- So proximity to the target, not path arrival, gates acting on it.
-    local range = (cfg and cfg.behaviour and cfg.behaviour.interactRange) or nil
+    -- An ATTACK has to close to melee reach; everything else only has to be close enough to
+    -- activate. Using one generous number for both made the character swing from out of range.
+    local behaviour = (cfg and cfg.behaviour) or {}
+    local range = (kind == 'attack') and behaviour.attackRange or behaviour.interactRange
     local inReach = range ~= nil and nearest.distance ~= nil and nearest.distance <= range
     if not inReach then
       local move = moveToEntity(world, key, run)
