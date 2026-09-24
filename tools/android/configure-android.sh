@@ -77,6 +77,13 @@ PREFIX=""
 [ -n "${SDL2_ROOT:-}" ] && PREFIX="$SDL2_ROOT"
 [ -n "$DEPS" ] && PREFIX="${PREFIX:+$PREFIX;}$DEPS"
 
+# clang is a Windows binary, so any path that ends up on a COMMAND LINE (not a CMake -D that CMake
+# itself resolves) has to be in C:/... form. Used for -include and -L below.
+DEPS_WIN="$DEPS"
+if [ -n "$DEPS" ] && command -v cygpath >/dev/null 2>&1; then
+  DEPS_WIN="$(cygpath -m "$DEPS")"
+fi
+
 # Locate the NDK: an explicit one wins, then the newest side-by-side install.
 if [ -z "${NDK:-}" ]; then
   SDK="${ANDROID_HOME:-${ANDROID_SDK_ROOT:-$USERPROFILE/AppData/Local/Android/Sdk}}"
@@ -220,6 +227,8 @@ cmake -S "$SRC" -B "$BUILD_DIR" -G Ninja \
   -DOPENMW_USE_SYSTEM_YAML_CPP=OFF \
   -DOPENMW_USE_SYSTEM_SQLITE3=OFF \
   ${FFMPEG_VERSION_FLAGS[@]+"${FFMPEG_VERSION_FLAGS[@]}"} \
+  ${DEPS:+-DCMAKE_SHARED_LINKER_FLAGS="-L$DEPS_WIN/lib"} \
+  ${DEPS:+-DCMAKE_EXE_LINKER_FLAGS="-L$DEPS_WIN/lib"} \
   ${DEPS:+-DOPENMW_DEPENDENCIES_DIR="$DEPS"} \
   ${DEPS:+-DPNG_PNG_INCLUDE_DIR="$DEPS/include/libpng16"} \
   ${DEPS:+-DPNG_LIBRARY="$DEPS/lib/libpng.a"} \

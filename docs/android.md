@@ -593,3 +593,93 @@ Configure stopped (expected until the dependency tree exists). First error:
 A failing run is the informative outcome today, and `--abi x86_64` targets the emulator's
 architecture. Passing `OPENMW_DEPENDENCIES_DIR=<tree>` adds the dependency search root
 (CMakeLists.txt:73) and is the whole of the remaining work.
+
+---
+
+# IT BUILDS: `libopenmw.so` for Android, from Windows
+
+Everything above is history. This is the state now, and it is measured:
+
+```
+build/android-out/lib/arm64-v8a/libopenmw.so
+  ELF 64-bit LSB shared object, ARM aarch64, for Android 24,
+  built by NDK r29 (14206865)
+  924 MB with debug info  ->  104 MB stripped
+```
+
+Two scripts, run in order:
+
+```bash
+bash tools/android/configure-android.sh --deps "$(pwd)/build/android-deps/root"
+bash tools/android/build-sdl2.sh                              # only needed once
+cmake --build build/android-configure --target openmw -j 12
+```
+
+## Where the dependencies actually come from
+
+`CI/before_install.android.sh` had the answer all along, and it is not a superbuild:
+
+```bash
+curl -fSL -R -J https://gitlab.com/OpenMW/openmw-deps/-/raw/main/android/
+    openmw-android-deps-20240812.tar.xz      # 166 MB
+tar -xJf it into the NDK sysroot's usr/
+```
+
+Upstream extracts it **into** the NDK sysroot. We keep it beside the build and pass
+`OPENMW_DEPENDENCIES_DIR`, which `CMakeLists.txt:73` adds to `CMAKE_FIND_ROOT_PATH` — the same
+effect, but non-destructive and re-extractable.
+
+The archive (aarch64, API 24, NDK r26b) carries: **OSG 3.6.5** with every component and plugin,
+**Boost 1.85** with full CMake config packages, **Bullet**, **SDL2 2.24**, **MyGUI 3.4.3**,
+**ffmpeg 6.1**, **OpenAL**, **FreeType**, **libpng16**, **libjpeg**, **zlib**, **bzip2**,
+**ICU 70.1**, **collada-dom**, **LuaJIT**, **liblz4.a**, and **gl4es**.
+
+The other half is `extern/CMakeLists.txt`, which `FetchContent`s whatever the archive lacks:
+yaml-cpp, sqlite3, recastnavigation, googletest.
+
+## The six things that actually stopped it
+
+Each was a message from a tool, not a guess. They are listed in the order they appeared.
+
+| # | Symptom | Cause | Fix |
+|---|---|---|---|
+| 1 | `Could NOT find OpenGL` | Android has no desktop GL; `find_package(OpenGL REQUIRED)` at CMakeLists.txt:278 | point `OPENGL_*` at gl4es |
+| 2 | `Could NOT find LZ4` | no LZ4 CMake config; openmw's own `cmake/FindLZ4.cmake` does the work | satisfied by the archive's `liblz4.a` once the tree is on the search path |
+| 3 | `FFmpeg version is too old, 4.0 is required` | `cmake/FindFFmpeg.cmake` never populates `FFmpeg_<LIB>_VERSION`, so the guard compares against **empty** and can never pass | **read the versions out of the archive's headers** and pass them |
+| 4 | `Could not find a package configuration file provided by "QT"` | `USE_QT` is derived from `BUILD_LAUNCHER`/`BUILD_OPENCS`/`BUILD_WIZARD`/`BUILD_OPENCS_TESTS`, all of which default ON | turn the desktop tools off |
+| 5 | `undefined template 'std::char_traits<unsigned int>'` | MyGUI 3.4.3's headers are built on `std::basic_string<unsigned int>`, and modern libc++ **removed** those `char_traits` specialisations | `tools/android/compat/glibcxx_char_traits_unicode.h`, force-included |
+| 6 | 21 × `undefined symbol: glTexImage1D` (and friends) | those are desktop GL, absent from GLES | the archive's `lib/libGL.so` **is gl4es** — link that |
+| 7 | 13 × `undefined symbol: FT_Init_FreeType` | the archive ships **static** OSG, but `OSG_STATIC` defaults OFF, and OSG_STATIC is what makes `components/CMakeLists.txt:708-711` link FreeType/JPEG/PNG | `OSG_STATIC=ON` (also what makes OSG plugins `--whole-archive`, which their registration needs) |
+| 8 | `unable to find library -lcollada-dom2.5-dp` | a bare `-l` name needs the directory on the **link** line, which `CMAKE_LIBRARY_PATH` does not do | `-L` via the linker flags |
+
+Plus one version shortfall worth naming: the archive's **SDL2 is 2.24.0** and this source asks for
+**2.26** (`CMakeLists.txt:496`). It is the only dependency that needed building by hand, which is
+what `tools/android/build-sdl2.sh` is for (SDL2 2.30.12, static).
+
+## Windows notes that cost time
+
+- **tar cannot create symlinks here without privilege**, so the archive's `libpng.a -> libpng16.a`
+  style links come out *missing*. Recreate them as copies before configuring, or `find_package(PNG)`
+  fails with a confusing "missing PNG_LIBRARY".
+- **clang is a Windows binary.** A path that reaches a *command line* — `-include`, `-L` — must be
+  in `C:/...` form. POSIX `/c/...` works for `-D` variables (CMake resolves those itself) but not
+  for flags, and the failure looks like a broken compiler rather than a bad path.
+- **`MYGUI_HOME`** is how `FindMyGUI` is pointed at the tree, since MyGUI ships no CMake package.
+  With `MYGUI_STATIC=ON` it finds `libMyGUIEngineStatic.a` and — importantly — never compiles
+  MyGUI, which is what sidesteps the libc++ problem in the first place.
+
+## What is left for an APK
+
+`libopenmw.so` is a *shared library*, not an executable: OpenMW's Android build is loaded by an
+SDL2-based activity, the same shape as upstream's `openmw-android`. Still to do:
+
+1. **Shrink it.** 104 MB stripped, because OSG, Boost, Bullet and ffmpeg are all linked in
+   statically. `--gc-sections` and a size-oriented build type are the obvious first lever.
+2. **Bundle its shared dependencies** into `lib/arm64-v8a/`: `libopenal.so`,
+   `libcollada-dom2.5-dp.so`, `libbz2.so`, `libz.so`, `libGL.so` (gl4es), and our `libSDL2.a` is
+   static so it does not ship. The `NEEDED` list above is exactly this shopping list.
+3. **The activity**: SDL2's `android-project` scaffolding (SDLActivity + the Java side) wired to
+   `libopenmw.so` with `SDL_MAIN_READY`/`main`, plus the game data staged the way
+   `tools/android/provision-emulator.sh` already does it.
+4. **Re-measure the floor**: the mod needs **>= 0.49** for `.omwscripts`, and this is 0.52, so that
+   is satisfied by construction.
