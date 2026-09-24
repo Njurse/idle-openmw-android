@@ -460,6 +460,17 @@ local function gatherUiReport()
     end
   end
 
+  do -- can the character FIGHT, and with what
+    -- `attack` does nothing with the hands empty, so this is the difference between a real fight
+    -- and swinging at air -- and it is invisible in every other field.
+    local player = state.snapshot and state.snapshot.player
+    if util.isObject(player) then
+      data.canFight = player.canFight
+      data.fightWith = player.fightWith
+      data.stance = player.stance
+    end
+  end
+
   do -- WHY the model thinks something is hostile
     -- A bare count is not actionable: "25 hostiles" in a town of shopkeepers is a classifier
     -- bug, not a danger, and the two are indistinguishable from outside without the reason.
@@ -670,12 +681,21 @@ local function pollDevCommand()
     -- drop) go through the same `_requestEconomy`.
     local op, rest = (command.text or ''):match('^(%S+)%s*(.*)$')
     op = (op or ''):lower()
-    local first, second = rest:match('^(%S+)%s*(%S*)$')
+    -- Morrowind record ids CONTAIN SPACES ("iron dagger", "common shirt"), so the count is taken
+    -- from the END of the line and everything before it is the id. Splitting from the front made
+    -- `economy give iron dagger 1` silently create nothing.
+    local count = nil
+    local id = rest or ''
+    local head, tailNumber = id:match('^(.*)%s+(%-?%d+)$')
+    if head then
+      id, count = head, tonumber(tailNumber)
+    end
+    id = id:gsub('^"(.*)"$', '%1'):gsub("^'(.*)'$", '%1')
     local payload = nil
     if op == 'gold' then
-      payload = { op = 'gold', amount = tonumber(first) }
+      payload = { op = 'gold', amount = tonumber(id) }
     elseif op == 'give' or op == 'take' then
-      payload = { op = op, recordId = first, count = tonumber(second) or 1 }
+      payload = { op = op, recordId = id, count = count or 1 }
     end
     if not payload or not state.executor then
       print('idle-openmw: economy needs "gold <n>", "give <recordId> [n]" or "take <recordId> [n]"')

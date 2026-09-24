@@ -242,6 +242,139 @@ end
 --- Equip an item in the right slot, using the pure type->slot mapping.
 --- Returns ok, message. Falls back to "use the inventory window" for tools and
 --- anything whose slot cannot be determined (see scripts/idle/equipment.lua).
+--- The best weapon we are CARRYING, or nil.
+---
+--- "Is this a weapon" is a SLOT test, not a record-type guess: every weapon occupies
+--- `CarriedRight` (scripts/idle/equipment.lua, KIND_SLOT.weapon), and arrows occupy Ammunition.
+--- The dearest one wins, so the choice is deterministic rather than "whatever came first".
+--- @return GameObject|nil, string|nil recordId
+function Executor:_findWeapon()
+  local inventory = self:_inventory()
+  if not util.isObject(inventory) then return nil, nil end
+  local items = safe(function() return inventory.getAll and inventory:getAll() end)
+  if not util.isObject(items) then return nil, nil end
+
+  local total = 0
+  pcall(function() total = #items end)
+
+  local best, bestId, bestValue = nil, nil, nil
+  for index = 1, total do
+    local object = nil
+    pcall(function() object = items[index] end)
+    if util.isObject(object) then
+      local record = safe(function() return object.type.record end)
+      record = util.isObject(record) and record or {}
+      local resolved = equipment.resolve(object.type, record, self.env.types)
+      if resolved and resolved.slot == 'CarriedRight' then
+        local value = num(record.value, 0)
+        if not best or value > (bestValue or -1) then
+          best, bestValue = object, value
+          bestId = safe(function() return object.recordId end)
+        end
+      end
+    end
+  end
+  return best, bestId
+end
+
+--- DRAW a weapon or spell, so an attack is not a swing at nothing.
+---
+--- This was the missing half of combat: `equip` put a weapon in the slot and nothing ever called
+--- `setStance`, so the character walked up to a creature, swung indefinitely and never drew.
+--- `activateBy(actor)` on an actor with nothing drawn does NOTHING (types.Actor.STANCE ->
+--- `MWMechanics::DrawState`, actor.cpp:182-188). `setStance` is "only in local scripts on self",
+--- which is exactly what a PLAYER script is.
+---
+--- NOTE there is no "did it work?" check in here. The draw state is applied by the engine's NEXT
+--- mechanics update, so reading `getStance` in the same call reads the OLD value and would report
+--- a failure that is about to become a success. The confirmation is the stance check at the TOP
+--- of this function, on the next tick.
+--- @return boolean, string|nil why it could not, so the caller can report it
+function Executor:ensureReadyToFight()
+  local types = self.env.types
+  local actor = self:_player()
+  if not (types and types.Actor and actor) then return false, 'no engine types' end
+  local STANCE = types.Actor.STANCE or {}
+
+  local current = safe(function() return types.Actor.getStance(actor) end)
+  if current ~= nil and (current == STANCE.Weapon or current == STANCE.Spell) then
+    return true
+  end
+
+  -- 1. a weapon: put it in the slot if it is only in the pack, then draw it
+  local weapon, weaponId = self:_findWeapon()
+  if weapon and STANCE.Weapon ~= nil then
+    -- Equip unconditionally: `setEquipment` is idempotent, and the stance check above means this
+    -- runs once per engagement rather than every tick. NOT reading the slot back keeps us out of
+    -- `getEquipment`'s shape, which a GameObject answers as a slot-keyed map.
+    if weaponId then self:equip(weaponId) end
+    local ok, err = pcall(function() types.Actor.setStance(actor, STANCE.Weapon) end)
+    if ok then
+      self.applied.draws = (self.applied.draws or 0) + 1
+      self:log(('Drew %s'):format(tostring(weaponId)), 'good')
+      return true
+    end
+    -- KEEP the engine's own words. `setStance` returns silently when it declines (already in that
+    -- stance; an attack is in flight; no spell selected) and THROWS when it cannot proceed at all,
+    -- so the exception text is the only thing that distinguishes "declined" from "impossible".
+    return false, ('the engine would not draw %s (%s)'):format(tostring(weaponId), tostring(err))
+  end
+
+  -- 2. a spell. Morrowind needs one SELECTED before it can be READIED: `setStance(Spell)` on its
+  -- own reports success and changes nothing, which is exactly how the first version of this ended
+  -- up warning "no spell known" about a character the observer simultaneously described as
+  -- `fightWith = spell`. The two disagreed because neither had selected anything.
+  if STANCE.Spell ~= nil then
+    local chosen, chosenId = nil, nil
+    local spells = safe(function() return types.Actor.spells(actor) end)
+    if util.isObject(spells) then
+      local total = 0
+      pcall(function() total = #spells end)
+      local spellTypes = self.env.core and self.env.core.magic and self.env.core.magic.SPELL_TYPE
+      local fallback = nil
+      for index = 1, total do
+        local spell = nil
+        pcall(function() spell = spells[index] end)
+        if util.isObject(spell) then
+          fallback = fallback or spell
+          -- an Ability is passive and can never be readied, so it cannot be what we draw
+          local kind = safe(function() return spell.type end)
+          local passive = spellTypes and kind == spellTypes.Ability
+          if not passive then
+            chosen = spell
+            break
+          end
+        end
+      end
+      chosen = chosen or fallback
+      chosenId = chosen and safe(function() return chosen.id end) or nil
+    end
+
+    if chosen then
+      -- the object first: `setSelectedSpell` is documented as taking a Spell, not an id
+      pcall(function() types.Actor.setSelectedSpell(actor, chosen) end)
+      local selected = safe(function() return types.Actor.getSelectedSpell(actor) end)
+      if selected == nil and chosenId then
+        pcall(function() types.Actor.setSelectedSpell(actor, chosenId) end)
+      end
+      local ok, err = pcall(function() types.Actor.setStance(actor, STANCE.Spell) end)
+      if ok then
+        self.applied.draws = (self.applied.draws or 0) + 1
+        self:log(('Readied the spell %s'):format(tostring(chosenId)), 'good')
+        return true
+      end
+      -- See the weapon branch: on the PLAYER the engine asks the WindowManager for the selected
+      -- spell, not CreatureStats, so "no spell selected" here means the UI has none -- which is a
+      -- selection problem, not a Lua one.
+      return false, ('the engine would not ready the spell %s (%s)')
+        :format(tostring(chosenId), tostring(err))
+    end
+    return false, 'no spell in the spellbook to ready'
+  end
+
+  return false, 'nothing to draw: no weapon carried and no spell known'
+end
+
 function Executor:equip(recordId)
   local types = self.env.types
   local actor = self:_player()
@@ -325,6 +458,15 @@ function Executor:_execute(command, now)
     local target = command.target
     local object = util.isObject(target) and target.object or nil
     local actor = self:_player()
+    -- An attack needs something DRAWN first, or activateBy does nothing whatsoever.
+    if command.kind == 'attack' then
+      local ready, why = self:ensureReadyToFight()
+      if not ready then
+        self.applied.failedAttacks = (self.applied.failedAttacks or 0) + 1
+        self:log(('Cannot attack: %s'):format(tostring(why)), 'warn')
+        return nil
+      end
+    end
     if util.isObject(object) and type(object.activateBy) == 'function' and actor then
       pcall(function() object:activateBy(actor) end)
       self:log(('Approaching %s'):format(command.kind or 'target'), 'info')

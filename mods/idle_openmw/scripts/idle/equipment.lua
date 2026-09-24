@@ -105,7 +105,7 @@ function M.isEquippableKind(kind) return M.EQUIPPABLE_KINDS[kind] == true end
 --- Invert an engine TYPE table { Name = number } into { number = Name }.
 function M.invertTypeTable(typeTable)
   local out = {}
-  if type(typeTable) ~= 'table' then return out end
+  if type(typeTable) ~= 'table' and type(typeTable) ~= 'userdata' then return out end
   for name, value in pairs(typeTable) do
     if type(name) == 'string' and type(value) == 'number' then out[value] = name end
   end
@@ -122,7 +122,11 @@ end
 
 --- Determine an item's kind by comparing its type class table against the engine's.
 function M.kindOf(objectType, types)
-  if not types or type(objectType) ~= 'table' then return 'other' end
+  -- An item's `object.type` is a userdata Type object on the engine, NOT a table, so the old
+  -- table-only guard made EVERY item fall through as kind 'other' -- which meant no weapon was
+  -- ever recognised as equippable and a character carrying a dagger still reported
+  -- fightWith = 'spell'. See AGENTS.md #7 and tests/spec/userdata_spec.lua.
+  if not types or not util.isObject(objectType) then return 'other' end
   for kind, className in pairs(M.KIND_TYPE_CLASS) do
     if objectType == types[className] then return kind end
   end

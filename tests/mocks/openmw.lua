@@ -175,6 +175,10 @@ function M.env(spec)
   local inventory -- forward declaration: the types table below closes over it
 
   local equipmentBySlot = {}
+  local stance = 0
+  local selectedSpell = nil
+  -- the spellbook: {id, type} rows, as ActorSpells indexes them
+  local spellList = spec.spells or {}
   local equipCalls = {}
 
   -- ---- storage (real, in-memory) -----------------------------------------
@@ -286,6 +290,7 @@ function M.env(spec)
 
   types.Actor = {
     EQUIPMENT_SLOT = EQUIPMENT_SLOT,
+    STANCE = { Nothing = 0, Weapon = 1, Spell = 2 },
     stats = {
       dynamic = {
         health = function() return pools.health end,
@@ -334,10 +339,15 @@ function M.env(spec)
     getBarterGold = function() return spec.barterGold or 500 end,
     setBarterGold = function() end,
     isDead = function() return false end,
-    getStance = function() return 0 end,
-    setStance = function() end,
-    getSelectedSpell = function() return nil end,
-    setSelectedSpell = function() end,
+    -- The draw state is real state: `attack` does NOTHING with nothing drawn, and a mock that
+    -- always reports 0 makes the draw step untestable (types.Actor.STANCE -> DrawState).
+    getStance = function() return stance end,
+    setStance = function(_actor, value) stance = value end,
+    -- Real state, for the same reason as the stance: Morrowind needs a spell SELECTED before it
+    -- can be readied, so a mock that always reports nil makes the selection step untestable.
+    getSelectedSpell = function() return selectedSpell end,
+    setSelectedSpell = function(_actor, value) selectedSpell = value end,
+    spells = function() return spellList end,
   }
 
   types.NPC = {
@@ -551,6 +561,13 @@ function M.env(spec)
       },
     },
     core = {
+      -- ESM::Spell::SpellType, as magicbindings.cpp:213 exposes it. Needed because a spell's TYPE
+      -- decides whether it can be readied at all: an Ability is passive and can never be drawn.
+      magic = {
+        SPELL_TYPE = {
+          Spell = 0, Ability = 1, Blight = 2, Disease = 3, Curse = 4, Power = 5,
+        },
+      },
       getSimulationTime = function() return spec.simulationTime or 0 end,
       getGameTime = function() return spec.gameTime or 0 end,
       getRealTime = function() return spec.realTime or 0 end,

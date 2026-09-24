@@ -18,6 +18,7 @@
 
 local engine = require('scripts.runtime.engine')
 local entity = require('scripts.idle.entity')
+local equipment = require('scripts.idle.equipment')
 local util = require('scripts.idle.util')
 local schema = require('scripts.idle.schema')
 
@@ -301,13 +302,99 @@ local function readSheet(builder, object, env)
   end
 end
 
+--- Can this actor actually FIGHT? Sets `canFight`, and `fightWith` when it can.
+---
+--- `activateBy(actor)` on an actor with NOTHING DRAWN does nothing at all: the draw state has to
+--- be Weapon or Spell first (`types.Actor.STANCE` -> `MWMechanics::DrawState`, actor.cpp:182-188),
+--- and `setEquipment` only FILLS a slot without readying anything. Measured live: the character
+--- walked up to a slaughterfish, swung at it indefinitely and never drew, because nothing in the
+--- mod had ever called `setStance`.
+---
+--- The director is PURE and cannot call `getStance`, so the answer has to reach it as a snapshot
+--- fact -- otherwise `fight` is a goal that cannot act, which is exactly what the fall-through in
+--- Director:tick exists to skip.
+function M.combatReadiness(object, env)
+  local types = env and env.types
+  local actor = types and types.Actor
+  if not actor then return nil end
+  local STANCE = actor.STANCE or {}
+
+  local stance = type(actor.getStance) == 'function' and probe(actor.getStance, object) or nil
+  if stance ~= nil and (stance == STANCE.Weapon or stance == STANCE.Spell) then
+    return { canFight = true, fightWith = stance == STANCE.Spell and 'spell' or 'weapon',
+             stance = stance }
+  end
+
+  -- a weapon already IN the slot only has to be drawn
+  local wornWeapon = false
+  if type(actor.getEquipment) == 'function' then
+    local worn = probe(actor.getEquipment, object)
+    local carried = (actor.EQUIPMENT_SLOT or {}).CarriedRight
+    if util.isObject(worn) and type(carried) == 'number' then
+      local held = nil
+      pcall(function() held = worn[carried] end)
+      wornWeapon = util.isObject(held)
+    end
+  end
+
+  -- or one in the PACK, which the executor can equip and then draw
+  local packed = false
+  if not wornWeapon and type(actor.inventory) == 'function' then
+    local inventory = probe(actor.inventory, object)
+    local items = nil
+    if util.isObject(inventory) and type(inventory.getAll) == 'function' then
+      items = probe(inventory.getAll, inventory)
+    end
+    if util.isObject(items) then
+      local total = 0
+      pcall(function() total = #items end)
+      for index = 1, total do
+        local item = nil
+        pcall(function() item = items[index] end)
+        if util.isObject(item) then
+          local record = probe(function() return item.type.record end) or {}
+          local resolved = equipment.resolve(item.type, util.isObject(record) and record or {}, types)
+          if resolved and resolved.slot == 'CarriedRight' then
+            packed = true
+            break
+          end
+        end
+      end
+    end
+  end
+
+  -- or a spell, which needs no weapon at all
+  local hasSpell = false
+  if type(actor.spells) == 'function' then
+    local spells = probe(actor.spells, object)
+    if util.isObject(spells) then
+      pcall(function() hasSpell = next(spells) ~= nil end)
+      if not hasSpell then pcall(function() hasSpell = #spells > 0 end) end
+    end
+  end
+
+  if wornWeapon or packed then
+    return { canFight = true, fightWith = 'weapon', stance = stance }
+  elseif hasSpell then
+    return { canFight = true, fightWith = 'spell', stance = stance }
+  end
+  return { canFight = false, stance = stance }
+end
+
+--- Put the readiness answer on an entity.
+local function readCombatReadiness(builder, object, env)
+  local readiness = M.combatReadiness(object, env)
+  if not readiness then return end
+  builder:set('canFight', readiness.canFight)
+  if readiness.fightWith then builder:set('fightWith', readiness.fightWith) end
+end
+
 --- What the actor is wearing and wielding.
 ---
 --- `Actor.getEquipment(actor)` with a single argument returns slot -> GameObject
 --- (types.lua:170-180). Slots come back as numbers, so they are named through
 --- Actor.EQUIPMENT_SLOT rather than a list of names we would have to keep in step.
-local function readEquipment(builder, object, env)
-  local actor = env.types and env.types.Actor
+local function readEquipment(builder, object, env)  local actor = env.types and env.types.Actor
   if not actor or type(actor.getEquipment) ~= 'function' then return end
   local worn = probe(actor.getEquipment, object)
   if type(worn) ~= 'table' then return end
@@ -364,6 +451,7 @@ local function readActor(builder, object, env)
 
   readSheet(builder, object, env)
   readEquipment(builder, object, env)
+  readCombatReadiness(builder, object, env)
   readStanding(builder, object, env)
 
   readPool(builder, 'health', object, env)

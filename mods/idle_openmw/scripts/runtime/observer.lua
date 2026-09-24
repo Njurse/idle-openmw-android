@@ -21,6 +21,7 @@ local equipment = require('scripts.idle.equipment')
 local worldsense = require('scripts.idle.worldsense')
 local uiState = require('scripts.idle.uiState')
 local lifecycle = require('scripts.idle.lifecycle')
+local entities = require('scripts.runtime.entities')
 
 local M = {}
 
@@ -179,6 +180,27 @@ function M.readClass(env, actor)
 end
 
 --- A plain snapshot of the player character.
+--- The player's facing, in radians, from whichever source the engine provides.
+---
+--- `self.rotation` is a Transform USERDATA on 0.52, not a number, so `num(self.rotation, 0)`
+--- reported a yaw of ZERO always. Zero is not "unknown" -- it is a specific, wrong direction, and
+--- anything comparing against it is wrong too.
+local function readYaw(env)
+  local selfObject = env.self or {}
+  local rotation = nil
+  pcall(function() rotation = selfObject.rotation end)
+  if type(rotation) == 'number' then return rotation end
+  local yaw = nil
+  pcall(function() yaw = rotation and rotation.z end)
+  if type(yaw) == 'number' then return yaw end
+  pcall(function() yaw = rotation and rotation.rotation and rotation.rotation.z end)
+  if type(yaw) == 'number' then return yaw end
+  local camera = env.camera
+  pcall(function() yaw = camera and camera.getYaw and camera.getYaw() end)
+  if type(yaw) == 'number' then return yaw end
+  return 0
+end
+
 function M.readPlayer(env, opts)
   opts = opts or {}
   local self = env.self or {}
@@ -193,6 +215,7 @@ function M.readPlayer(env, opts)
     return env.types.Actor.inventory(actor):countOf('gold_001')
   end), 0)
 
+  local readiness = entities.combatReadiness(actor, env) or {}
   local static = safe(function() return env.types.Actor.record(actor) end) or {}
   local encumbranceMax = num(static.capacity, nil)
   if not encumbranceMax and env.types and env.types.Actor and env.types.Actor.getCapacity then
@@ -216,7 +239,12 @@ function M.readPlayer(env, opts)
     attributes = readAttributes(env, actor),
     inventory = inventory,
     position = point(self.position) or { x = 0, y = 0, z = 0 },
-    yaw = num(self.rotation, 0),
+    yaw = readYaw(env),
+    -- the draw state, from the SAME test the entity reader uses: the director is pure and cannot
+    -- call getStance, so `fight` would otherwise be a goal that cannot act
+    canFight = readiness.canFight,
+    fightWith = readiness.fightWith,
+    stance = readiness.stance,
     cell = self.cell and { name = self.cell.name, isExterior = self.cell.isExterior or false } or nil,
     inCombat = false,
   }

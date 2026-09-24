@@ -141,6 +141,18 @@ describe('idle.director', function()
       assert.equals(commands[2].target.name, 'Rat')
     end)
 
+    it('plans nothing for fight when the character has nothing to DRAW', function()
+      -- `attack` does NOTHING with the hands empty, so fight is a goal that cannot act; emitting
+      -- nothing is what lets Director:tick hand over to a goal that can.
+      local unarmed = states.warrior({ position = { x = 0, y = 0, z = 0 } })
+      unarmed.canFight = false
+      assert.equals(#plan('fight', worlds.wilderness(), unarmed), 0)
+
+      local armed = states.warrior({ position = { x = 0, y = 0, z = 0 } })
+      armed.canFight = true
+      assert.is_true(#plan('fight', worlds.wilderness(), armed) > 0)
+    end)
+
     it('plans nothing for a goal whose target is absent, so tick can fall through', function()
       -- 'talk' with nobody to talk to must emit NO command rather than an activation with a nil
       -- target: the director uses "planned nothing" as the signal to hand over.

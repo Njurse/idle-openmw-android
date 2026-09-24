@@ -17,6 +17,7 @@
 -- readings in.
 
 local schema = require('scripts.idle.schema')
+local util = require('scripts.idle.util')
 
 local M = {}
 
@@ -80,21 +81,28 @@ end
 --- Distance and height relationship from one position to another, in engine units.
 --- Both results stay nil when either side is unknown -- guessing zero would claim the player
 --- is standing on it.
+--- Read x/y/z off a position, or nil when it is not a usable position.
+--- ALL THREE components are required, on both sides: a partial position used to yield NaN, and
+--- sqrt of NaN is not nil -- it is a number that means nothing, which is worse than absent.
+--- pcall because a userdata without __index THROWS on field access, and a frame update is not
+--- allowed to die because something handed us a position-shaped object it could not read.
+--- Positions are Vector3 USERDATA on the engine; a table-only guard here made every entity's
+--- placement silently unset. See AGENTS.md #7.
+local function components(position)
+  if not util.isObject(position) then return nil end
+  local ok, x, y, z = pcall(function() return position.x, position.y, position.z end)
+  if not ok then return nil end
+  if type(x) ~= 'number' or type(y) ~= 'number' or type(z) ~= 'number' then return nil end
+  return x, y, z
+end
+
 function M.derivePlacement(entity, fromPosition)
-  local to = entity.position
-  if type(to) ~= 'table' or type(fromPosition) ~= 'table' then return entity end
-  -- ALL THREE components, both sides. A partial position used to yield NaN, and sqrt of NaN
-  -- is not nil -- it is a number that means nothing, which is worse than absent.
-  if type(to.x) ~= 'number' or type(to.y) ~= 'number' or type(to.z) ~= 'number' then
-    return entity
-  end
-  if type(fromPosition.x) ~= 'number' or type(fromPosition.y) ~= 'number'
-    or type(fromPosition.z) ~= 'number' then
-    return entity
-  end
-  local dx, dy, dz = to.x - fromPosition.x, to.y - fromPosition.y, to.z - fromPosition.z
+  local tx, ty, tz = components(entity.position)
+  local fx, fy, fz = components(fromPosition)
+  if not tx or not fx then return entity end
+  local dx, dy, dz = tx - fx, ty - fy, tz - fz
   entity.distance = math.floor(math.sqrt(dx * dx + dy * dy + dz * dz) + 0.5)
-  entity.vertical = M.vertical(to.z, fromPosition.z)
+  entity.vertical = M.vertical(tz, fz)
   return entity
 end
 

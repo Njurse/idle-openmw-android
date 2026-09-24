@@ -185,9 +185,16 @@ function M.planCommands(goalId, statView, world, snapshot, cfg, ctx)
     }
 
   elseif goalId == 'fight' then
+    -- A character with nothing to DRAW cannot attack: `activateBy` does nothing at all with the
+    -- hands empty, so this is a goal that cannot act (measured live -- the character walked to a
+    -- slaughterfish, swung indefinitely and never drew). Emit NOTHING, and the fall-through in
+    -- Director:tick hands over to a goal that can.
+    local player = snapshot and snapshot.player
+    -- `return commands` (the empty table), NOT a bare `return`: a bare return gives nil, and the
+    -- fall-through in Director:tick asks `#alternative > 0`, which would throw on nil.
+    if player and player.canFight == false then return commands end
     -- Move INTO reach first. Attacking a creature thousands of units away is a "goal that cannot
-    -- act" wearing a command: the character stands still and swings at air. Measured live in
-    -- Seyda Neen, with the enemy 3000 units off.
+    -- act" wearing a command: the character stands still and swings at air.
     moveThenActivate('enemy', 'attack', true)
 
   elseif goalId == 'rest' then

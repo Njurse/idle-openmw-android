@@ -219,13 +219,22 @@ local CONTAINER_EXTRA = {
   field('locked', 'boolean', 'locked, when known'),
 }
 
-local ITEM_EXTRA = {
-  field('count', 'integer', 'size of the stack'),
+local ITEM_EXTRA = {  field('count', 'integer', 'size of the stack'),
   field('weight', 'number', 'per unit'),
   field('value', 'number', 'per unit'),
   field('condition', 'number', 'itemData.condition, when applicable'),
   field('enchantmentCharge', 'number', 'itemData.enchantmentCharge, when applicable'),
   field('soul', 'string', 'captured soul, when applicable'),
+}
+
+--- Can the actor fight right now, and with what.
+---
+--- `activeSpells` and `spells` say what it KNOWS; this says what it has READY. `attack` on an
+--- actor with nothing drawn does nothing at all (types.Actor.STANCE, actor.cpp:182-188), so a
+--- director that picks `fight` without this is picking a goal that cannot act.
+local COMBAT_EXTRA = {
+  field('canFight', 'boolean', 'true when a weapon can be drawn or a spell is known'),
+  field('fightWith', 'string', "what it would draw: 'weapon' or 'spell'"),
 }
 
 --- Compose field lists: shared identity first, then the kind's own, with no duplicates.
@@ -250,19 +259,19 @@ M.KINDS = {
   player = {
     description = 'The player character. Available in player and global scripts.',
     context = 'player',
-    fields = compose(IDENTITY, ACTOR_EXTRA),
+    fields = compose(IDENTITY, ACTOR_EXTRA, COMBAT_EXTRA),
   },
 
   npc = {
     description = 'A humanoid actor. Disposition is a number, never a hostility flag.',
     context = 'global|player|local',
-    fields = compose(IDENTITY, ACTOR_EXTRA),
+    fields = compose(IDENTITY, ACTOR_EXTRA, COMBAT_EXTRA),
   },
 
   creature = {
     description = 'A non-humanoid actor. Has no disposition and no class.',
     context = 'global|player|local',
-    fields = compose(IDENTITY, ACTOR_EXTRA),
+    fields = compose(IDENTITY, ACTOR_EXTRA, COMBAT_EXTRA),
   },
 
   door = {

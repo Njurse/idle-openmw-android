@@ -596,6 +596,84 @@ describe('runtime.openmw adapter', function()
       end)
     end)
 
+    it('DRAWS a weapon before attacking, because attack does nothing otherwise', function()
+      -- The missing half of combat: `equip` filled the slot and nothing ever called `setStance`,
+      -- so the character walked up to a creature, swung indefinitely and never drew.
+      withEnv(ACTION_SPEC, function(env)
+        local ex = executorMod.new(env, cfg, {})
+        local stances = env.types.Actor.STANCE
+        assert.equals(env.types.Actor.getStance(env.self.object), stances.Nothing)
+
+        local ready, why = ex:ensureReadyToFight()
+        assert.is_true(ready, tostring(why))
+        assert.equals(env.types.Actor.getStance(env.self.object), stances.Weapon)
+        assert.equals(#env._equipCalls, 1)
+        assert.equals(ex.applied.draws, 1)
+      end)
+    end)
+
+    it('draws ONCE per engagement, not on every tick', function()
+      withEnv(ACTION_SPEC, function(env)
+        local ex = executorMod.new(env, cfg, {})
+        assert.is_true(ex:ensureReadyToFight())
+        assert.is_true(ex:ensureReadyToFight())
+        assert.is_true(ex:ensureReadyToFight())
+        -- the stance check at the top is what stops a weapon being re-equipped every frame
+        assert.equals(#env._equipCalls, 1)
+        assert.equals(ex.applied.draws, 1)
+      end)
+    end)
+
+    it('says why it cannot fight when there is nothing to draw', function()
+      withEnv({ classId = 'warrior', position = { x = 0, y = 0, z = 0 }, inventory = {} },
+        function(env)
+          local ex = executorMod.new(env, cfg, {})
+          local ready, why = ex:ensureReadyToFight()
+          assert.is_false(ready)
+          -- the reason must name the ACTUAL obstacle, not a guess: the first version of this said
+          -- "no spell known" about a character that plainly had one
+          assert.is_true(tostring(why):find('spell') ~= nil, tostring(why))
+        end)
+    end)
+
+    it('SELECTS a spell before readying it, because the stance alone does nothing', function()
+      withEnv({
+        classId = 'warrior', position = { x = 0, y = 0, z = 0 }, inventory = {},
+        spells = { { id = 'flame', type = 0 }, { id = 'levitate', type = 2 } },
+      }, function(env)
+        local ex = executorMod.new(env, cfg, {})
+        local ready, why = ex:ensureReadyToFight()
+        assert.is_true(ready, tostring(why))
+        assert.equals(env.types.Actor.getStance(env.self.object), env.types.Actor.STANCE.Spell)
+        -- a spell had to be selected, or the engine would have refused the stance
+        assert.is_not_nil(env.types.Actor.getSelectedSpell(env.self.object))
+        assert.equals(ex.applied.draws, 1)
+      end)
+    end)
+
+    it('prefers a castable spell over a passive ability', function()
+      withEnv({
+        classId = 'warrior', position = { x = 0, y = 0, z = 0 }, inventory = {},
+        -- index 1 is an Ability (SPELL_TYPE.Ability = 1), which can never be readied
+        spells = { { id = 'passive', type = 1 }, { id = 'fireball', type = 0 } },
+      }, function(env)
+        local ex = executorMod.new(env, cfg, {})
+        assert.is_true(ex:ensureReadyToFight())
+        local chosen = env.types.Actor.getSelectedSpell(env.self.object)
+        assert.equals(chosen and chosen.id, 'fireball')
+      end)
+    end)
+
+    it('refuses an attack outright when nothing can be drawn', function()
+      withEnv({ classId = 'warrior', position = { x = 0, y = 0, z = 0 }, inventory = {} },
+        function(env)
+          local ex = executorMod.new(env, cfg, {})
+          ex:submit({ { type = 'activate', kind = 'attack', target = { object = { activateBy = function() end } } } })
+          ex:update(0, 0)
+          assert.equals(ex.applied.failedAttacks, 1)
+        end)
+    end)
+
     it('is advisory only when simulated actions are off', function()
       withEnv(ACTION_SPEC, function(env)
         local advisory = configMod.new({ behaviour = { simulateActions = false } })

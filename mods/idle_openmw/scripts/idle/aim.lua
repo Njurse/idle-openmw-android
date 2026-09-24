@@ -20,6 +20,8 @@
 --
 -- PURE -- plain tables in, plain tables out. No engine, no clock.
 
+local util = require('scripts.idle.util')
+
 local M = {}
 
 --- The engine default for `iMaxActivateDist`, used only if the GMST cannot be read. The real
@@ -41,7 +43,7 @@ end
 M.atan2 = atan2
 
 function M.distance(a, b)
-  if type(a) ~= 'table' or type(b) ~= 'table' then return nil end
+  if not (util.isObject(a) and util.isObject(b)) then return nil end
   local dx = (a.x or 0) - (b.x or 0)
   local dy = (a.y or 0) - (b.y or 0)
   local dz = (a.z or 0) - (b.z or 0)
@@ -50,7 +52,7 @@ end
 
 --- Horizontal distance only -- what decides whether a look is steep or shallow.
 function M.planarDistance(a, b)
-  if type(a) ~= 'table' or type(b) ~= 'table' then return nil end
+  if not (util.isObject(a) and util.isObject(b)) then return nil end
   local dx = (a.x or 0) - (b.x or 0)
   local dy = (a.y or 0) - (b.y or 0)
   return math.sqrt(dx * dx + dy * dy)
@@ -58,7 +60,7 @@ end
 
 --- The yaw that faces `to` from `from`, in the engine's convention (atan2(dx, dy)).
 function M.yawTo(from, to)
-  if type(from) ~= 'table' or type(to) ~= 'table' then return nil end
+  if not (util.isObject(from) and util.isObject(to)) then return nil end
   return atan2((to.x or 0) - (from.x or 0), (to.y or 0) - (from.y or 0))
 end
 
@@ -66,7 +68,7 @@ end
 --- camera's own quaternion order; the runtime checks this against a ray.
 --- @param upSign number +1 or -1, to flip the convention once it has been measured
 function M.pitchTo(from, to, upSign)
-  if type(from) ~= 'table' or type(to) ~= 'table' then return nil end
+  if not (util.isObject(from) and util.isObject(to)) then return nil end
   local planar = M.planarDistance(from, to)
   local dz = (to.z or 0) - (from.z or 0)
   local sign = upSign or 1
@@ -76,7 +78,7 @@ end
 
 --- Everything needed to aim at a point: the angles, and how far away it is.
 function M.plan(from, to, upSign)
-  if type(from) ~= 'table' or type(to) ~= 'table' then return nil end
+  if not (util.isObject(from) and util.isObject(to)) then return nil end
   return {
     yaw = M.yawTo(from, to),
     pitch = M.pitchTo(from, to, upSign),
@@ -98,7 +100,7 @@ end
 --- Comparing engine objects directly is not safe (no equality operator is exposed to Lua), so
 --- identity is an id string or a record id, which is what the engine hands us anyway.
 function M.sameTarget(a, b)
-  if type(a) ~= 'table' or type(b) ~= 'table' then return false end
+  if not (util.isObject(a) and util.isObject(b)) then return false end
   if a.id ~= nil and b.id ~= nil then return a.id == b.id end
   return a.recordId ~= nil and a.recordId == b.recordId
 end
@@ -116,7 +118,7 @@ end
 --- @param playerPosition table|nil used only to fill in a missing per-door distance
 --- @return table|nil chosen door, string reason
 function M.chooseExit(doors, reach, playerPosition)
-  if type(doors) ~= 'table' or #doors == 0 then return nil, 'no doors nearby' end
+  if not util.isObject(doors) or #doors == 0 then return nil, 'no doors nearby' end
 
   local best, bestDistance = nil, nil
   local teleport, teleportDistance = nil, nil
@@ -168,7 +170,7 @@ function M.step(target, playerPosition, reach, options)
   if type(target) ~= 'table' or not target.position then
     return { step = 'none', reason = 'target has no position' }
   end
-  if type(playerPosition) ~= 'table' then
+  if type(playerPosition) ~= 'table' and type(playerPosition) ~= 'userdata' then
     return { step = 'none', reason = 'no player position' }
   end
 
