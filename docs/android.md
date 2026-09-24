@@ -689,7 +689,7 @@ SDL2-based activity, the same shape as upstream's `openmw-android`. Still to do:
 # AND IT PACKAGES: a signed APK
 
 ```
-build/android-out/idle-openmw.apk     189 MB
+build/android-out/idle-openmw.apk     115 MB
   is.xyz.idle_openmw, versionCode 1, minSdk 24, targetSdk 34
   verified: APK Signature Scheme v2 + v3
   classes.dex + lib/arm64-v8a/{libopenmw,libopenal,libcollada-dom2.5-dp,libbz2,libz,libGL}.so
@@ -786,9 +786,19 @@ two real options are:
 
 ## Still open
 
-- **Size.** 189 MB, because OSG, Boost, Bullet and ffmpeg are all linked into `libopenmw.so`
-  statically. `--gc-sections`, a size-oriented build type, and dropping the unused OSG plugins are
-  the obvious levers, and the payload is worth halving before it goes on a phone.
+- **Size.** 115 MB, and the first pass is already in: stripping the bundled shared libraries took
+  it down from 189 MB for nothing but discarded symbols (`build-apk.sh` does it, into a staging
+  directory). What remains is `libopenmw.so` at 108 MB, because OSG, Boost, Bullet and ffmpeg are
+  all linked in statically. The levers, in order of expected payoff:
+  - **`--gc-sections` plus `-ffunction-sections -fdata-sections`**, which the NDK's own flags
+    already partly set but which only pay off with the linker flag that discards the sections.
+  - **A size-oriented build type.** `-DCMAKE_BUILD_TYPE=MinSizeRel` trades speed for bytes.
+  - **Dropping OSG plugins the game does not use.** `USED_OSG_PLUGINS` (CMakeLists.txt:301) is ten
+    plugins, and their registration is `--whole-archive`, so every one of them is force-linked in.
+  - **Dropping collada-dom entirely** — 9 MB, plus engine-side DAE code — which is a
+    **mod-compatibility tradeoff**, not a free win: `.dae` models are custom content, while
+    Morrowind's own models are NIF. Recorded as an option rather than taken, because it is the
+    user's call.
 - **The game data.** The engine reads the Morrowind install by absolute path;
   `tools/android/provision-emulator.sh` already stages `/storage/emulated/0/Morrowind` the way the
   old APK expected. On device this is the same shape, and the mod ships in

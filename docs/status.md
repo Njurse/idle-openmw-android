@@ -93,7 +93,7 @@ design. The measured state:
 
 ```
 libopenmw.so            ARM aarch64, Android 24, NDK r29  (924 MB debug -> 104 MB stripped)
-idle-openmw.apk         189 MB, signed (v2+v3), minSdk 24, arm64-v8a
+idle-openmw.apk         115 MB, signed (v2+v3), minSdk 24, arm64-v8a
 ```
 
 ```bash
@@ -179,8 +179,9 @@ mechanism.
 1. **Run the APK on an arm64 device.** Everything else about the app is downstream of "does it
    launch and find the game data", and no emulator on this machine can answer that (x86_64 AVD,
    arm64 APK). This is the cheapest high-information step left.
-2. **Halve the APK.** 189 MB is static OSG/Boost/Bullet/ffmpeg. `--gc-sections`, a size-oriented
-   build type, and dropping the unused OSG plugins are the levers.
+2. **Shrink the APK further.** 115 MB, down from 189 MB once the bundled libraries were stripped.
+   What is left is `libopenmw.so` at 108 MB: static OSG/Boost/Bullet/ffmpeg. `--gc-sections`, a
+   size-oriented build type, and dropping unused OSG plugins are the levers.
 3. **Chase the combat outcome** (open thread 1) — the idle loop only closes if something dies.
 4. **Pick the spell route**: injection vs a fork binding, and record the decision. It is the first
    real instance of the engine/injection split, so it sets the pattern.
