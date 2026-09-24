@@ -20,12 +20,23 @@
 #   * the next REQUIRED dependency stops it: `Could NOT find LZ4` at CMakeLists.txt:281, the first
 #     of OSG, Boost, SDL2, MyGUI, Bullet, ffmpeg, OpenAL and the rest.
 #
-# So the one thing still blocking this is an Android dependency tree for a modern NDK:
+# THE DEPENDENCY TREE IS A PREBUILT ARCHIVE, and that is the recipe (CI/before_install.android.sh):
 #
-#     cmake ... -DOPENMW_DEPENDENCIES_DIR=<tree>
+#     curl .../openmw-deps/-/raw/main/android/openmw-android-deps-20240812.tar.xz
+#     tar -xJf it into the NDK sysroot's usr/
 #
-# CMakeLists.txt:73 adds that path to CMAKE_FIND_ROOT_PATH. Produce it and this script carries on
-# to the next failure; do not expect it to configure today.
+# Upstream extracts it INTO the sysroot. We instead keep it beside the build and pass the path,
+# because CMakeLists.txt:73 adds OPENMW_DEPENDENCIES_DIR to CMAKE_FIND_ROOT_PATH and that is
+# non-destructive -- it can be re-extracted or removed without touching the NDK.
+#
+# The archive is aarch64 / API 24, built by NDK r26b, and carries Boost 1.85 with full CMake
+# config packages, SDL2, MyGUI, Bullet, ffmpeg, OpenAL, freetype, libpng16, libjpeg, gl4es, ICU,
+# collada-dom and liblz4.a. LZ4 has NO CMake config, which is why openmw's own
+# cmake/FindLZ4.cmake is what has to find it.
+#
+# NOTE the tree is extracted on Windows, where tar cannot create symlinks without privilege, so
+# the archive's libpng.a -> libpng16.a style links come out MISSING and must be recreated as
+# copies. tools/android/fix-deps-symlinks.sh does that.
 #
 # USAGE
 #   bash tools/android/configure-android.sh                 # newest installed NDK
@@ -42,11 +53,13 @@ BUILD_DIR="$REPO_ROOT/build/android-configure"
 
 ABI="arm64-v8a"
 PLATFORM="android-24"
+DEPS="${OPENMW_DEPENDENCIES_DIR:-}"
 while [ $# -gt 0 ]; do
   case "$1" in
     --abi) ABI="$2"; shift 2 ;;
     --platform) PLATFORM="$2"; shift 2 ;;
     --build-dir) BUILD_DIR="$2"; shift 2 ;;
+    --deps) DEPS="$2"; shift 2 ;;
     *) echo "unknown option: $1" >&2; exit 2 ;;
   esac
 done
@@ -92,6 +105,7 @@ fi
 echo "NDK      : $NDK"
 echo "ABI      : $ABI  (platform $PLATFORM)"
 echo "GLES dir : $LIBS"
+echo "deps     : ${DEPS:-(none -- expect the dependency list to stop it)}"
 echo "build dir: $BUILD_DIR"
 echo
 
@@ -105,7 +119,30 @@ cmake -S "$SRC" -B "$BUILD_DIR" -G Ninja \
   -DOPENGL_gl_LIBRARY="$LIBS/libGLESv2.so" \
   -DOPENGL_glx_LIBRARY="$LIBS/libEGL.so" \
   -DOPENGL_INCLUDE_DIR="$SYSROOT/usr/include" \
-  ${OPENMW_DEPENDENCIES_DIR:+-DOPENMW_DEPENDENCIES_DIR="$OPENMW_DEPENDENCIES_DIR"} \
+  -DBUILD_LAUNCHER=0 \
+  -DBUILD_WIZARD=0 \
+  -DBUILD_OPENCS=0 \
+  -DBUILD_MWINIIMPORTER=0 \
+  -DBUILD_ESSIMPORTER=0 \
+  -DBUILD_BSATOOL=0 \
+  -DBUILD_ESMTOOL=0 \
+  -DBUILD_NIFTEST=0 \
+  -DBUILD_NAVMESHTOOL=0 \
+  -DBUILD_BULLETOBJECTTOOL=0 \
+  -DBUILD_OPENCS_TESTS=0 \
+  -DOPENMW_USE_SYSTEM_MYGUI=ON \
+  -DOPENMW_USE_SYSTEM_OSG=ON \
+  -DOPENMW_USE_SYSTEM_BULLET=ON \
+  -DOPENMW_USE_SYSTEM_ICU=ON \
+  -DOPENMW_USE_SYSTEM_YAML_CPP=OFF \
+  -DOPENMW_USE_SYSTEM_SQLITE3=OFF \
+  ${DEPS:+-DOPENMW_DEPENDENCIES_DIR="$DEPS"} \
+  ${DEPS:+-DCMAKE_PREFIX_PATH="$DEPS"} \
+  ${DEPS:+-DCMAKE_INCLUDE_PATH="$DEPS/include"} \
+  ${DEPS:+-DCMAKE_LIBRARY_PATH="$DEPS/lib"} \
+  -DCMAKE_FIND_ROOT_PATH_MODE_INCLUDE=BOTH \
+  -DCMAKE_FIND_ROOT_PATH_MODE_LIBRARY=BOTH \
+  -DCMAKE_FIND_ROOT_PATH_MODE_PACKAGE=BOTH \
   > "$LOG" 2>&1
 STATUS=$?
 
