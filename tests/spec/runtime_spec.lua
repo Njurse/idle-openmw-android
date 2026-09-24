@@ -596,6 +596,54 @@ describe('runtime.openmw adapter', function()
       end)
     end)
 
+    it('SWINGS with controls.use, because activateBy does nothing to a creature', function()
+      -- The bug this pins: the mod attacked by calling `object:activateBy(actor)`, which is the
+      -- door/container/NPC "use". A creature ignores it completely, so the character stood in
+      -- melee while the target's health never moved -- a mudcrab read 15, 15, 15, ... and then
+      -- killed the character. The engine's attack control is `controls.use`.
+      withEnv(ACTION_SPEC, function(env)
+        local ex = executorMod.new(env, cfg, {})
+        local controls = env.self.controls
+        assert.equals(env.self.ATTACK_TYPE.NoAttack, controls.use, 'should not start swinging')
+
+        local ok, why = ex:_swing()
+        assert.is_true(ok, tostring(why))
+        assert.equals(env.self.ATTACK_TYPE.Chop, controls.use)
+      end)
+    end)
+
+    it('stops swinging when the controls are released', function()
+      withEnv(ACTION_SPEC, function(env)
+        local ex = executorMod.new(env, cfg, {})
+        assert.is_true(ex:_swing())
+        assert.equals(env.self.ATTACK_TYPE.Chop, env.self.controls.use)
+
+        ex:_releaseControls()
+        -- `use` is sticky: left set, the character keeps attacking while it flees or rests
+        assert.equals(env.self.ATTACK_TYPE.NoAttack, env.self.controls.use)
+      end)
+    end)
+
+    it('attacks by swinging rather than by activating the target', function()
+      withEnv(ACTION_SPEC, function(env)
+        local ex = executorMod.new(env, cfg, {})
+        -- an actor that would record an activate() if the old path were still taken
+        local activated = false
+        local creature = {
+          id = '0xdead',
+          object = {
+            recordId = 'mudcrab',
+            activateBy = function() activated = true end,
+          },
+        }
+        local applied = ex:_execute({ type = 'activate', kind = 'attack', target = creature })
+        assert.is_false(activated, 'an attack must not go through activateBy')
+        assert.equals(env.self.ATTACK_TYPE.Chop, env.self.controls.use)
+        assert.equals(1, ex.applied.attacks)
+        assert.is_true(type(applied) == 'string', 'the executor should report the swing')
+      end)
+    end)
+
     it('DRAWS a weapon before attacking, because attack does nothing otherwise', function()
       -- The missing half of combat: `equip` filled the slot and nothing ever called `setStance`,
       -- so the character walked up to a creature, swung indefinitely and never drew.

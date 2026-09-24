@@ -104,6 +104,56 @@ function Executor:_releaseControls()
   controls.pitchChange = 0
   controls.run = false
   controls.jump = false
+  -- Stop swinging as well. `use` is STICKY: it is a control the engine keeps applying until
+  -- something changes it, so leaving it set means the character keeps attacking while it flees,
+  -- rests or walks away -- draining fatigue, and looking for all the world like it is fighting
+  -- when the goal says otherwise.
+  local noAttack = self:_attackType('NoAttack')
+  if noAttack ~= nil then pcall(function() controls.use = noAttack end) end
+end
+
+--- The engine's AttackType for `controls.use`.
+---
+--- `self.ATTACK_TYPE` is bound by the engine as { NoAttack, Any, Chop, Slash, Thrust }
+--- (localscripts.cpp:82-87) and `controls.use` takes one of them (:69). Anchored on `openmw.self`
+--- because that is where ATTACK_TYPE lives, not on the types module.
+--- @return number|nil
+function Executor:_attackType(name)
+  local self_ = self.env.self
+  if not util.isObject(self_) then return nil end
+  local kinds = nil
+  pcall(function() kinds = self_.ATTACK_TYPE end)
+  if not util.isObject(kinds) then return nil end
+  local value = nil
+  pcall(function() value = kinds[name] end)
+  return value
+end
+
+--- Swing the readied weapon.
+---
+--- WHY THIS EXISTS: the mod "attacked" by calling `object:activateBy(actor)`, and activateBy is the
+--- door/container/NPC "use" -- it does nothing whatsoever to a creature. The shape of that failure
+--- is worth remembering, because it looked like everything except a bug:
+---
+---   goal=fight, stance=1 (weapon drawn), cmds=['move','activate/attack'], and the character parked
+---   in melee while the target's health never moved once: a mudcrab sat at 15, 15, 15, 15, ...
+---   and then killed the character (goal=survive -> flee -> dead).
+---
+--- The engine's attack control is `self.controls.use`, an MWMechanics::AttackType. Setting it is
+--- exactly what holding the Use button does, and the engine handles the reach, the swing animation
+--- and the cooldown itself.
+--- @return boolean, string|nil why not
+function Executor:_swing()
+  local controls = self:_controls()
+  if not controls then return false, 'no controls in a player script' end
+  -- Chop is the straight-ahead swing and is the safest default for an unattended character;
+  -- `Any` is accepted by the enum but is ambiguous about which swing to play.
+  local attack = self:_attackType('Chop')
+  if attack == nil then attack = self:_attackType('Any') end
+  if attack == nil then return false, 'this engine exposes no ATTACK_TYPE to swing with' end
+  local ok, err = pcall(function() controls.use = attack end)
+  if not ok then return false, tostring(err) end
+  return true
 end
 
 --- The player's facing, in radians.
@@ -477,7 +527,7 @@ function Executor:_execute(command, now)
     local target = command.target
     local object = util.isObject(target) and target.object or nil
     local actor = self:_player()
-    -- An attack needs something DRAWN first, or activateBy does nothing whatsoever.
+    -- An attack needs something DRAWN first, or a swing lands with an empty hand.
     if command.kind == 'attack' then
       local ready, why = self:ensureReadyToFight()
       if not ready then
@@ -485,6 +535,17 @@ function Executor:_execute(command, now)
         self:log(('Cannot attack: %s'):format(tostring(why)), 'warn')
         return nil
       end
+      -- DRAWING WAS NEVER FIGHTING. `activateBy` is the door/container/NPC use and does nothing to
+      -- a creature, so this used to stand in melee while the target's health never moved. The
+      -- engine's attack control is `controls.use`.
+      local swung, swingWhy = self:_swing()
+      if swung then
+        self.applied.attacks = (self.applied.attacks or 0) + 1
+        return ('attack %s'):format(tostring(command.target and command.target.id or 'target'))
+      end
+      self.applied.failedAttacks = (self.applied.failedAttacks or 0) + 1
+      self:log(('Cannot swing: %s'):format(tostring(swingWhy)), 'warn')
+      return nil
     end
     if util.isObject(object) and type(object.activateBy) == 'function' and actor then
       pcall(function() object:activateBy(actor) end)

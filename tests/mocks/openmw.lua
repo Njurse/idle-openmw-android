@@ -241,9 +241,13 @@ function M.env(spec)
 
   local actor = { recordId = spec.recordId or 'player' }
 
+  -- `use` is the ATTACK control (localscripts.cpp:69), and it is real state here for the same
+  -- reason the stance is: `nil` means "has not swung", which is how a spec can tell an attack from
+  -- a no-op. It starts at NoAttack, i.e. not swinging.
+  local ATTACK_TYPE = { NoAttack = 0, Any = 1, Chop = 2, Slash = 3, Thrust = 4 }
   local controls = {
     movement = 0, sideMovement = 0, yawChange = 0, pitchChange = 0,
-    run = false, sneak = false, jump = false,
+    run = false, sneak = false, jump = false, use = ATTACK_TYPE.NoAttack,
   }
 
   local skillStats = {}
@@ -516,6 +520,8 @@ function M.env(spec)
 
   self = {
     object = actor,
+    -- The engine binds ATTACK_TYPE on openmw.self, not on the types module (localscripts.cpp:82).
+    ATTACK_TYPE = ATTACK_TYPE,
     position = point(spec.position),
     rotation = spec.rotation or 0,
     cell = spec.cell and { name = spec.cell.name, isExterior = spec.cell.isExterior } or nil,
