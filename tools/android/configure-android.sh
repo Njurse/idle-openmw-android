@@ -147,6 +147,19 @@ for avlib in avutil avformat avcodec swscale swresample; do
   fi
 done
 
+# WHICH OpenGL. Android has no desktop GL, and OpenMW's renderer needs it: 21 symbols such as
+# glTexImage1D, glLoadMatrixd and glPolygonStipple are simply absent from GLES, so linking against
+# libGLESv2 fails with "undefined symbol: glTexImage1D" (and 20 friends). The answer is gl4es, and
+# the dependency archive already carries it: its lib/libGL.so IS gl4es (gl4es_GetProcAddress,
+# gl4es_pre_swap), translating desktop GL onto GLES. Prefer it whenever the tree is present.
+GL_LIBRARY="$LIBS/libGLESv2.so"
+GL_INCLUDE="$SYSROOT/usr/include"
+if [ -n "$DEPS" ] && [ -f "$DEPS/lib/libGL.so" ]; then
+  GL_LIBRARY="$DEPS/lib/libGL.so"
+  GL_INCLUDE="$DEPS/include"
+  echo "OpenGL   : $DEPS/lib/libGL.so (gl4es -- desktop GL over GLES)"
+fi
+
 echo "NDK      : $NDK"
 echo "ABI      : $ABI  (platform $PLATFORM)"
 echo "GLES dir : $LIBS"
@@ -155,15 +168,38 @@ echo "build dir: $BUILD_DIR"
 echo
 
 LOG="$REPO_ROOT/build/android-configure.log"
+# FindMyGUI has no CMake package to find, so it probes with HINTS on $ENV{MYGUI_HOME}. Point it at
+# the dependency tree: the archive carries a PREBUILT libMyGUIEngineStatic.a, and that matters --
+# MyGUI 3.4.3 does NOT compile against a modern NDK's libc++ ("implicit instantiation of undefined
+# template 'std::char_traits<unsigned int>'" in MyGUI_UString.h, since the char_traits
+# specialisations it relies on were removed). Using the prebuilt library avoids that entirely.
+if [ -n "$DEPS" ]; then export MYGUI_HOME="$DEPS"; fi
+
+# MyGUI 3.4.3's headers do not compile against a modern libc++: they build on
+# std::basic_string<unsigned int>, whose char_traits specialisation libc++ removed. Force-include
+# the shim that restores it (see the header for the full story).
+COMPAT_HEADER="$REPO_ROOT/tools/android/compat/glibcxx_char_traits_unicode.h"
+COMPAT_CXX_FLAGS=""
+if [ -f "$COMPAT_HEADER" ]; then
+  # clang is a WINDOWS binary: it cannot open a /c/... path, so hand it the C:/... form. (CMake
+  # itself copes with POSIX paths elsewhere, which is why only this flag needs converting.)
+  COMPAT_HEADER_WIN="$COMPAT_HEADER"
+  if command -v cygpath >/dev/null 2>&1; then
+    COMPAT_HEADER_WIN="$(cygpath -m "$COMPAT_HEADER")"
+  fi
+  COMPAT_CXX_FLAGS="-include $COMPAT_HEADER_WIN"
+  echo "compat   : force-including $(basename "$COMPAT_HEADER") for the removed char_traits"
+fi
 cmake -S "$SRC" -B "$BUILD_DIR" -G Ninja \
   -DCMAKE_TOOLCHAIN_FILE="$NDK/build/cmake/android.toolchain.cmake" \
   -DANDROID_ABI="$ABI" \
   -DANDROID_PLATFORM="$PLATFORM" \
   -DCMAKE_BUILD_TYPE=Release \
-  -DOPENGL_opengl_LIBRARY="$LIBS/libGLESv2.so" \
-  -DOPENGL_gl_LIBRARY="$LIBS/libGLESv2.so" \
+  -DCMAKE_CXX_FLAGS="$COMPAT_CXX_FLAGS" \
+  -DOPENGL_opengl_LIBRARY="$GL_LIBRARY" \
+  -DOPENGL_gl_LIBRARY="$GL_LIBRARY" \
   -DOPENGL_glx_LIBRARY="$LIBS/libEGL.so" \
-  -DOPENGL_INCLUDE_DIR="$SYSROOT/usr/include" \
+  -DOPENGL_INCLUDE_DIR="$GL_INCLUDE" \
   -DBUILD_LAUNCHER=0 \
   -DBUILD_WIZARD=0 \
   -DBUILD_OPENCS=0 \
@@ -175,14 +211,22 @@ cmake -S "$SRC" -B "$BUILD_DIR" -G Ninja \
   -DBUILD_NAVMESHTOOL=0 \
   -DBUILD_BULLETOBJECTTOOL=0 \
   -DBUILD_OPENCS_TESTS=0 \
-  -DOPENMW_USE_SYSTEM_MYGUI=OFF \
+  -DOPENMW_USE_SYSTEM_MYGUI=ON \
+  -DMYGUI_STATIC=ON \
   -DOPENMW_USE_SYSTEM_OSG=ON \
+  -DOSG_STATIC=ON \
   -DOPENMW_USE_SYSTEM_BULLET=ON \
   -DOPENMW_USE_SYSTEM_ICU=ON \
   -DOPENMW_USE_SYSTEM_YAML_CPP=OFF \
   -DOPENMW_USE_SYSTEM_SQLITE3=OFF \
   ${FFMPEG_VERSION_FLAGS[@]+"${FFMPEG_VERSION_FLAGS[@]}"} \
   ${DEPS:+-DOPENMW_DEPENDENCIES_DIR="$DEPS"} \
+  ${DEPS:+-DPNG_PNG_INCLUDE_DIR="$DEPS/include/libpng16"} \
+  ${DEPS:+-DPNG_LIBRARY="$DEPS/lib/libpng.a"} \
+  ${DEPS:+-DJPEG_INCLUDE_DIR="$DEPS/include"} \
+  ${DEPS:+-DJPEG_LIBRARY="$DEPS/lib/libjpeg.a"} \
+  ${DEPS:+-DFREETYPE_INCLUDE_DIRS="$DEPS/include/freetype2"} \
+  ${DEPS:+-DFREETYPE_LIBRARY="$DEPS/lib/libfreetype.a"} \
   ${PREFIX:+-DCMAKE_PREFIX_PATH="$PREFIX"} \
   ${SDL2_ROOT:+-DSDL2_DIR="$SDL2_ROOT/lib/cmake/SDL2"} \
   ${DEPS:+-DCMAKE_INCLUDE_PATH="$DEPS/include"} \
