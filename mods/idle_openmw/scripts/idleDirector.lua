@@ -372,6 +372,12 @@ local function gatherUiReport()
         local steer = executor.lastSteer or {}
         data.selfYaw = steer.yaw
         data.yawSource = steer.yawSource
+        -- The AIM, both halves. Pitch was silently missing for a long time: _steer never wrote
+        -- controls.pitchChange, so the character faced its target while looking at the horizon.
+        -- Reported separately from `steer` because that is what a host watches to see it move.
+        data.selfPitch = steer.pitch
+        data.pitchSource = steer.pitchSource
+        data.pitchDelta = steer.pitchDelta
         data.steer = steer
         local route = executor.route
         local waypoint = route and route.points and route.points[route.index or 1] or nil

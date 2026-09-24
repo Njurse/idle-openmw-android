@@ -83,27 +83,56 @@ end
 --- "turn, then move" behaviour.
 ---
 --- @return { distance, desiredYaw, yawDelta, yawChange, arrived, shouldMove, shouldTurn }
+--- Steer toward `to`: the turn rate, whether to walk yet, and where to POINT the aim.
+---
+--- THE ANGLE CONVENTIONS ARE THE ENGINE'S, taken from the very function its own
+--- TransformQ:getYaw()/getPitch() call (components/misc/mathutil.hpp:37-41):
+---
+---     pitch = -asin(forward.z)         yaw = atan2(forward.x, forward.y)
+---
+--- Note the negation on pitch: a target ABOVE the character is a NEGATIVE pitch. That is the
+--- opposite of the intuitive reading, so it is taken from the engine rather than guessed, and it
+--- is why an aim that ignores pitch points confidently at the wrong place.
+---
+--- Why aim is part of STEERING at all: `controls.pitchChange` and `controls.yawChange` are the same
+--- kind of value -- per-frame rotation the engine applies to the character -- so they belong in the
+--- same solution, computed from the same target.
 function M.steering(from, to, currentYaw, opts)
   opts = opts or {}
   local arriveTolerance = opts.arriveTolerance or 96
   local moveTolerance = opts.moveYawTolerance or 0.6
   local maxTurn = opts.maxTurn or math.pi
+  local maxPitch = opts.maxPitch or 0.35
 
   local dx = (to.x or 0) - (from.x or 0)
   local dy = (to.y or 0) - (from.y or 0)
+  local dz = (to.z or 0) - (from.z or 0)
   local distance = math.sqrt(dx * dx + dy * dy)
   local desiredYaw = atan2(dx, dy)
   local yawDelta = util.angleDelta(currentYaw or 0, desiredYaw)
   local arrived = distance <= arriveTolerance
 
+  -- vertical aim, in the engine's own convention (see above). A zero-length direction would divide
+  -- by zero, hence the floor: the character is never exactly ON the target and the case only
+  -- arises at coincident points.
+  local span = math.sqrt(distance * distance + dz * dz)
+  local desiredPitch = -math.asin(util.clamp(dz / math.max(span, 0.001), -1, 1))
+  local currentPitch = opts.currentPitch or 0
+  local pitchDelta = util.angleDelta(currentPitch, desiredPitch)
+
   return {
     distance = distance,
+    verticalDistance = dz,
     desiredYaw = desiredYaw,
     yawDelta = yawDelta,
     yawChange = util.clamp(yawDelta, -maxTurn, maxTurn),
+    desiredPitch = desiredPitch,
+    pitchDelta = pitchDelta,
+    pitchChange = util.clamp(pitchDelta, -maxPitch, maxPitch),
     arrived = arrived,
     shouldMove = (not arrived) and math.abs(yawDelta) <= moveTolerance,
     shouldTurn = math.abs(yawDelta) > 0.05,
+    shouldAim = math.abs(pitchDelta) > 0.02,
   }
 end
 

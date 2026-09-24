@@ -273,6 +273,65 @@ describe('runtime.openmw adapter', function()
       end)
     end)
 
+    it('AIMS with the object rotation, and sets the pitch the old code never wrote', function()
+      -- Two bugs in one spec, because they were one failure.
+      --
+      -- (1) THE YAW SOURCE. `rotation` is not on the SelfObject; it is on the LObject behind
+      --     `.object`, and it is a TransformQ whose only useful accessors are getYaw()/getPitch().
+      --     Probing selfObject.rotation alone always missed it and fell through to camera.getYaw(),
+      --     which for the player reports where the MOUSE left the camera -- a constant, because the
+      --     engine restores mPitchChange/mYawChange from mwinput every frame (actors.cpp:364,:407).
+      --     Steering on a constant meant shouldMove stayed false, the character stood still, the
+      --     BLOCKING move in front of every attack never completed, and so the attack never ran.
+      -- (2) THE PITCH. _steer wrote yawChange and movement and never pitchChange at all, so the
+      --     vertical aim stayed wherever the camera had been left.
+      withEnv({ position = { x = 0, y = 0, z = 0 } }, function(env)
+        -- The engine's SelfObject exposes NO usable `rotation` -- that is precisely why the old
+        -- probe fell through to the camera -- so clear the mock's default to model it, and put the
+        -- TransformQ where it really lives, on the LObject.
+        env.self.rotation = nil
+        env.self.object.rotation = {
+          getYaw = function() return 1.5 end,
+          getPitch = function() return 0.25 end,
+        }
+        -- and a camera reading that is DIFFERENT, so a fallback cannot pass this by accident
+        env.camera.getYaw = function() return -9 end
+        env.camera.getPitch = function() return -9 end
+
+        local ex = newExecutor(env, { nav = mocks.nav(50) })
+        ex:submit({ { type = 'move', dest = { x = 0, y = 300, z = 0 } } })
+        ex:update(0.1, 0)
+
+        assert.equals(1.5, ex.lastSteer.yaw)
+        assert.equals('rotation:getYaw', ex.lastSteer.yawSource)
+        assert.equals(0.25, ex.lastSteer.pitch)
+        assert.equals('rotation:getPitch', ex.lastSteer.pitchSource)
+        -- the aim's vertical half reaches the engine
+        assert.is_true(type(env.self.controls.pitchChange) == 'number',
+          'controls.pitchChange must be written every steering frame')
+      end)
+    end)
+
+    it('looks UP with a negative pitch, because that is the engine convention', function()
+      -- `TransformQ:getPitch()` is `-asin(forward.z)` (components/misc/mathutil.hpp:37-41), so a
+      -- target ABOVE the character is a negative pitch. Asserted as a relationship, not a number:
+      -- aiming at something overhead must be negative, and at something below, positive.
+      withEnv({ position = { x = 0, y = 0, z = 0 }, rotation = 0 }, function(env)
+        local ex = newExecutor(env, { nav = mocks.nav(50) })
+
+        ex:submit({ { type = 'move', dest = { x = 0, y = 300, z = 200 } } })
+        ex:update(0.1, 0)
+        local up = ex.lastSteer.pitchDelta
+
+        local ex2 = newExecutor(env, { nav = mocks.nav(50) })
+        ex2:submit({ { type = 'move', dest = { x = 0, y = 300, z = -200 } } })
+        ex2:update(0.1, 0)
+        local down = ex2.lastSteer.pitchDelta
+
+        assert.is_true(up < down, 'a target above must aim differently from one below')
+      end)
+    end)
+
     it('stops steering once it arrives', function()
       withEnv({ position = { x = 0, y = 0, z = 0 } }, function(env)
         local ex = newExecutor(env, { nav = mocks.nav(50) })

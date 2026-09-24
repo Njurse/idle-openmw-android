@@ -172,34 +172,101 @@ end
 --- source had to be probed rather than assumed. Returns the value AND where it came from, so a
 --- host can tell a real reading from a fallback.
 --- @return number, string
+--- The player's facing, in the ENGINE's own convention.
+---
+--- WHY THE OLD VERSION NEVER CONVERGED. It probed `selfObject.rotation` and fell through to
+--- `camera.getYaw()` -- and the camera is not a substitute:
+---
+---   * `rotation` is NOT on the SelfObject. It is on the LObject behind `.object`
+---     (objectbindings.cpp:319), so probing only the SelfObject always missed it.
+---   * it is not a number and has no `.z`: it is a `LuaUtil::TransformQ` wrapping an osg::Quat
+---     (utilpackage.hpp:24-31), which exposes getYaw()/getPitch()/getAnglesXZ() and nothing
+---     else (utilpackage.cpp:365-381).
+---   * `camera.getYaw()` reports where the MOUSE left the camera. For the PLAYER the engine
+---     restores `controls.mPitchChange`/`mYawChange` from mwinput on every frame -- actors.cpp:364
+---     reads the input deltas and :407-408 writes them back after Lua's values are consumed -- so
+---     with nobody moving the mouse the camera yaw is a CONSTANT.
+---
+--- Steering on a constant is a feedback loop with a dead sensor: `yawDelta` never changed,
+--- `shouldMove` stayed false once the character was more than the tolerance off-target, so it
+--- stood still; the `move` in front of every attack is BLOCKING, so it never completed; so the
+--- attack behind it never ran. That is the whole of "the character walks up to things and does
+--- nothing", and it looked exactly like an aiming bug because it was one.
+---
+--- `object.rotation:getYaw()` is `atan2(forward.x, forward.y)` computed by the engine itself
+--- (components/misc/mathutil.hpp:37-41) -- the same convention this mod's maths already uses.
+--- @return number, string where the value came from
+-- Forward declaration, and not cosmetic: `yawOf`/`pitchOf` below both call `facingOf`, and a
+-- closure only captures a local that is already in scope where the closure is WRITTEN
+-- (AGENTS.md trap #4). Without this line they found a nil GLOBAL and every frame raised
+-- "attempt to call global 'facingOf'".
+local facingOf
+
 local function yawOf(selfObject)
-  local rotation = nil
-  pcall(function() rotation = selfObject and selfObject.rotation end)
-  if type(rotation) == 'number' then return rotation, 'self.rotation(number)' end
+  local yaw, source = facingOf(selfObject, 'yaw')
+  return yaw, source
+end
 
-  -- a Vector3-like: `.z` is the yaw
-  local yaw = nil
-  pcall(function() yaw = rotation and rotation.z end)
-  if type(yaw) == 'number' then return yaw, 'self.rotation.z' end
+--- The player's pitch, in radians, in the engine's convention: NEGATIVE looks UP.
+---
+--- `TransformQ:getPitch()` is `-asin(forward.z)` (components/misc/mathutil.hpp:37-41), which is
+--- the opposite sign to the intuitive reading, so the value is taken from the engine rather than
+--- inferred. The mod sets `controls.pitchChange` from it, which it previously never did at all --
+--- `_steer` wrote yawChange and movement every frame and left the aim's vertical half untouched,
+--- so the character looked wherever the mouse had last left the camera.
+--- @return number, string
+local function pitchOf(selfObject)
+  return facingOf(selfObject, 'pitch')
+end
 
-  -- a Transform: its `rotation` field holds the angles (core.lua:169)
-  pcall(function() yaw = rotation and rotation.rotation and rotation.rotation.z end)
-  if type(yaw) == 'number' then return yaw, 'self.rotation.rotation.z' end
+--- Read a facing component (`'yaw'` or `'pitch'`) off whatever the engine gives us.
+---
+--- One function for both because the probing is identical and only the accessor differs, and
+--- because getting the candidate list wrong is what caused the bug: the SelfObject alone is not
+--- enough. Each candidate is probed rather than assumed, and the source is returned so a host can
+--- tell a real reading from a fallback.
+function facingOf(selfObject, component)
+  local candidates = { selfObject }
+  local object = nil
+  pcall(function() object = selfObject and selfObject.object end)
+  if object and object ~= selfObject then candidates[#candidates + 1] = object end
 
-  -- the camera faces where the character faces in third person, and is always readable
+  local accessor = component == 'pitch' and 'getPitch' or 'getYaw'
+  for _, candidate in ipairs(candidates) do
+    local rotation = nil
+    pcall(function() rotation = candidate and candidate.rotation end)
+    if type(rotation) == 'number' then return rotation, component .. '(number)' end
+    -- the TransformQ path: the engine's own euler conversion
+    local value = nil
+    pcall(function()
+      if rotation and type(rotation[accessor]) == 'function' then value = rotation[accessor](rotation) end
+    end)
+    if type(value) == 'number' then return value, 'rotation:' .. accessor end
+    -- a plain table shaped like angles
+    pcall(function()
+      if rotation then value = (component == 'pitch') and rotation.x or rotation.z end
+    end)
+    if type(value) == 'number' then return value, 'rotation.' .. (component == 'pitch' and 'x' or 'z') end
+  end
+
+  -- Last resort, and deliberately marked as such. For yaw this is the value that used to be
+  -- mistaken for the character's facing; for pitch it is at least an aim the engine believes in.
   local camera = nil
   pcall(function() camera = require('openmw.camera') end)
-  pcall(function() yaw = camera and camera.getYaw and camera.getYaw() end)
-  if type(yaw) == 'number' then return yaw, 'camera.getYaw' end
+  local accessor2 = component == 'pitch' and 'getPitch' or 'getYaw'
+  local value = nil
+  pcall(function() value = camera and camera[accessor2] and camera[accessor2]() end)
+  if type(value) == 'number' then return value, 'camera.' .. accessor2 .. '(fallback)' end
 
   return 0, 'nothing readable'
 end
 
-function Executor:_steer(position, waypoint, yaw)
+function Executor:_steer(position, waypoint, yaw, pitch)
   local controls = self:_controls()
   if not controls then return end
   local solution = pathfinder.steering(position, waypoint, yaw, {
     arriveTolerance = self.cfg.behaviour.arriveTolerance,
+    currentPitch = pitch,
   })
   -- Remembered so a host can ask WHY nothing is happening: `moving = true` with a zero distance
   -- travelled is either a steering refusal or an override the engine never honoured, and the
@@ -208,11 +275,18 @@ function Executor:_steer(position, waypoint, yaw)
     yaw = yaw,
     yawSource = self.lastYawSource,
     yawDelta = solution.yawDelta,
+    pitch = pitch,
+    pitchSource = self.lastPitchSource,
+    pitchDelta = solution.pitchDelta,
     distance = solution.distance,
     shouldMove = solution.shouldMove,
     arrived = solution.arrived,
   }
   controls.yawChange = solution.yawChange
+  -- THE AIM'S OTHER HALF. `pitchChange` was never written, so the character's vertical aim stayed
+  -- exactly where the mouse last left the camera: it could face a mudcrab and still be looking at
+  -- the horizon, or at its own feet. Same target, same frame, same kind of value as yawChange.
+  controls.pitchChange = solution.pitchChange
   controls.movement = solution.shouldMove and 1 or 0
   controls.run = solution.shouldMove
 end
@@ -746,7 +820,9 @@ function Executor:step(dt, now)
   if status.status == 'moving' then
     local yaw, yawSource = yawOf(self_)
     self.lastYawSource = yawSource
-    self:_steer(self_.position or { x = 0, y = 0, z = 0 }, status.waypoint, yaw)
+    local pitch, pitchSource = pitchOf(self_)
+    self.lastPitchSource = pitchSource
+    self:_steer(self_.position or { x = 0, y = 0, z = 0 }, status.waypoint, yaw, pitch)
     self:_openDoorsAhead()
   elseif status.status == 'arrived' then
     self:_releaseControls()
