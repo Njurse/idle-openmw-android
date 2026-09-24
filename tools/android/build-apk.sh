@@ -130,13 +130,43 @@ echo "== aapt2 =="
   2>&1 | tail -3
 [ -f "$WORK/base.apk" ] || { echo "aapt2 link produced no apk" >&2; exit 1; }
 
-# --- 2. Add the dex and the native libraries ------------------------------------------------
+# --- 2. Strip the native libraries ------------------------------------------------------------
+# The dependency archive ships its shared libraries WITH debug info: libcollada-dom2.5-dp.so came in
+# at 77.8 MB and libopenal.so at 9.5 MB, which together were more than a third of the APK. None of
+# that belongs on a phone, and stripping is lossless for behaviour. It took the payload from 189 MB
+# to 115 MB. (libopenmw.so was already stripped, by the build itself.)
+#
+# Stripping happens into a staging directory rather than in place, so the build tree stays exactly
+# as the compiler produced it and a re-run is idempotent.
+echo "== stripping the native libraries =="
+STRIP_TOOL="${NDK:-}/toolchains/llvm/prebuilt/windows-x86_64/bin/llvm-strip.exe"
+if [ ! -f "$STRIP_TOOL" ]; then
+  SDK_NDK="$(ls -d "$SDK"/ndk/* 2>/dev/null | sort -V | tail -1)"
+  STRIP_TOOL="$SDK_NDK/toolchains/llvm/prebuilt/windows-x86_64/bin/llvm-strip.exe"
+fi
+STRIPPED="$WORK/lib-stripped"
+mkdir -p "$STRIPPED"
+for so in "$LIBS_DIR"/*.so; do
+  cp "$so" "$STRIPPED/"
+done
+if [ -f "$STRIP_TOOL" ]; then
+  for so in "$STRIPPED"/*.so; do
+    before=$(stat -c %s "$so" 2>/dev/null || echo 0)
+    "$STRIP_TOOL" --strip-unneeded "$so" >/dev/null 2>&1 || true
+    after=$(stat -c %s "$so" 2>/dev/null || echo 0)
+    printf '  %-30s %10s -> %10s\n' "$(basename "$so")" "$before" "$after"
+  done
+else
+  echo "  (no llvm-strip found; packaging unstripped -- expect a much larger APK)" >&2
+fi
+
+# --- 3. Add the dex and the native libraries ------------------------------------------------
 echo "== packaging (dex + jniLibs) =="
 mkdir -p "$(dirname "$OUT")"
 python "$REPO_ROOT/tools/android/add-to-apk.py" \
   "$WORK/base.apk" "$OUT" \
   "$WORK/dex/classes.dex" \
-  "$LIBS_DIR" "$ABI"
+  "$STRIPPED" "$ABI"
 
 # --- 3. Align and sign ----------------------------------------------------------------------
 KS="$WORK/debug.keystore"
