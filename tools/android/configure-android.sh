@@ -60,9 +60,22 @@ while [ $# -gt 0 ]; do
     --platform) PLATFORM="$2"; shift 2 ;;
     --build-dir) BUILD_DIR="$2"; shift 2 ;;
     --deps) DEPS="$2"; shift 2 ;;
+    --sdl2) SDL2_ROOT="$2"; shift 2 ;;
     *) echo "unknown option: $1" >&2; exit 2 ;;
   esac
 done
+
+# SDL2 must come from OUR build, not the archive: the archive carries 2.24.0 and this source
+# requires 2.26 (CMakeLists.txt:496). tools/android/build-sdl2.sh produces it.
+if [ -z "${SDL2_ROOT:-}" ]; then
+  SDL2_ROOT="$REPO_ROOT/build/android-sdl2/install"
+  [ -d "$SDL2_ROOT" ] || SDL2_ROOT=""
+fi
+# SDL2 first, then the archive: CMAKE_PREFIX_PATH is searched in order, and the archive's older
+# SDL2Config.cmake would otherwise win and be rejected by the version check.
+PREFIX=""
+[ -n "${SDL2_ROOT:-}" ] && PREFIX="$SDL2_ROOT"
+[ -n "$DEPS" ] && PREFIX="${PREFIX:+$PREFIX;}$DEPS"
 
 # Locate the NDK: an explicit one wins, then the newest side-by-side install.
 if [ -z "${NDK:-}" ]; then
@@ -170,7 +183,8 @@ cmake -S "$SRC" -B "$BUILD_DIR" -G Ninja \
   -DOPENMW_USE_SYSTEM_SQLITE3=OFF \
   ${FFMPEG_VERSION_FLAGS[@]+"${FFMPEG_VERSION_FLAGS[@]}"} \
   ${DEPS:+-DOPENMW_DEPENDENCIES_DIR="$DEPS"} \
-  ${DEPS:+-DCMAKE_PREFIX_PATH="$DEPS"} \
+  ${PREFIX:+-DCMAKE_PREFIX_PATH="$PREFIX"} \
+  ${SDL2_ROOT:+-DSDL2_DIR="$SDL2_ROOT/lib/cmake/SDL2"} \
   ${DEPS:+-DCMAKE_INCLUDE_PATH="$DEPS/include"} \
   ${DEPS:+-DCMAKE_LIBRARY_PATH="$DEPS/lib"} \
   -DCMAKE_FIND_ROOT_PATH_MODE_INCLUDE=BOTH \
