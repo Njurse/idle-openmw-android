@@ -296,6 +296,14 @@ function Executor:ensureReadyToFight()
   if not (types and types.Actor and actor) then return false, 'no engine types' end
   local STANCE = types.Actor.STANCE or {}
 
+  -- `types.Actor.setStance` takes a **SelfObject**, and `openmw.self.object` is deliberately an
+  -- **LObject** (localscripts.cpp:76 vs the binding at :213). Handing it the LObject view throws
+  -- "value at this index does not properly reflect the desired type (bad argument into
+  -- 'void(const MWLua::SelfObject&, int)')" -- which is what `Cannot attack: the engine would not
+  -- draw <weapon>` really meant. Every SelfObject-only call must use `openmw.self` itself.
+  local selfObject = self.env.self
+  if not util.isObject(selfObject) then return false, 'no openmw.self in a player script' end
+
   local current = safe(function() return types.Actor.getStance(actor) end)
   if current ~= nil and (current == STANCE.Weapon or current == STANCE.Spell) then
     return true
@@ -308,7 +316,7 @@ function Executor:ensureReadyToFight()
     -- runs once per engagement rather than every tick. NOT reading the slot back keeps us out of
     -- `getEquipment`'s shape, which a GameObject answers as a slot-keyed map.
     if weaponId then self:equip(weaponId) end
-    local ok, err = pcall(function() types.Actor.setStance(actor, STANCE.Weapon) end)
+    local ok, err = pcall(function() types.Actor.setStance(selfObject, STANCE.Weapon) end)
     if ok then
       self.applied.draws = (self.applied.draws or 0) + 1
       self:log(('Drew %s'):format(tostring(weaponId)), 'good')
@@ -351,13 +359,19 @@ function Executor:ensureReadyToFight()
     end
 
     if chosen then
-      -- the object first: `setSelectedSpell` is documented as taking a Spell, not an id
-      pcall(function() types.Actor.setSelectedSpell(actor, chosen) end)
-      local selected = safe(function() return types.Actor.getSelectedSpell(actor) end)
-      if selected == nil and chosenId then
-        pcall(function() types.Actor.setSelectedSpell(actor, chosenId) end)
+      -- There is NO `Actor.setSelectedSpell` in 0.52 -- the binding does not exist, and calling it
+      -- through a pcall silently did nothing while the log blamed the engine. On the PLAYER the
+      -- engine asks the *WindowManager* which spell is selected (actor.cpp:229-236), i.e. a UI
+      -- string, so readied a spell is a SELECTION problem this script cannot solve from Lua.
+      -- Selection has to come from the UI (injection) or from a new engine binding.
+      local selects
+      if type(types.Actor.setSelectedSpell) == 'function' then
+        selects = pcall(function() types.Actor.setSelectedSpell(selfObject, chosen) end)
       end
-      local ok, err = pcall(function() types.Actor.setStance(actor, STANCE.Spell) end)
+      if not selects then
+        self.applied.spellNeedsSelection = true
+      end
+      local ok, err = pcall(function() types.Actor.setStance(selfObject, STANCE.Spell) end)
       if ok then
         self.applied.draws = (self.applied.draws or 0) + 1
         self:log(('Readied the spell %s'):format(tostring(chosenId)), 'good')
@@ -366,6 +380,11 @@ function Executor:ensureReadyToFight()
       -- See the weapon branch: on the PLAYER the engine asks the WindowManager for the selected
       -- spell, not CreatureStats, so "no spell selected" here means the UI has none -- which is a
       -- selection problem, not a Lua one.
+      if not selects then
+        return false, ('a spell can only be readied from the UI, not from Lua: there is no '
+          .. 'setSelectedSpell in this engine, and setStance(Spell) reads the spell the '
+          .. 'WindowManager holds (%s)'):format(tostring(err))
+      end
       return false, ('the engine would not ready the spell %s (%s)')
         :format(tostring(chosenId), tostring(err))
     end

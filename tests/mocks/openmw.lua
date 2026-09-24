@@ -288,6 +288,11 @@ function M.env(spec)
     end,
   }
 
+  -- Forward declaration, deliberately BEFORE the tables that use it: a closure only captures
+  -- a local that is already in scope where the closure is written (AGENTS.md trap #4), and
+  -- `setStance` below has to compare against the self the script was handed.
+  local self
+
   types.Actor = {
     EQUIPMENT_SLOT = EQUIPMENT_SLOT,
     STANCE = { Nothing = 0, Weapon = 1, Spell = 2 },
@@ -342,7 +347,18 @@ function M.env(spec)
     -- The draw state is real state: `attack` does NOTHING with nothing drawn, and a mock that
     -- always reports 0 makes the draw step untestable (types.Actor.STANCE -> DrawState).
     getStance = function() return stance end,
-    setStance = function(_actor, value) stance = value end,
+    -- The engine's setStance takes a **SelfObject**, and `openmw.self.object` is an LObject
+    -- (localscripts.cpp:76), so passing the LObject view THROWS rather than drawing. That
+    -- is what `the engine would not draw <weapon>` actually was, so the mock refuses the
+    -- same way instead of accepting anything object-shaped.
+    setStance = function(target, value)
+      if target ~= self then
+        error('stack index 1, expected userdata, received sol.MWLua::LObject: value at this'
+          .. ' index does not properly reflect the desired type (bad argument into'
+          .. ' void(const MWLua::SelfObject&, int))', 2)
+      end
+      stance = value
+    end,
     -- Real state, for the same reason as the stance: Morrowind needs a spell SELECTED before it
     -- can be readied, so a mock that always reports nil makes the selection step untestable.
     getSelectedSpell = function() return selectedSpell end,
@@ -498,7 +514,7 @@ function M.env(spec)
     createRecord = function() return {} end,
   }
 
-  local self = {
+  self = {
     object = actor,
     position = point(spec.position),
     rotation = spec.rotation or 0,
