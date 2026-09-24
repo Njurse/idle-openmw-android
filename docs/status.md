@@ -8,6 +8,13 @@ Last worked: the session that fixed the weapon draw. Engine: `F:/OpenMW-build/bu
 
 ## What works right now
 
+**Two engines now exist.** The desktop one plays the game, and the Android one builds:
+
+| | state |
+|---|---|
+| The idle loop | the character walks to a creature, draws a weapon, and fights it |
+| Android engine | `libopenmw.so` builds for arm64-v8a, and packages into a signed APK |
+
 **The idle loop runs end to end on a real engine.** The character walks to a creature, draws a
 weapon, and fights it:
 
@@ -79,16 +86,36 @@ paused behind a message box that Lua can neither see nor dismiss. Current workar
 exterior cell with `--skip-menu=1 --start="Seyda Neen"`. The engine-side hook is the cheap half and
 is the named follow-up.
 
-### The Android engine build needs a dependency tree, not a toolchain
+### The Android engine build: DONE, and it ships an APK
 
-`docs/android.md` has the measurements. In short: an NDK (r29) is installed and **provably
-cross-compiles Android binaries from this Windows host**, so the toolchain was never the blocker.
-`openmw-android` is a **superbuild** pinned to NDK r21e and 2019-2021 dependency releases, so the
-work is producing an Android dependency tree for `OPENMW_DEPENDENCIES_DIR`. The first configure
-gets as far as `Could NOT find LZ4` (`CMakeLists.txt:281`) — which is the dependency list starting,
-not a compile failure. Reproduce with `tools/android/configure-android.sh`.
+This is no longer a blocker. `docs/android.md` has the full recipe and `docs/app-ui.md` the app's
+design. The measured state:
 
-Keep the mod's **≥ 0.49** floor in view: the released APK is 0.48 and predates `.omwscripts`.
+```
+libopenmw.so            ARM aarch64, Android 24, NDK r29  (924 MB debug -> 104 MB stripped)
+idle-openmw.apk         189 MB, signed (v2+v3), minSdk 24, arm64-v8a
+```
+
+```bash
+bash tools/android/build-sdl2.sh                                        # once
+bash tools/android/configure-android.sh --deps "$(pwd)/build/android-deps/root"
+cmake --build build/android-configure --target openmw -j 12
+bash tools/android/build-apk.sh
+```
+
+The dependency tree is a **published prebuilt archive** (`openmw-android-deps-20240812.tar.xz`,
+166 MB, aarch64/API 24), kept beside the build and passed as `OPENMW_DEPENDENCIES_DIR` rather than
+extracted into the NDK. Six things stopped it, each named by a tool rather than guessed: OpenGL →
+gl4es; LZ4 → openmw's own FindLZ4; FFmpeg's version guard → read the versions out of the archive's
+headers; QT → the desktop tools off; MyGUI → a `char_traits` shim for modern libc++; 21 desktop-GL
+and 13 FreeType symbols → gl4es plus `OSG_STATIC=ON`. SDL2 (2.24 in the archive vs 2.26 required)
+is the one dependency built by hand.
+
+**What testing needs, stated honestly:** the APK is arm64-v8a because the archive is arm64-only,
+and the local AVD is **x86_64**, so the emulator cannot load it. A real arm64 phone can install it
+directly. An x86_64 build is a separate job needing a second dependency tree.
+
+Keep the mod's **≥ 0.49** floor in view: this is 0.52, so it is satisfied by construction.
 
 ## Verified engine reference
 
@@ -149,9 +176,14 @@ mechanism.
 
 ## Suggested next steps, in order
 
-1. **Chase the combat outcome** (open thread 1) — the loop closes only if something dies.
-2. **Pick the spell route**: injection vs a fork binding, and record the decision. It is the first
+1. **Run the APK on an arm64 device.** Everything else about the app is downstream of "does it
+   launch and find the game data", and no emulator on this machine can answer that (x86_64 AVD,
+   arm64 APK). This is the cheapest high-information step left.
+2. **Halve the APK.** 189 MB is static OSG/Boost/Bullet/ffmpeg. `--gc-sections`, a size-oriented
+   build type, and dropping the unused OSG plugins are the levers.
+3. **Chase the combat outcome** (open thread 1) — the idle loop only closes if something dies.
+4. **Pick the spell route**: injection vs a fork binding, and record the decision. It is the first
    real instance of the engine/injection split, so it sets the pattern.
-3. **Settle `player.inventory`'s shape** (open thread 2) — cheap, and it is what the app's
+5. **Settle `player.inventory`'s shape** (open thread 2) — cheap, and it is what the app's
    inventory screen will consume.
-4. **Then the Android dependency tree**, which is the long pole and is now well understood.
+6. **Then the app UI** (`docs/app-ui.md`), which is now a build target rather than a plan.
