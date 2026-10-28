@@ -28,6 +28,16 @@ M.GOAL_FOR = {
   wait = 'idle',        -- stand still until the TTL lapses
   stop = 'idle',
   roam = 'explore',     -- wander the area (same thing explore already does)
+  -- The Android app's Attack and Flee buttons (docs/app-ui.md). They are directives like any
+  -- other: an intent the director can decline when safety says otherwise. Both target goals
+  -- that actually exist in goalScoring.GOALS -- checked, not assumed, because a directive id
+  -- whose goal does not exist is a silent no-op.
+  --
+  -- There is deliberately no 'sneak' entry: sneaking is a STANCE, and this mod has no sneak
+  -- goal or action (the word appears only as a skill name). The app's Sneak button therefore
+  -- has no verb yet, and appPayload refuses it with a reason rather than pretending.
+  attack = 'fight',
+  flee = 'flee',
   go_town = 'go_town',  -- travel service if there is one, else walk to town
   -- Tap-to-move: the payload carries the destination (and target) the tap chose.
   walk_to = 'walk_to',

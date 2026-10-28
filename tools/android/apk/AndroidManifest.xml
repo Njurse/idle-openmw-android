@@ -3,12 +3,26 @@
   The APK manifest for the idle-openmw Android app.
 
   Deliberately close to SDL2's own android-project template, because that template is the
-  supported shape for an SDLActivity app. Two differences matter:
+  supported shape for an SDLActivity app. What differs, and why:
 
-  * the activity is OUR MainActivity, not SDLActivity directly, so it can name libopenmw.so as the
-    entry point (SDL2 is linked INTO libopenmw.so statically; see tools/android/configure-android.sh);
+  * the launcher activity is OUR LauncherActivity, and it is not an SDLActivity at all: it only
+    decides whether libopenmw.so is packaged and starts MainActivity (the SDLActivity that loads the
+    engine) or AppActivity (the same shell with no engine, for the x86_64 emulator this APK cannot
+    run on). That decision cannot live inside MainActivity: a Java subclass cannot skip its
+    superclass to reach Activity.onCreate, and not reaching it throws SuperNotCalledException
+    (LauncherActivity.java records the exact failure).
+  * MainActivity names libopenmw.so as the entry point (SDL2 is linked INTO libopenmw.so
+    statically; see tools/android/configure-android.sh);
   * extractNativeLibs is on. Our libopenmw.so is ~104 MB and we are not using the Android Gradle
     Plugin's packaging, so unpacking the libraries on install is both simpler and safer here.
+  * the theme is a framework style, not a local one: this app compiles NO resource table
+    (tools/android/build-apk.sh runs javac/d8/aapt2 and ships no resources), so it cannot define
+    its own style. Without NoActionBar the default theme would draw an ActionBar over the chrome.
+  * BOTH activities are locked to `portrait`. The project's whole premise is portrait play
+    (docs/scope.md: "autonomous Morrowind play in portrait mode on my phone"), and the layout is a
+    top-third viewport over a control panel. Upstream OpenMW's Android activity hard-codes
+    `sensorLandscape` and a 2020 release note says portrait was disabled for crashing, so this is
+    the one place that decision is made for our own build (docs/deployment.md records the caveat).
 
   Permissions: none beyond what the mod needs to read the Morrowind data staged at
   /storage/emulated/0/Morrowind (see tools/android/provision-emulator.sh). On API 30+ that is
@@ -29,8 +43,22 @@
     <application
         android:label="Idle OpenMW"
         android:allowBackup="true"
+        android:debuggable="true"
         android:hardwareAccelerated="true"
-        android:extractNativeLibs="true">
+        android:extractNativeLibs="true"
+        android:theme="@android:style/Theme.DeviceDefault.NoActionBar">
+
+        <activity
+            android:name="is.xyz.idle_openmw.LauncherActivity"
+            android:label="Idle OpenMW"
+            android:configChanges="layoutDirection|locale|orientation|uiMode|screenLayout|screenSize|smallestScreenSize|keyboard|keyboardHidden|navigation|density"
+            android:screenOrientation="portrait"
+            android:exported="true">
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+        </activity>
 
         <activity
             android:name="is.xyz.idle_openmw.MainActivity"
@@ -38,13 +66,18 @@
             android:alwaysRetainTaskState="true"
             android:launchMode="singleInstance"
             android:configChanges="layoutDirection|locale|orientation|uiMode|screenLayout|screenSize|smallestScreenSize|keyboard|keyboardHidden|navigation|density"
-            android:screenOrientation="fullSensor"
-            android:exported="true">
-            <intent-filter>
-                <action android:name="android.intent.action.MAIN" />
-                <category android:name="android.intent.category.LAUNCHER" />
-            </intent-filter>
-        </activity>
+            android:screenOrientation="userPortrait"
+            android:exported="true" />
+
+        <!-- The engine-less shell. Exported so `adb shell am start` can drive it directly, which is
+             exactly how the emulator loop in tools/android/tests/ reaches the UI. -->
+        <activity
+            android:name="is.xyz.idle_openmw.AppActivity"
+            android:label="Idle OpenMW (UI preview)"
+            android:alwaysRetainTaskState="true"
+            android:configChanges="layoutDirection|locale|orientation|uiMode|screenLayout|screenSize|smallestScreenSize|keyboard|keyboardHidden|navigation|density"
+            android:screenOrientation="portrait"
+            android:exported="true" />
     </application>
 
 </manifest>

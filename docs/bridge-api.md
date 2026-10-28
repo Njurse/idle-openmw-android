@@ -248,3 +248,51 @@ Two methods had to be fixed to get here:
   not a number, and `map`/`list` were `type(v) == 'table'` and nothing more, so it validated.
   Now the dispositions read as numbers — `{"alarm": 0, "fight": 83, "flee": 30, "hello": 0}` —
   and the schema rejects any engine value nested inside a field.
+
+---
+
+# The second channel: the app, in-process
+
+Everything above is a **host-driven** channel: the host writes a line into `idle_api.txt`, the mod
+answers into the log, and the host reads the log back. That is the right shape for a developer with a
+terminal, and the wrong shape for a phone: it needs the host to ask, it costs a log line per answer,
+and no touch UI can redraw three times a second by watching a log file.
+
+So the native Android app gets a second channel, and it is a direct call rather than a file:
+
+```
+engine -> app   openmw.android.pushState(json)   -- the mod publishes, unprompted
+app -> engine   MainActivity.sendCommand(json) -> openmw.android.pollCommand()
+```
+
+Both halves are the same process (SDL loads `libopenmw.so` into the app's own process), so there is
+nothing to serialise through the filesystem and nothing to poll from outside.
+
+| | file-in / log-out | `openmw.android` |
+|---|---|---|
+| who starts it | the host asks | the mod pushes, the app taps |
+| latency | one poll interval, plus the log | through a frame |
+| needs the engine patched | no | **yes** — fork patch `0002-android-bridge.patch` |
+| works on a stock engine | yes | no (`available()` returns false; the mod stays quiet) |
+
+**What is on the wire** is decided in one place: `scripts/idle/appPayload.lua` (pure, specced). It
+sends the *same* panel table the Lua console renders, so the two surfaces cannot disagree about what
+the game is doing, and it accepts one verb per button. The app never re-derives judgement from raw
+numbers — a fraction is a fraction, and the thresholds that decide "wounded" stay in the director.
+
+**`pushState` is advisory, not guaranteed.** A frame where the app is not listening is a dropped
+frame, not an error, and the return value says which happened. The queue the other way is bounded
+(64) and drops the OLDEST entry, because a command that has waited behind sixty others is stale.
+
+**Payloads cross as byte arrays, not jstrings.** `NewStringUTF` wants modified UTF-8, which differs
+from UTF-8 exactly where it hurts — supplementary characters and embedded NULs — and Morrowind's data
+is full of non-ASCII names. Bytes cannot be misinterpreted; Java decodes them with
+`StandardCharsets.UTF_8`.
+
+**Measured, not assumed:** the arm64 engine exports
+`Java_is_xyz_idle_openmw_MainActivity_nativeBridgeAttach` and `..._nativeCommand` as defined dynamic
+symbols (`llvm-nm -D`), with no new `NEEDED` library, because the JNI calls go through the `JNIEnv`
+function table. The app side is exercised on the emulator against a fixture — the fixture's own
+fractions, 0.84 / 0.61 / 0.72, measured back off the screenshot — and a tap on the first button
+produced `{"command":"wait"}` in logcat. **The one thing not yet done is both halves in one process:
+that needs the arm64 phone.**

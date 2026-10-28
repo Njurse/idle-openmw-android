@@ -21,6 +21,18 @@ python tools/run_tests.py --list   # list spec modules
 There is no build step: the mod is interpreted Lua. `tools/run_tests.py` is the
 only entry point you need.
 
+The Android app has one loop, and it is the one to use for any UI work:
+
+```bash
+bash tools/android/tests/ui-loop.sh        # build --ui-only, install, launch, screenshot, measure
+bash tools/android/tests/ui-loop.sh --no-build --no-boot   # just shoot the running build
+python tools/android/tests/read_screen.py <png>            # read a screenshot back as numbers
+```
+
+It runs the UI with NO engine on the x86_64 emulator, which is the only device here that can run
+any of this: the APK is arm64-v8a and QEMU2 refuses arm64 on an x86_64 host. `docs/android.md` has
+the two-activity design, the JNI bridge, and what each loop can and cannot prove.
+
 ## Architecture (read this before editing)
 
 Two hard layers:
@@ -112,6 +124,24 @@ Because `env` is injected, **new engine behaviour is testable**: extend
    The authoritative names are in
    `.research/openmw/docs/source/reference/lua-scripting/engine_handlers.rst`;
    `python tools/dev/check_handlers.py` checks ours against them.
+9. **An Android `Activity` must call through to `super.onCreate`.** Routing inside
+   `MainActivity.onCreate` ("if the engine is missing, start the other activity and return")
+   throws `SuperNotCalledException`: the framework sets a flag in `Activity.onCreate` and checks it
+   after the call returns, and a Java subclass cannot skip its superclass to reach the grandparent.
+   The fix is a separate, trivial `LauncherActivity` that decides and finishes. `SDLActivity` has the
+   same shape of problem from the other side — no path skips the native library load — which is why
+   the engine-less case is a second activity rather than a branch.
+10. **`--` inside an XML comment is not well-formed.** A manifest comment containing `--` fails
+    `aapt2 link` with "not well-formed (invalid token)" pointing at the comment, not the attribute.
+11. **Do not export `MSYS_NO_PATHCONV=1` for a whole script here.** It is right for a script that
+    pushes device paths to `adb` (`tools/android/run-on-emulator.sh`), and wrong for one that shells
+    out to a Windows tool with a POSIX path: `python tools/android/add-to-apk.py` becomes `/c/...`,
+    which python.exe reads as `C:\c\...` and reports as a missing file. Scope it to the single
+    command that needs it.
+12. **The debug keystore must live outside the build's work directory.** `$WORK` is wiped at the top
+    of every build, so a keystore inside it is regenerated, and a differently-signed APK makes
+    `adb install -r` fail with `INSTALL_FAILED_UPDATE_INCOMPATIBLE` — the command the emulator loop
+    depends on. It is at `build/android-keystore/debug.keystore`.
 6. **A repath must not reset the stuck timer** — otherwise a stuck actor looks
    healthy forever (`scripts/idle/pathfinder.lua`).
 

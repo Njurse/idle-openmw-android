@@ -810,3 +810,87 @@ two real options are:
 - **`SDL_main` is only half a game.** Launching successfully means the engine starts; it does not
   yet mean the idle director takes over, which needs the `.omwscripts` load path and chargen the
   mod already documents (`docs/chargen.md`).
+
+---
+
+# The native UI, and the loop that measures it
+
+Everything above is about getting an engine onto a phone. This is the app *around* it, which is now
+a native Android View tree rather than the Lua console it started as (the console is still in the
+repo, unremoved — see the end of this section).
+
+## Two activities, and why there are two
+
+```
+LauncherActivity   decides: is libopenmw.so packaged?
+  |-- yes -> MainActivity    (an SDLActivity: loads the engine, then reparents SDL's own
+  |                           RelativeLayout into a top-third viewport)
+  `-- no  -> AppActivity     (the same shell, no engine: the emulator case)
+```
+
+The decision cannot live inside `MainActivity.onCreate`. A Java subclass cannot skip its superclass
+to reach `Activity.onCreate`, and the framework checks a flag set there — so "start the other
+activity and return" throws `SuperNotCalledException` (AGENTS.md #9). `SDLActivity` has the same
+shape of problem from the other side: there is no path through its `onCreate` that skips the native
+library load, so an engine-less build cannot reuse it.
+
+`MainActivity` moves SDL's `mLayout` (not just `mSurface`) into the viewport, because SDL adds its
+soft-keyboard `mTextEdit` to `mLayout` later; moving the container keeps that working. Both fields
+are `protected static` on `SDLActivity`, so **no SDL2 fork is needed** for this.
+
+## The bridge
+
+Lua can read a file but cannot write one, and cannot open a socket (`docs/bridge-api.md`), so a
+native UI cannot be *told* anything by a pure Lua mod. Java and the engine are one process, so the
+shortest honest path is a direct call:
+
+```
+engine -> app   openmw.android.pushState(json)  ->  JNI  ->  MainActivity.onEngineState(byte[])
+app -> engine   MainActivity.sendCommand(json)  ->  JNI  ->  queued  ->  openmw.android.pollCommand()
+```
+
+- The engine half is fork patch **`0002-android-bridge.patch`** (`apps/openmw/mwlua/androidbindings.cpp`).
+  It is registered in `initCommonPackages`, so every script kind has it, and it exists on every
+  platform while reporting `available() == false` off Android — a mod can call it unconditionally.
+- **`tools/dev/engine-build/apply-patches.sh`** applies the fork's patches, and BOTH builds call it.
+  Until this existed the Android engine got **no** fork patches at all, and a missing binding is not
+  a compile error — it is a runtime error on a phone, which is the most expensive place to find one.
+- Payloads cross as **byte arrays**, not jstrings: `NewStringUTF` wants modified UTF-8, which differs
+  exactly where it hurts (supplementary characters, embedded NULs), and Morrowind's data is full of
+  non-ASCII names.
+- The app decodes with `org.json`, which ships with the platform, so no dependency and no resources.
+
+## The UI-only APK, and what it is for
+
+```bash
+bash tools/android/build-apk.sh --ui-only     # 60 KB, no lib/ entries at all
+bash tools/android/tests/ui-loop.sh           # build, install, launch, screenshot, measure
+python tools/android/tests/read_screen.py build/device/loop-*.png
+```
+
+The APK is arm64-v8a and QEMU2 refuses to emulate arm64 on an x86_64 host (measured above), so the
+engine can never run here. The **UI** can: `--ui-only` packages the same Java with no native
+libraries, `LauncherActivity` routes to `AppActivity`, and the result is the real view tree with
+either a fixture or a placeholder in the viewport. `Bridge.FIXTURE` feeds the *same code path* the
+engine uses, so an emulator screenshot shows the real renderer holding fake numbers — with the footer
+naming which of the two it is, because a fixture that looks like live data is a trap.
+
+**The loop proves**: layout, insets, tap targets, colour, and that a tap reaches the command sink.
+Measured this way: status bar to 5.8%, gold-framed viewport 7.0–35.2%, three bars at y=901 reading
+0.84 / 0.61 / 0.72 (the fixture's own numbers), and a tap on the first button producing
+`{"command":"wait"}` in logcat.
+
+**It cannot prove**: that the engine renders into the short wide viewport, that the bridge carries
+live state with both halves in one process, or anything about framerate and heat. Those need the
+phone, and `ui-loop.sh --apk build/android-out/idle-openmw.apk --activity is.xyz.idle_openmw/.MainActivity`
+is the same loop pointed at it.
+
+## Still open here
+
+- **Nothing has run with both halves in one process.** The engine build carries the exported JNI
+  symbols and the app declares exactly those names, but the first real proof is the phone.
+- **The short wide viewport is untuned.** A top-third render window is roughly 1080x780; camera
+  aspect/FOV (`scripts/idle/camera.lua`, `docs/isometric.md`) and MyGUI's scaling factor were not
+  touched, because neither can be judged without the engine drawing into one.
+- **`scripts/portraitUI.lua` still ships.** The Lua console is the desktop surface and its removal is
+  769 lines plus a 410-line spec, which belongs in its own step rather than a rushed one.

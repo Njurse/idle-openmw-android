@@ -1,0 +1,290 @@
+diff --git a/apps/openmw/CMakeLists.txt b/apps/openmw/CMakeLists.txt
+index bf4bd99..4296d54 100644
+--- a/apps/openmw/CMakeLists.txt
++++ b/apps/openmw/CMakeLists.txt
+@@ -103,6 +103,7 @@ add_openmw_dir (mwlua
+     types/creature types/player types/activator types/book types/lockpick types/probe types/apparatus
+     types/potion types/ingredient types/misc types/repair types/armor types/light types/static
+     types/clothing types/levelledlist types/terminal magictypebindings
++    androidbindings
+     )
+ 
+ add_openmw_dir (mwsound
+diff --git a/apps/openmw/mwlua/androidbindings.cpp b/apps/openmw/mwlua/androidbindings.cpp
+new file mode 100644
+index 0000000..a8e2bd2
+--- /dev/null
++++ b/apps/openmw/mwlua/androidbindings.cpp
+@@ -0,0 +1,214 @@
++#include "androidbindings.hpp"
++
++#include <sol/sol.hpp>
++
++#include <components/lua/luastate.hpp>
++
++#include "context.hpp"
++
++#include <deque>
++#include <mutex>
++#include <string>
++
++#if defined(__ANDROID__)
++#include <jni.h>
++#endif
++
++namespace MWLua
++{
++    namespace
++    {
++        // ---------------------------------------------------------------------------------------
++        // The command queue (app -> engine)
++        // ---------------------------------------------------------------------------------------
++        // Filled by Java on whatever thread the UI lives on, drained by Lua on the script thread.
++        // Hence a mutex: this is a genuine cross-thread handover, not a formality.
++        std::mutex sCommandMutex;
++        std::deque<std::string> sCommands;
++
++        /// Bounded, so a UI that spams commands cannot grow the queue without limit. The OLDEST
++        /// entries are dropped: a command that has been waiting behind sixty others is stale, while
++        /// the newest one is what the player just asked for.
++        constexpr std::size_t sMaxQueuedCommands = 64;
++
++        void pushCommandFromApp(const std::string& json)
++        {
++            std::lock_guard<std::mutex> lock(sCommandMutex);
++            if (sCommands.size() >= sMaxQueuedCommands)
++                sCommands.pop_front();
++            sCommands.push_back(json);
++        }
++
++        // ---------------------------------------------------------------------------------------
++        // The state channel (engine -> app)
++        // ---------------------------------------------------------------------------------------
++#if defined(__ANDROID__)
++        JavaVM* sVm = nullptr;
++        /// A GLOBAL ref to the activity class. A local ref from FindClass is only valid for the
++        /// duration of one JNI call, and this class is called from the script thread much later.
++        jclass sActivityClass = nullptr;
++        jmethodID sOnEngineState = nullptr;
++        bool sBridgeReady = false;
++        bool sExceptionReported = false;
++
++        bool pushState(const std::string& json)
++        {
++            if (!sBridgeReady)
++                return false;
++
++            JNIEnv* env = nullptr;
++            const jint status = sVm->GetEnv(reinterpret_cast<void**>(&env), JNI_VERSION_1_6);
++            if (status == JNI_EDETACHED)
++            {
++                // The script thread is not a Java thread. Attach it once and LEAVE it attached:
++                // the Lua script thread lives as long as the process, so attaching per frame would
++                // be pure overhead -- and detaching a thread the VM may still be using is a crash
++                // waiting to happen rather than a tidy-up.
++                if (sVm->AttachCurrentThread(&env, nullptr) != JNI_OK)
++                    return false;
++            }
++            else if (status != JNI_OK || env == nullptr)
++            {
++                return false;
++            }
++
++            // A BYTE ARRAY, not a jstring. NewStringUTF wants "modified UTF-8", which differs from
++            // UTF-8 exactly where it hurts: supplementary characters and embedded NULs. Morrowind's
++            // data is full of non-ASCII names, and a silently mangled one is precisely the failure
++            // this project keeps getting bitten by. Raw bytes cannot be misinterpreted; Java decodes
++            // them with StandardCharsets.UTF_8 on the other side.
++            const jsize length = static_cast<jsize>(json.size());
++            jbyteArray payload = env->NewByteArray(length);
++            if (payload == nullptr)
++            {
++                env->ExceptionClear();
++                return false;
++            }
++            env->SetByteArrayRegion(payload, 0, length, reinterpret_cast<const jbyte*>(json.data()));
++
++            env->CallStaticVoidMethod(sActivityClass, sOnEngineState, payload);
++            env->DeleteLocalRef(payload);
++
++            if (env->ExceptionCheck())
++            {
++                // Say WHY, once, and swallow it. Throwing out of a Lua call would take the mod down
++                // with it, and a Java-side bug is not the mod's problem to report every frame.
++                if (!sExceptionReported)
++                {
++                    sExceptionReported = true;
++                    env->ExceptionDescribe();
++                }
++                env->ExceptionClear();
++                return false;
++            }
++            return true;
++        }
++
++        bool bridgeReady()
++        {
++            return sBridgeReady;
++        }
++#else
++        // Everywhere else there is no app: the calls exist, report honestly, and do nothing.
++        bool pushState(const std::string&)
++        {
++            return false;
++        }
++
++        bool bridgeReady()
++        {
++            return false;
++        }
++#endif
++    }
++
++#if defined(__ANDROID__)
++    // -----------------------------------------------------------------------------------------
++    // The Java side of the bridge. The names are the JNI mangling of
++    // is.xyz.idle_openmw.MainActivity -- rename that class or its package and these stop being
++    // found, which shows up as UnsatisfiedLinkError at the first call, not at build time.
++    // -----------------------------------------------------------------------------------------
++
++    /// Java -> native, once, from MainActivity.onCreate: hand us the VM and the class/method to
++    /// call back into. Called AFTER SDL has loaded libopenmw.so, which is what makes the Java
++    /// `native` declarations resolvable in the first place.
++    extern "C" JNIEXPORT void JNICALL
++    Java_is_xyz_idle_1openmw_MainActivity_nativeBridgeAttach(JNIEnv* env, jclass clazz)
++    {
++        (void)clazz;
++        if (sVm == nullptr && env->GetJavaVM(&sVm) != JNI_OK)
++            return;
++
++        if (sActivityClass == nullptr)
++        {
++            jclass local = env->FindClass("is/xyz/idle_openmw/MainActivity");
++            if (local == nullptr)
++            {
++                env->ExceptionClear();
++                return;
++            }
++            sActivityClass = static_cast<jclass>(env->NewGlobalRef(local));
++            env->DeleteLocalRef(local);
++        }
++        if (sActivityClass == nullptr)
++            return;
++
++        if (sOnEngineState == nullptr)
++            sOnEngineState = env->GetStaticMethodID(sActivityClass, "onEngineState", "([B)V");
++        if (sOnEngineState == nullptr)
++        {
++            env->ExceptionClear();
++            return;
++        }
++
++        sBridgeReady = true;
++    }
++
++    /// Java -> engine: queue one command for the mod. Safe from any thread; the queue is drained
++    /// by openmw.android.pollCommand() on the script thread.
++    extern "C" JNIEXPORT void JNICALL
++    Java_is_xyz_idle_1openmw_MainActivity_nativeCommand(JNIEnv* env, jclass clazz, jbyteArray json)
++    {
++        (void)clazz;
++        if (json == nullptr)
++            return;
++        const jsize length = env->GetArrayLength(json);
++        if (length <= 0)
++            return;
++        std::string buffer(static_cast<std::size_t>(length), '\0');
++        env->GetByteArrayRegion(json, 0, length, reinterpret_cast<jbyte*>(&buffer[0]));
++        if (env->ExceptionCheck())
++        {
++            env->ExceptionClear();
++            return;
++        }
++        pushCommandFromApp(buffer);
++    }
++#endif
++
++    sol::table initAndroidPackage(const Context& context)
++    {
++        sol::table api(context.mLua->unsafeState(), sol::create);
++
++        /// Is there an app on the other end? False on desktop, false on Android until the activity
++        /// has attached, so a mod can decide whether to bother at all.
++        api["available"] = []() -> bool { return bridgeReady(); };
++
++        /// Hand the app a JSON document. Returns false when there is nothing to hand it to, so a
++        /// caller can tell "no app" from "the app took it".
++        api["pushState"] = [](const std::string& json) -> bool { return pushState(json); };
++
++        /// One queued command, or nil when the queue is empty. Drained one at a time so a caller
++        /// cannot be starved by a burst, and so a partially applied burst is still ordered.
++        api["pollCommand"] = [](sol::this_state lua) -> sol::object {
++            std::lock_guard<std::mutex> lock(sCommandMutex);
++            if (sCommands.empty())
++                return sol::nil;
++            std::string front = std::move(sCommands.front());
++            sCommands.pop_front();
++            return sol::make_object<std::string>(lua, std::move(front));
++        };
++
++        return LuaUtil::makeReadOnly(api);
++    }
++}
+diff --git a/apps/openmw/mwlua/androidbindings.hpp b/apps/openmw/mwlua/androidbindings.hpp
+new file mode 100644
+index 0000000..7e13d03
+--- /dev/null
++++ b/apps/openmw/mwlua/androidbindings.hpp
+@@ -0,0 +1,30 @@
++#ifndef MWLUA_ANDROIDBINDINGS_H
++#define MWLUA_ANDROIDBINDINGS_H
++
++#include <sol/forward.hpp>
++
++namespace MWLua
++{
++    struct Context;
++
++    /// The `openmw.android` package: an in-process bridge to the Android app that hosts the engine.
++    ///
++    /// FORK PATCH -- see tools/dev/engine-build/patches/0002-android-bridge.patch and
++    /// docs/android-bridge.md. Registered in initCommonPackages (luabindings.cpp) beside
++    /// `openmw.vfs`, because it is meaningful in every script kind; there is nothing Android
++    /// specific about a PLAYER script needing to talk to the UI around it.
++    ///
++    /// The package exists on EVERY platform and reports `available() == false` where there is no
++    /// app to talk to, so a mod can call it unconditionally and a desktop run stays portable.
++    ///
++    /// WHY A BINDING RATHER THAN A FILE
++    /// OpenMW's Lua can read a file (openmw.vfs) and print, but it cannot write a file and cannot
++    /// open a socket (docs/bridge-api.md). A native UI therefore cannot be told anything by a pure
++    /// Lua mod -- the existing file-in/log-out channel makes the HOST ask and parse, which is fine
++    /// for a developer with a terminal and hopeless for a touch UI that wants to redraw three times
++    /// a second. Java and the engine are the same process, so the shortest honest path between them
++    /// is a direct call.
++    sol::table initAndroidPackage(const Context& context);
++}
++
++#endif // MWLUA_ANDROIDBINDINGS_H
+diff --git a/apps/openmw/mwlua/luabindings.cpp b/apps/openmw/mwlua/luabindings.cpp
+index dc20205..395a692 100644
+--- a/apps/openmw/mwlua/luabindings.cpp
++++ b/apps/openmw/mwlua/luabindings.cpp
+@@ -8,6 +8,7 @@
+ #include "../mwworld/datetimemanager.hpp"
+ 
+ #include "animationbindings.hpp"
++#include "androidbindings.hpp"
+ #include "camerabindings.hpp"
+ #include "cellbindings.hpp"
+ #include "contentbindings.hpp"
+@@ -39,6 +40,9 @@ namespace MWLua
+             { "openmw.markup", initMarkupPackage(context) },
+             { "openmw.util", LuaUtil::initUtilPackage(lua) },
+             { "openmw.vfs", initVFSPackage(context) },
++            // FORK PATCH: the in-process bridge to the Android app that hosts this engine
++            // (apps/openmw/mwlua/androidbindings.cpp, docs/android-bridge.md).
++            { "openmw.android", initAndroidPackage(context) },
+         };
+     }
+ 

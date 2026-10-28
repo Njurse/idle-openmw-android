@@ -12,5 +12,6 @@
 # idleDirector.lua.
 
 PLAYER: scripts/idleDirector.lua
+PLAYER: scripts/androidBridge.lua
 PLAYER: scripts/portraitUI.lua
 GLOBAL: scripts/idleWarden.lua

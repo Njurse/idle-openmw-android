@@ -174,6 +174,13 @@ echo "deps     : ${DEPS:-(none -- expect the dependency list to stop it)}"
 echo "build dir: $BUILD_DIR"
 echo
 
+# The fork's patches, applied here as well as in the desktop build. This used to be the desktop
+# build's job alone, which meant the ANDROID engine silently lacked every fork change -- a missing
+# binding is not a compile error, so nothing would have said so until a phone. See
+# tools/dev/engine-build/apply-patches.sh.
+bash "$REPO_ROOT/tools/dev/engine-build/apply-patches.sh" "$SRC" || exit 10
+echo
+
 LOG="$REPO_ROOT/build/android-configure.log"
 # FindMyGUI has no CMake package to find, so it probes with HINTS on $ENV{MYGUI_HOME}. Point it at
 # the dependency tree: the archive carries a PREBUILT libMyGUIEngineStatic.a, and that matters --

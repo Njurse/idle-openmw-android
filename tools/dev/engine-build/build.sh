@@ -135,22 +135,10 @@ fi
 # engine we build is reproducible from this repo rather than being whatever the working tree
 # happens to contain. `patch --forward` is idempotent: an already-applied patch is skipped
 # instead of aborting the build.
-PATCH_DIR="$REPO/tools/dev/engine-build/patches"
-if [[ -d "$PATCH_DIR" ]]; then
-  for p in "$PATCH_DIR"/*.patch; do
-    [[ -e "$p" ]] || continue
-    name="$(basename "$p")"
-    if ( cd "$SRC" && patch -p1 --forward --silent --dry-run < "$p" >/dev/null 2>&1 ); then
-      ( cd "$SRC" && patch -p1 --forward --silent < "$p" ) && echo "== applied patch $name"
-    elif ( cd "$SRC" && patch -p1 --reverse --silent --dry-run < "$p" >/dev/null 2>&1 ); then
-      echo "== patch $name already applied"
-    else
-      echo "!! patch $name does not apply cleanly to $SRC" >&2
-      echo "   the checkout has drifted from what the patch expects" >&2
-      exit 10
-    fi
-  done
-fi
+#
+# The step itself lives in apply-patches.sh because the ANDROID engine needs the same patches and
+# used to get none of them -- see that file's header.
+bash "$REPO/tools/dev/engine-build/apply-patches.sh" "$SRC" || exit 10
 
 [[ $DO_CONFIGURE -eq 1 ]] || { echo "== done (deps only)"; exit 0; }
 

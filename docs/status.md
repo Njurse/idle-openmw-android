@@ -14,6 +14,8 @@ Last worked: the session that fixed the weapon draw. Engine: `F:/OpenMW-build/bu
 |---|---|
 | The idle loop | the character walks to a creature, draws a weapon, and fights it |
 | Android engine | `libopenmw.so` builds for arm64-v8a, and packages into a signed APK |
+| Android UI | a **native** portrait shell (View tree, not a Lua overlay) runs, and the emulator loop measures it |
+| Engine bridge | the engine pushes state straight into Java, and takes commands back (`openmw.android`) |
 
 **The idle loop runs end to end on a real engine.** The character walks to a creature, draws a
 weapon, and fights it:
@@ -188,3 +190,36 @@ mechanism.
 5. **Settle `player.inventory`'s shape** (open thread 2) — cheap, and it is what the app's
    inventory screen will consume.
 6. **Then the app UI** (`docs/app-ui.md`), which is now a build target rather than a plan.
+7. **Run the arm64 APK on the phone** and watch the bridge: the two halves exist and are tested
+   apart, but no single run has yet had both in the same process.
+
+## The Android UI: what exists now, and how to look at it
+
+This session moved the UI out of Lua and into the app. `docs/android.md` has the design and
+`docs/app-ui.md` the intent; the short version:
+
+- **The shell is native.** `AppUi` builds the portrait chrome with framework widgets only (no XML, no
+  androidx), and `MainActivity` reparents SDL's own layout into a top-third viewport rather than
+  forking SDL2. `LauncherActivity` picks between `MainActivity` (engine present) and `AppActivity`
+  (engine absent) — that decision cannot live in `MainActivity.onCreate`, see AGENTS.md #9.
+- **The bridge is real.** Fork patch `0002-android-bridge.patch` adds `openmw.android` with
+  `available()` / `pushState(json)` / `pollCommand()`; `tools/dev/engine-build/apply-patches.sh` is
+  now called by BOTH the desktop and the Android build, because the Android engine used to get no
+  fork patches at all. The app side is `Bridge.java`; the mod side is `scripts/androidBridge.lua`
+  plus the pure, specced `scripts/idle/appPayload.lua`.
+- **There is a loop, and it is the way to work on this:** `bash tools/android/tests/ui-loop.sh`
+  builds the UI-only APK, installs, launches, screenshots into `build/device/`, and
+  `python tools/android/tests/read_screen.py <png>` reads the result back as numbers (composition,
+  insets, stat-bar fractions). Verified this session: health 191/227px = 0.84, magicka 138 = 0.61,
+  fatigue 163 = 0.72 — the fixture's own numbers, measured off the screen.
+- **A tap is verified end to end**: tapping the first command button produced
+  `{"command":"wait"}` in logcat and changed the screen.
+
+**What the loop cannot prove** (and the phone can): that the engine renders into the short wide
+viewport, that the bridge carries live state between the two halves in one process, and anything
+about framerate or heat.
+
+**Left deliberately undone, in order:** the old Lua console (`scripts/portraitUI.lua`, 769 lines,
+plus a 410-line spec) still ships beside the bridge — removing it is its own step; the short-viewport
+camera/MyGUI tuning needs a device; and `docs/app-ui.md`'s management screens (journal, inventory,
+map, character sheet, spellbook) are unbuilt.
