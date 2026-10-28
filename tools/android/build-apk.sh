@@ -60,7 +60,7 @@ if [ "$UI_ONLY" = "1" ] && [ "$ABI_GIVEN" = "0" ]; then
 fi
 
 # P:\ -> P:/ so the Windows tools can open it. Falls back to the input when cygpath is absent.
-win() { cygpath -m "$1" 2>/dev/null || printf '%s' "$1"; }
+win() { cygpath -m "$1" 2>/dev/null || printf '%s\n' "$1"; }
 
 # --- SDK toolchain -------------------------------------------------------------------------
 SDK="${ANDROID_HOME:-${ANDROID_SDK_ROOT:-$USERPROFILE/AppData/Local/Android/Sdk}}"
