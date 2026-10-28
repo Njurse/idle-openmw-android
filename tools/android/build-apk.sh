@@ -156,17 +156,29 @@ find "$WORK/classes" -name "*.class" | while read -r f; do win "$f"; done > "$WO
 [ -f "$WORK/dex/classes.dex" ] || { echo "d8 produced no classes.dex" >&2; exit 1; }
 
 echo "== aapt2 =="
-# No resources are compiled. The manifest uses literal labels rather than @string/app_name, so
-# there is nothing for aapt2 to merge; passing a resource archive here made aapt2 treat it as an
-# OVERLAY and refuse ("failed to merge resource table ... use --auto-add-overlay") for resources
-# the manifest never referenced. Fewer moving parts, and the app has no UI resources of its own.
+# Resources: only the launcher icon (res/mipmap-*/ic_launcher.png). The manifest still uses literal
+# labels. Compiled into a flat zip and passed to link as the BASE table (not -R overlay files from
+# another package), which is what aapt2 expects for an app's own resources.
+"$AAPT2" compile --dir "$(win "$APK_SRC/res")" -o "$(win "$WORK/res/compiled.zip")" 2>&1 | tail -3
+# Assets: the OpenMW engine resources + defaults.bin + the base openmw.cfg (committed under
+# apk/assets/openmw), plus the idle_openmw mod copied from mods/ at build time. SetupActivity
+# extracts them into the app's files dir on first run.
+ASSETS="$WORK/assets"
+mkdir -p "$ASSETS"
+cp -r "$APK_SRC/assets/." "$ASSETS/"
+mkdir -p "$ASSETS/openmw/mods"
+cp -r "$REPO_ROOT/mods/idle_openmw" "$ASSETS/openmw/mods/"
+# A file list, so extraction does not have to walk AssetManager.list() (slow, and lists dirs ambiguously).
+( cd "$ASSETS/openmw" && find . -type f ! -name files.txt | sed 's#^\./##' | sort > files.txt )
 "$AAPT2" link \
   -o "$(win "$WORK/base.apk")" \
   -I "$ANDROID_JAR" \
   --manifest "$(win "$APK_SRC/AndroidManifest.xml")" \
+  -A "$(win "$ASSETS")" \
+  "$(win "$WORK/res/compiled.zip")" \
   --min-sdk-version 24 \
   --target-sdk-version 34 \
-  --version-code 1 --version-name 0.52.0-idle \
+  --version-code 2 --version-name 0.52.0-idle.2 \
   2>&1 | tail -3
 [ -f "$WORK/base.apk" ] || { echo "aapt2 link produced no apk" >&2; exit 1; }
 

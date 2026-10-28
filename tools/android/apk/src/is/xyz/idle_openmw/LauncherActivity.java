@@ -33,7 +33,11 @@ public class LauncherActivity extends Activity {
         super.onCreate(savedInstanceState);
 
         boolean engine = new File(getApplicationInfo().nativeLibraryDir, "libopenmw.so").isFile();
-        startActivity(new Intent(this, engine ? MainActivity.class : AppActivity.class));
+        // With the engine: it needs Morrowind's data and the unpacked resources first, or SDL_main dies
+        // (the old crash). SetupActivity asks for the data, writes openmw.cfg, then starts MainActivity.
+        Class<?> next = !engine ? AppActivity.class
+                : SetupActivity.isReady(this) ? MainActivity.class : SetupActivity.class;
+        startActivity(new Intent(this, next));
         finish();
     }
 }

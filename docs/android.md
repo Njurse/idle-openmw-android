@@ -894,3 +894,24 @@ is the same loop pointed at it.
   touched, because neither can be judged without the engine drawing into one.
 - **`scripts/portraitUI.lua` still ships.** The Lua console is the desktop surface and its removal is
   769 lines plus a 410-line spec, which belongs in its own step rather than a rushed one.
+
+## First-run setup (where to put Morrowind)
+
+On first launch the app shows a setup screen instead of starting the engine. It needs a folder that
+contains `Data Files` (with `Morrowind.esm`; `Morrowind.ini` normally sits next to it). Checked in order:
+
+1. `Android/data/is.xyz.idle_openmw/files/Morrowind` -- app-private, **no permission needed**
+   (copy your PC's Morrowind folder there over USB).
+2. `/storage/emulated/0/Morrowind` (and `Games/Morrowind`, `Download/Morrowind`).
+3. Any folder picked with **Choose folder...**. Outside the app's own folder, Android 11+ needs
+   **All-files access** (the setup screen has a button for it) because the engine reads files by path.
+
+Once valid, setup unpacks the bundled OpenMW resources and the idle_openmw mod from the APK assets into
+`files/resources` and `files/mods`, puts `defaults.bin` in `files/config`, and writes
+`files/config/openmw.cfg` (base cfg + absolute `resources=`, `data=`, `fallback-archive=`, `content=`).
+It then starts the engine. It re-runs automatically after an app update. To pick a different folder,
+clear the app's data.
+
+Assets: `tools/android/apk/assets/openmw/` (resources, defaults.bin, openmw.base.cfg from
+`build/android-configure`); the mod is copied from `mods/idle_openmw` at build time. Launcher icon:
+`tools/android/apk/res/mipmap-*/ic_launcher.png`.
