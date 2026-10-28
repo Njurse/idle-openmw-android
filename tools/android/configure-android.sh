@@ -204,6 +204,21 @@ if [ -f "$COMPAT_HEADER" ]; then
   COMPAT_CXX_FLAGS="-include $COMPAT_HEADER_WIN"
   echo "compat   : force-including $(basename "$COMPAT_HEADER") for the removed char_traits"
 fi
+# OSG's own extension lookup dlopen()s the system libGLESv2.so, bypassing gl4es and mixing two GL
+# implementations (SIGSEGV in isGLExtensionOrVersionSupported). Wrap dlopen inside libopenmw.so so
+# those probes land on gl4es. See tools/android/compat/gl_dlopen_wrap.c and docs/android.md.
+GLWRAP_SRC="$REPO_ROOT/tools/android/compat/gl_dlopen_wrap.c"
+GLWRAP_OBJ="$REPO_ROOT/build/gl_dlopen_wrap.o"
+GLWRAP_FLAGS=""
+if [ -f "$GLWRAP_SRC" ]; then
+  mkdir -p "$REPO_ROOT/build"
+  "$NDK/toolchains/llvm/prebuilt/windows-x86_64/bin/clang.exe" --target="$TRIPLE$API" -fPIC -O2 \
+    -c "$(cygpath -m "$GLWRAP_SRC" 2>/dev/null || echo "$GLWRAP_SRC")" \
+    -o "$(cygpath -m "$GLWRAP_OBJ" 2>/dev/null || echo "$GLWRAP_OBJ")" || exit 11
+  GLWRAP_FLAGS="-Wl,--wrap=dlopen $(cygpath -m "$GLWRAP_OBJ" 2>/dev/null || echo "$GLWRAP_OBJ") -llog"
+  echo "glwrap   : dlopen(libGLESv2.so) -> gl4es inside libopenmw.so"
+fi
+
 cmake -S "$SRC" -B "$BUILD_DIR" -G Ninja \
   -DCMAKE_TOOLCHAIN_FILE="$NDK/build/cmake/android.toolchain.cmake" \
   -DANDROID_ABI="$ABI" \
@@ -235,7 +250,7 @@ cmake -S "$SRC" -B "$BUILD_DIR" -G Ninja \
   -DOPENMW_USE_SYSTEM_YAML_CPP=OFF \
   -DOPENMW_USE_SYSTEM_SQLITE3=OFF \
   ${FFMPEG_VERSION_FLAGS[@]+"${FFMPEG_VERSION_FLAGS[@]}"} \
-  ${DEPS:+-DCMAKE_SHARED_LINKER_FLAGS="-L$DEPS_WIN/lib"} \
+  ${DEPS:+-DCMAKE_SHARED_LINKER_FLAGS="-L$DEPS_WIN/lib $GLWRAP_FLAGS"} \
   ${DEPS:+-DCMAKE_EXE_LINKER_FLAGS="-L$DEPS_WIN/lib"} \
   ${DEPS:+-DOPENMW_DEPENDENCIES_DIR="$DEPS"} \
   ${DEPS:+-DPNG_PNG_INCLUDE_DIR="$DEPS/include/libpng16"} \

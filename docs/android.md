@@ -933,3 +933,29 @@ configured with `OPENMW_GL4ES_MANUAL_INIT=OFF`, so nothing did, and the first GL
 compiles `components/sdlutil/gl4esinit.cpp` and calls it right after `SDL_GL_CreateContext` in
 `sdlgraphicswindow.cpp`. Requires rebuilding `libopenmw.so` (and re-uploading the
 `native-libs` release asset so CI packages it).
+
+## Crash: SIGSEGV in `strlen` from `isGLExtensionOrVersionSupported` (after the gl4es init fix)
+
+With gl4es now initialised, the phone (SM-S916U1) still died in `Viewer::realize`, one frame
+further: `strlen(NULL)` inside `osg::isGLExtensionOrVersionSupported`. Disassembly of the
+prebuilt OSG (static, from openmw-android-deps) shows why: it does
+`dlopen("libGLESv2.so")` + `dlsym("glGetStringi")` itself, so it gets the **system driver's**
+`glGetStringi`, while `glGetIntegerv(GL_NUM_EXTENSIONS)` is linked to gl4es. It walks gl4es's
+(longer) extension count with the driver's function; the driver returns NULL at index 86 and
+`std::string(NULL)` crashes. Every other OSG extension pointer had the same mixed-implementation
+problem.
+
+Fix: `tools/android/compat/gl_dlopen_wrap.c`, linked into `libopenmw.so` with
+`-Wl,--wrap=dlopen` (configure-android.sh compiles it and adds it to
+`CMAKE_SHARED_LINKER_FLAGS`). Inside libopenmw only, `dlopen("libGLESv2.so" / v3 / v1_CM)`
+is redirected to gl4es's `libGL.so`; SDL2 and gl4es (separate .so files) still load the real
+driver. Logcat tag `idle-openmw` prints `dlopen(libGLESv2.so) -> gl4es libGL.so` when it fires.
+
+`GraphicsContext::WindowingSystemInterfaces::getWindowingSystemInterface() failed, no interfaces
+available` in openmw.log is **benign**: the prebuilt OSG has no windowing plugin, and OpenMW
+never uses one -- it builds its own `SDLUtil::GraphicsWindowSDL2` and passes it to the viewer.
+
+16 KB pages: the S23+ warns that libGL, libopenal, collada-dom, libz, libbz2 and libc++_shared
+in the dependency archive are not 16 KB-aligned. On this phone that is a compatibility dialog
+only (the libraries load; the crash above happened after they were all loaded). Proper fix is
+relinking those deps with `-Wl,-z,max-page-size=16384`; not done yet.
