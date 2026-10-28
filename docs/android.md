@@ -915,3 +915,21 @@ clear the app's data.
 Assets: `tools/android/apk/assets/openmw/` (resources, defaults.bin, openmw.base.cfg from
 `build/android-configure`); the mod is copied from `mods/idle_openmw` at build time. Launcher icon:
 `tools/android/apk/res/mipmap-*/ic_launcher.png`.
+
+## Crash: SIGSEGV in `glGetStringi` during `Viewer::realize` (0.52.0-idle.2)
+
+**Symptom.** After first-run setup, MainActivity starts the engine and SDLThread dies with
+SIGSEGV (SEGV_MAPERR, fault addr ~0x27f8) in `libGL.so glGetStringi` <- `osg::GLExtensions` <-
+`osg::State::initializeExtensionProcs` <- `osgViewer::Viewer::realize` <- `OMW::Engine::createWindow`.
+
+**Root cause.** The bundled `libGL.so` is gl4es built with `NOEGL`, `NO_LOADER` and
+`NO_INIT_CONSTRUCTOR` (it exports `initialize_gl4es`, `set_getprocaddress`, `set_getmainfbsize`
+and has no `.init_array`). Such a gl4es never initialises itself: its global GL state stays NULL
+until the host calls `initialize_gl4es()` and hands it `SDL_GL_GetProcAddress`. Our engine was
+configured with `OPENMW_GL4ES_MANUAL_INIT=OFF`, so nothing did, and the first GL call OSG makes
+(`glGetStringi`) dereferenced NULL+offset. Env vars (`LIBGL_ES` etc.) cannot fix this.
+
+**Fix.** `tools/android/configure-android.sh` now passes `-DOPENMW_GL4ES_MANUAL_INIT=ON`, which
+compiles `components/sdlutil/gl4esinit.cpp` and calls it right after `SDL_GL_CreateContext` in
+`sdlgraphicswindow.cpp`. Requires rebuilding `libopenmw.so` (and re-uploading the
+`native-libs` release asset so CI packages it).
