@@ -1,0 +1,122 @@
+name: android
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "tools/android/**"
+      - ".github/workflows/android.yml"
+    tags:
+      - "android-v*"
+  workflow_dispatch:
+    inputs:
+      publish_existing:
+        description: "Skip packaging; republish the APK already on the android-dev release (or apk_url) to android-dev"
+        type: boolean
+        default: false
+      apk_url:
+        description: "Optional URL of an APK to publish when publish_existing=true"
+        type: string
+        default: ""
+
+permissions:
+  contents: write
+
+env:
+  NATIVE_TAG: native-libs
+  NATIVE_ASSET: native-libs-arm64-v8a.zip
+  SDL2_VERSION: "2.30.12"
+  ABI: arm64-v8a
+
+jobs:
+  package:
+    if: ${{ !inputs.publish_existing }}
+    runs-on: ubuntu-latest
+    env:
+      GH_TOKEN: ${{ github.token }}
+    outputs:
+      built: ${{ steps.natives.outputs.found }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Fetch prebuilt native libs (release asset)
+        id: natives
+        run: |
+          mkdir -p build/android-out/lib/$ABI
+          if gh release download "$NATIVE_TAG" -p "$NATIVE_ASSET" -D /tmp 2>/dev/null; then
+            unzip -o /tmp/$NATIVE_ASSET -d build/android-out/lib/$ABI
+            echo "found=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "::notice::No $NATIVE_ASSET on release '$NATIVE_TAG' - skipping APK packaging."
+            echo "found=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - uses: actions/setup-java@v4
+        if: steps.natives.outputs.found == 'true'
+        with:
+          distribution: temurin
+          java-version: "17"
+
+      - uses: android-actions/setup-android@v3
+        if: steps.natives.outputs.found == 'true'
+        with:
+          packages: "build-tools;34.0.0 platforms;android-34"
+
+      - name: Fetch SDL2 sources (Java side)
+        if: steps.natives.outputs.found == 'true'
+        run: |
+          mkdir -p build/android-sdl2
+          cd build/android-sdl2
+          curl -fsSL -o SDL2-$SDL2_VERSION.tar.gz \
+            https://github.com/libsdl-org/SDL/releases/download/release-$SDL2_VERSION/SDL2-$SDL2_VERSION.tar.gz
+          tar xzf SDL2-$SDL2_VERSION.tar.gz
+
+      - name: Package APK
+        if: steps.natives.outputs.found == 'true'
+        run: bash tools/android/build-apk.sh --abi $ABI
+
+      - uses: actions/upload-artifact@v4
+        if: steps.natives.outputs.found == 'true'
+        with:
+          name: idle-openmw-apk
+          path: build/android-out/idle-openmw.apk
+
+  publish:
+    needs: package
+    if: ${{ needs.package.outputs.built == 'true' }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: idle-openmw-apk
+      - name: Tagged release
+        if: startsWith(github.ref, 'refs/tags/android-v')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: idle-openmw.apk
+      - name: Rolling android-dev prerelease
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          gh release view android-dev >/dev/null 2>&1 || \
+            gh release create android-dev --prerelease --title "Android dev (rolling)" --notes "Latest APK from CI." --target "$GITHUB_SHA"
+          gh release upload android-dev idle-openmw.apk --clobber
+
+  publish-existing:
+    if: ${{ inputs.publish_existing }}
+    runs-on: ubuntu-latest
+    env:
+      GH_TOKEN: ${{ github.token }}
+      GH_REPO: ${{ github.repository }}
+    steps:
+      - name: Republish APK to android-dev
+        run: |
+          if [ -n "${{ inputs.apk_url }}" ]; then
+            curl -fsSL -o idle-openmw.apk "${{ inputs.apk_url }}"
+          else
+            gh release download android-dev -p idle-openmw.apk
+          fi
+          gh release view android-dev >/dev/null 2>&1 || \
+            gh release create android-dev --prerelease --title "Android dev (rolling)" --notes "Latest APK." --target "$GITHUB_SHA"
+          gh release upload android-dev idle-openmw.apk --clobber
