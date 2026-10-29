@@ -8,8 +8,6 @@ import org.json.JSONObject;
 
 import java.nio.charset.StandardCharsets;
 
-import java.nio.charset.StandardCharsets;
-
 /**
  * The app side of the engine bridge: one place that holds what the engine last said.
  *
@@ -48,6 +46,18 @@ public final class Bridge {
         public int bytes;
         /** True when the bytes came from the engine, false when they are the {@link #FIXTURE}. */
         public boolean live;
+        /** Lifecycle phase id from the mod ("world", "chargen", ...). */
+        public String phase = "world";
+        public String phaseLabel = "";
+        /** The engine's top UI mode (e.g. "ChargenName") and its kind ("chargen", "world", ...). */
+        public String screen = "";
+        public String screenKind = "world";
+
+        /** True while the engine is asking a character-creation question. */
+        public boolean inChargen() {
+            return "chargen".equals(phase) || "chargen".equals(screenKind)
+                    || (screen != null && screen.startsWith("Chargen"));
+        }
     }
 
     /**
@@ -128,6 +138,10 @@ public final class Bridge {
             state.goal = root.optString("goal", state.goal);
             state.reason = root.optString("goalReason", root.optString("reason", ""));
             state.caption = root.optString("cell", "");
+            state.phase = root.optString("phase", state.phase);
+            state.phaseLabel = root.optString("phaseLabel", "");
+            state.screen = root.optString("screen", "");
+            state.screenKind = root.optString("screenKind", state.screenKind);
 
             JSONObject player = root.optJSONObject("player");
             if (player != null) {

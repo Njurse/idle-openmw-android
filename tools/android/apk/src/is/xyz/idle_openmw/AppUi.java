@@ -86,6 +86,24 @@ public final class AppUi {
             { "rest", "Rest" },
     };
 
+    /**
+     * Typing into the engine's focused native widget (chargen name box, dialog OK). Set by
+     * MainActivity only when the engine is loaded; null in the preview, where taps just log.
+     */
+    public interface EngineKeys {
+        void replaceText(String text);
+        void enter();
+    }
+
+    public static volatile EngineKeys keys;
+
+    /** Dunmer-flavoured name suggestions for the adaptive name strip. */
+    static final String[] NAMES = {
+            "Nerevan", "Dralas", "Ilvi", "Sadri", "Athyn", "Mirisa", "Tedril", "Varvur",
+            "Fenas", "Llevana", "Serjo", "Galsa", "Ondres", "Brara", "Rilvase", "Taren",
+            "Aldyn", "Medyn", "Neloth", "Vivyne", "Hlaren", "Dreynis", "Uvren", "Selyn",
+    };
+
     /** Where a tapped command goes. An interface, so the preview never has to touch SDL. */
     public interface CommandSink {
         void send(String json);
@@ -119,6 +137,12 @@ public final class AppUi {
         private final TextView goldLine;
         private final Activity activity;
         private final CommandSink sink;
+        private View grid;
+        private LinearLayout chargenStrip;
+        /** Which chargen screen the strip is built for ("" when the grid is showing). */
+        private String stripFor = "";
+        private String pickedName = "";
+        private final java.util.Random random = new java.util.Random();
 
         private Shell(Activity activity, View gameView, CommandSink sink) {
             this.activity = activity;
@@ -220,7 +244,14 @@ public final class AppUi {
             body.setOrientation(LinearLayout.HORIZONTAL);
             body.setLayoutParams(new LinearLayout.LayoutParams(
                     ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f));
-            body.addView(commandGrid(scale), new LinearLayout.LayoutParams(
+            grid = commandGrid(scale);
+            body.addView(grid, new LinearLayout.LayoutParams(
+                    0, ViewGroup.LayoutParams.MATCH_PARENT, 2.2f));
+            chargenStrip = new LinearLayout(activity);
+            chargenStrip.setOrientation(LinearLayout.VERTICAL);
+            chargenStrip.setPadding(0, dp(scale, 6), dp(scale, 6), 0);
+            chargenStrip.setVisibility(View.GONE);
+            body.addView(chargenStrip, new LinearLayout.LayoutParams(
                     0, ViewGroup.LayoutParams.MATCH_PARENT, 2.2f));
             body.addView(portraitColumn(scale), new LinearLayout.LayoutParams(
                     0, ViewGroup.LayoutParams.MATCH_PARENT, 1f));
@@ -330,6 +361,172 @@ public final class AppUi {
             lastOrder.setText("last order: " + id + "  ->  " + json);
         }
 
+        /**
+         * The adaptive strip: while the engine is asking a character-creation question the verb grid
+         * is meaningless (the director holds until chargen ends), so it is swapped for buttons that
+         * answer that question. Lua cannot name the character or press a native dialog's OK
+         * (docs/chargen.md), so these type into the engine's focused widget via SDL text input.
+         */
+        private void adaptStrip(Bridge.State state) {
+            if (!state.inChargen()) {
+                if (!stripFor.isEmpty()) {
+                    stripFor = "";
+                    chargenStrip.setVisibility(View.GONE);
+                    grid.setVisibility(View.VISIBLE);
+                }
+                return;
+            }
+            String screen = state.screen == null || state.screen.isEmpty() ? "Chargen" : state.screen;
+            if ("ChargenName".equals(screen)) {
+                setGoal("Name your character", "Pick a name, reroll, or type one -- then Confirm.");
+            } else {
+                setGoal("Character creation", "Screen: " + screen.replace("Chargen", "")
+                        + (state.phaseLabel.isEmpty() ? "" : "  (" + state.phaseLabel + ")"));
+            }
+            if (screen.equals(stripFor)) {
+                return;
+            }
+            stripFor = screen;
+            grid.setVisibility(View.GONE);
+            chargenStrip.setVisibility(View.VISIBLE);
+            buildChargenStrip(screen);
+        }
+
+        private void buildChargenStrip(String screen) {
+            chargenStrip.removeAllViews();
+            float scale = activity.getResources().getDisplayMetrics().density;
+            if ("ChargenName".equals(screen)) {
+                LinearLayout names = row(scale);
+                for (int i = 0; i < 3; i++) {
+                    final String name = NAMES[random.nextInt(NAMES.length)];
+                    names.addView(stripButton(name, scale, new Runnable() {
+                        @Override
+                        public void run() {
+                            pickName(name);
+                        }
+                    }), weighted(scale));
+                }
+                chargenStrip.addView(names, rowParams(scale));
+                LinearLayout tools = row(scale);
+                tools.addView(stripButton("Reroll", scale, new Runnable() {
+                    @Override
+                    public void run() {
+                        buildChargenStrip("ChargenName");
+                    }
+                }), weighted(scale));
+                tools.addView(stripButton("Random", scale, new Runnable() {
+                    @Override
+                    public void run() {
+                        pickName(NAMES[random.nextInt(NAMES.length)]);
+                    }
+                }), weighted(scale));
+                tools.addView(stripButton("Type\u2026", scale, new Runnable() {
+                    @Override
+                    public void run() {
+                        promptName();
+                    }
+                }), weighted(scale));
+                chargenStrip.addView(tools, rowParams(scale));
+                LinearLayout confirm = row(scale);
+                confirm.addView(stripButton("Confirm", scale, new Runnable() {
+                    @Override
+                    public void run() {
+                        if (pickedName.isEmpty()) {
+                            pickName(NAMES[random.nextInt(NAMES.length)]);
+                        }
+                        pressEnter("confirm name " + pickedName);
+                    }
+                }), weighted(scale));
+                chargenStrip.addView(confirm, rowParams(scale));
+            } else {
+                LinearLayout one = row(scale);
+                one.addView(stripButton("Accept / Next", scale, new Runnable() {
+                    @Override
+                    public void run() {
+                        pressEnter("accept " + stripFor);
+                    }
+                }), weighted(scale));
+                chargenStrip.addView(one, rowParams(scale));
+            }
+        }
+
+        private void pickName(String name) {
+            pickedName = name;
+            EngineKeys k = keys;
+            if (k != null) {
+                try {
+                    k.replaceText(name);
+                } catch (Throwable t) {
+                    log("name entry failed: " + t);
+                }
+            }
+            lastOrder.setText("name: " + name + "  (tap Confirm)");
+        }
+
+        private void pressEnter(String what) {
+            EngineKeys k = keys;
+            if (k != null) {
+                try {
+                    k.enter();
+                } catch (Throwable t) {
+                    log("enter failed: " + t);
+                }
+            }
+            lastOrder.setText("last order: " + what);
+        }
+
+        private void promptName() {
+            final android.widget.EditText input = new android.widget.EditText(activity);
+            input.setSingleLine(true);
+            input.setText(pickedName);
+            new android.app.AlertDialog.Builder(activity)
+                    .setTitle("Character name")
+                    .setView(input)
+                    .setPositiveButton("Use", new android.content.DialogInterface.OnClickListener() {
+                        @Override
+                        public void onClick(android.content.DialogInterface d, int w) {
+                            String name = input.getText().toString().trim();
+                            if (!name.isEmpty()) {
+                                pickName(name);
+                            }
+                        }
+                    })
+                    .setNegativeButton("Cancel", null)
+                    .show();
+        }
+
+        private LinearLayout row(float scale) {
+            LinearLayout row = new LinearLayout(activity);
+            row.setOrientation(LinearLayout.HORIZONTAL);
+            return row;
+        }
+
+        private LinearLayout.LayoutParams rowParams(float scale) {
+            return new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f);
+        }
+
+        private LinearLayout.LayoutParams weighted(float scale) {
+            LinearLayout.LayoutParams p = new LinearLayout.LayoutParams(
+                    0, ViewGroup.LayoutParams.MATCH_PARENT, 1f);
+            p.setMargins(dp(scale, 3), dp(scale, 3), dp(scale, 3), dp(scale, 3));
+            return p;
+        }
+
+        private TextView stripButton(String label, float scale, final Runnable action) {
+            TextView button = text(activity, label, Palette.TAN, 12f, Typeface.BOLD, scale);
+            button.setGravity(Gravity.CENTER);
+            button.setBackgroundDrawable(Palette.frame(Palette.withAlpha(Palette.GOLD_BRIGHT, 26),
+                    Palette.withAlpha(Palette.GOLD, 190), dp(scale, 1)));
+            button.setClickable(true);
+            button.setOnClickListener(new View.OnClickListener() {
+                @Override
+                public void onClick(View view) {
+                    action.run();
+                }
+            });
+            return button;
+        }
+
         private BarView addStat(LinearLayout parent, String label, int colour, float scale) {
             LinearLayout column = new LinearLayout(activity);
             column.setOrientation(LinearLayout.VERTICAL);
@@ -431,6 +628,7 @@ public final class AppUi {
                 return;
             }
             setGoal(state.goal, state.reason);
+            adaptStrip(state);
             setCaption(state.caption);
             setPools(state.health, state.magicka, state.fatigue);
             setGold(state.gold);

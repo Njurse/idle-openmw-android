@@ -701,9 +701,25 @@ local function consoleWanted()
   return phase == nil or phase == 'world'
 end
 
+--- On Android the native shell (tools/android/apk AppUi) is the console. This in-engine MyGUI one
+--- was the first go-around's and only covers the 3D view there, so it stands down entirely.
+local function androidShellOwnsUi()
+  local ok, package = pcall(require, 'openmw.android')
+  if not ok or type(package) ~= 'table' or type(package.available) ~= 'function' then return false end
+  local okAvail, value = pcall(package.available)
+  return okAvail and value == true
+end
+
 local function update(dt)
   if state.disabled then return end
   if not usable() then state.disabled = true return end
+  if androidShellOwnsUi() then
+    pcall(destroyElements)
+    state.elements = {}
+    state.disabled = true
+    print('[IdleOpenMW] android shell attached; in-engine console and narration stand down')
+    return
+  end
 
   local ok, err = pcall(function()
     -- Narration first, and BEFORE the console gate below: it must be up during

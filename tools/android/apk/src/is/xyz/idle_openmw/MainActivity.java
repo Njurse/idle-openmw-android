@@ -147,6 +147,17 @@ public class MainActivity extends SDLActivity {
                 MainActivity.sendCommand(json);
             }
         });
+        AppUi.keys = new AppUi.EngineKeys() {
+            @Override
+            public void replaceText(String text) {
+                org.libsdl.app.IdleInput.replaceText(text);
+            }
+
+            @Override
+            public void enter() {
+                org.libsdl.app.IdleInput.enter();
+            }
+        };
         shell.setCaption("the game renders here");
         shell.setGoal("Waiting for the first tick",
                 "The engine is up; the director's goal arrives with the first snapshot.");

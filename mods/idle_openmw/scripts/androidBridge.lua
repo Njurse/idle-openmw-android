@@ -109,11 +109,19 @@ local function push()
   return false
 end
 
+--- The native shell owns the HUD on Android: hide the engine's own (bars, minimap, crosshair) so the
+--- viewport is just the 3D view. Chargen dialogs are untouched -- the shell drives those instead.
+local function hideNativeHud()
+  local Ui = interfaces and interfaces.UI
+  if Ui and type(Ui.setHudVisibility) == 'function' then pcall(Ui.setHudVisibility, false) end
+end
+
 local function update()
   if not available() then return end
 
   if not state.announced then
     state.announced = true
+    hideNativeHud()
     pcall(print, 'idle-openmw: android bridge attached; pushing state every ' .. PUSH_FRAMES .. ' frames')
   end
 
@@ -125,6 +133,8 @@ end
 
 return {
   engineHandlers = {
-    onUpdate = update,
+    -- onFrame, NOT onUpdate: onUpdate stops while the world is paused, and character creation is
+    -- paused -- which left the app on "Waiting for the first tick" through the whole name prompt.
+    onFrame = update,
   },
 }

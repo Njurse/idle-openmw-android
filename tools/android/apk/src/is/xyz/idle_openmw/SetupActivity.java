@@ -113,6 +113,7 @@ public class SetupActivity extends Activity {
         if (ext != null) out.add(new File(ext, "Morrowind"));
         File shared = Environment.getExternalStorageDirectory();
         out.add(new File(shared, "Morrowind"));
+        out.add(new File(shared, "Syncthing/Morrowind"));
         out.add(new File(shared, "Android/data/is.xyz.idle_openmw/files/Morrowind"));
         out.add(new File(shared, "Games/Morrowind"));
         out.add(new File(shared, "Download/Morrowind"));

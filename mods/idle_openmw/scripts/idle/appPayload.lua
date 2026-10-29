@@ -91,7 +91,13 @@ function M.project(panel)
     goal = text(panel.goal ~= nil and panel.goal or 'idle'),
     goalReason = text(panel.goalReason ~= nil and panel.goalReason or panel.reason),
     mode = text(panel.mode or 'auto'),
-    phase = text(panel.phase or 'world'),
+    -- panel.phase is the lifecycle table ({ id, label }); the app wants the id and the label.
+    phase = text(type(panel.phase) == 'table' and (panel.phase.id or 'world') or panel.phase or 'world'),
+    phaseLabel = text(type(panel.phase) == 'table' and panel.phase.label or nil),
+    -- The engine's top UI mode (e.g. ChargenName) and its kind, so the app can swap its
+    -- button strip for the screen the engine is actually asking about.
+    screen = text(type(panel.ui) == 'table' and panel.ui.mode or nil),
+    screenKind = text(type(panel.ui) == 'table' and panel.ui.kind or 'world'),
     cell = text(panel.cell),
     player = {
       gold = number(player.gold),
