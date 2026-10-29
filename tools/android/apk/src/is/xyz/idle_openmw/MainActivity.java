@@ -82,6 +82,7 @@ public class MainActivity extends SDLActivity {
             android.system.Os.setenv("OSG_VERTEX_BUFFER_HINT", "VBO", true);
             android.system.Os.setenv("OSG_TEXT_SHADER_TECHNIQUE", "NO_TEXT_SHADER", true);
             android.system.Os.setenv("LIBGL_NOTEXRECT", "1", true);
+            android.system.Os.setenv("LIBGL_NOINTOVLHACK", "1", true);
         } catch (android.system.ErrnoException ignored) {
         }
         try {
