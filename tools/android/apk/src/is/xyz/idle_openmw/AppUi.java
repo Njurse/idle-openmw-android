@@ -142,6 +142,11 @@ public final class AppUi {
         /** Which chargen screen the strip is built for ("" when the grid is showing). */
         private String stripFor = "";
         private String pickedName = "";
+        private boolean imeOpen;
+        /** Text strip stays up after the keyboard hides (e.g. after Type…) until Confirm. */
+        private boolean textSticky;
+        private Bridge.State lastState;
+        private String lastSeen = "";
         private final java.util.Random random = new java.util.Random();
 
         private Shell(Activity activity, View gameView, CommandSink sink) {
@@ -368,6 +373,29 @@ public final class AppUi {
          * (docs/chargen.md), so these type into the engine's focused widget via SDL text input.
          */
         private void adaptStrip(Bridge.State state) {
+            if (state == null) {
+                state = new Bridge.State();
+            }
+            lastState = state;
+            String seen = state.screen + "/" + state.screenKind + "/" + state.phase + (imeOpen ? "/ime" : "");
+            if (!seen.equals(lastSeen)) {
+                lastSeen = seen;
+                log("ui: screen=" + (state.screen.isEmpty() ? "-" : state.screen) + " kind="
+                        + state.screenKind + " phase=" + state.phase + (state.live ? "" : " (fixture)")
+                        + (imeOpen ? " keyboard=up" : ""));
+            }
+            // The soft keyboard is the one signal that cannot be lost: SDL raises it exactly when a
+            // MyGUI edit box takes focus (the name prompt). Reported by the device: the keyboard came
+            // up but the strip stayed on the verb grid because no ChargenName state had reached Java.
+            // So the keyboard alone is enough to show the text strip.
+            if (!state.inChargen() && (imeOpen || textSticky)) {
+                Bridge.State text = new Bridge.State();
+                text.screen = "ChargenName";
+                text.screenKind = "chargen";
+                text.phase = state.phase;
+                text.phaseLabel = state.phaseLabel;
+                state = text;
+            }
             if (!state.inChargen()) {
                 if (!stripFor.isEmpty()) {
                     stripFor = "";
@@ -435,6 +463,9 @@ public final class AppUi {
                             pickName(NAMES[random.nextInt(NAMES.length)]);
                         }
                         pressEnter("confirm name " + pickedName);
+                        textSticky = false;
+                        stripFor = "ChargenName";
+                        adaptStrip(lastState);
                     }
                 }), weighted(scale));
                 chargenStrip.addView(confirm, rowParams(scale));
@@ -623,6 +654,18 @@ public final class AppUi {
          * knows nothing about widgets, which is what keeps "what the engine said" testable apart from
          * "how it looks".
          */
+        /** The Android soft keyboard opened or closed (MainActivity watches the window insets). */
+        public void setImeVisible(boolean visible) {
+            if (visible == imeOpen) {
+                return;
+            }
+            imeOpen = visible;
+            if (visible) {
+                textSticky = true;
+            }
+            adaptStrip(lastState);
+        }
+
         public void applyState(Bridge.State state) {
             if (state == null) {
                 return;

@@ -275,7 +275,7 @@ M.defaults = {
   -- a first run, and the exact angle is a taste that wants a real screen to
   -- judge. Flip `isometric` in the console's Setup tab (or here) to try it.
   camera = {
-    isometric = false,
+    isometric = true,   -- on: the idle view is the character from above (Android shell has no look controls)
     pitch = -0.6109,    -- radians; ~ -35 deg, the classic 2:1 iso tilt
     distance = 640,     -- third-person distance in engine units
     yaw = nil,          -- radians for a fully-fixed heading; nil = follow the actor

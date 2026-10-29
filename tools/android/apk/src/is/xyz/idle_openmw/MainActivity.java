@@ -95,6 +95,7 @@ public class MainActivity extends SDLActivity {
             shell.setGoal("Engine start failed", String.valueOf(t));
             setContentView(shell.root);
             LogStrip.start(this, shell);
+        watchKeyboard();
             LogStrip.line("SDLActivity.onCreate threw: " + t);
             return;
         }
@@ -183,6 +184,30 @@ public class MainActivity extends SDLActivity {
             LogStrip.line("bridge attach FAILED: " + t);
             shell.setGoal("Engine bridge failed", String.valueOf(t));
         }
+    }
+
+    /**
+     * Tell the shell when the soft keyboard is up. SDL shows it when the engine focuses a text field
+     * (the chargen name prompt), so it is a direct, engine-independent "text entry now" signal.
+     */
+    private void watchKeyboard() {
+        final android.view.View root = getWindow().getDecorView();
+        root.getViewTreeObserver().addOnGlobalLayoutListener(
+                new android.view.ViewTreeObserver.OnGlobalLayoutListener() {
+                    @Override
+                    public void onGlobalLayout() {
+                        boolean up;
+                        if (android.os.Build.VERSION.SDK_INT >= 30) {
+                            android.view.WindowInsets insets = root.getRootWindowInsets();
+                            up = insets != null && insets.isVisible(android.view.WindowInsets.Type.ime());
+                        } else {
+                            android.graphics.Rect r = new android.graphics.Rect();
+                            root.getWindowVisibleDisplayFrame(r);
+                            up = root.getHeight() - r.bottom > root.getHeight() / 5;
+                        }
+                        shell.setImeVisible(up);
+                    }
+                });
     }
 
     /** The shell, for a later phase to bind model data into. */
