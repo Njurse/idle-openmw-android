@@ -84,7 +84,19 @@ public class MainActivity extends SDLActivity {
             android.system.Os.setenv("LIBGL_NOTEXRECT", "1", true);
         } catch (android.system.ErrnoException ignored) {
         }
-        super.onCreate(savedInstanceState);
+        try {
+            super.onCreate(savedInstanceState);
+        } catch (Throwable t) {
+            // SDL's own load/start threw: still show the shell + log rather than a dead activity.
+            android.util.Log.e("idle-openmw", "SDLActivity.onCreate failed", t);
+            shell = AppUi.create(this, null);
+            shell.setPlaceholder("Game view\n\n(engine start threw)");
+            shell.setGoal("Engine start failed", String.valueOf(t));
+            setContentView(shell.root);
+            LogStrip.start(this, shell);
+            LogStrip.line("SDLActivity.onCreate threw: " + t);
+            return;
+        }
 
         // Engine paths, before SDL_main can run (it starts on surface-ready, after onCreate). Both point at
         // internal app storage (/data/data/<pkg>/files): the engine can read it, and a debuggable build is
@@ -109,6 +121,8 @@ public class MainActivity extends SDLActivity {
             shell.setGoal("Engine failed to load",
                     "libopenmw.so is present but SDL could not start it -- see the dialog and the log.");
             setContentView(shell.root);
+            LogStrip.start(this, shell);
+            LogStrip.line("ENGINE FAILED TO LOAD: libopenmw.so present but SDL could not start it");
             return;
         }
 
@@ -132,6 +146,8 @@ public class MainActivity extends SDLActivity {
                 "The engine is up; the director's goal arrives with the first snapshot.");
         shell.setFooter("idle-openmw  0.52  arm64");
         setContentView(shell.root);
+        LogStrip.start(this, shell);
+        LogStrip.line("shell up; attaching engine bridge");
 
         // Now that there is a shell to draw into, open the bridge. Order matters: attach() caches
         // the method id it will call, and listen() is what routes what it calls into the views.
@@ -141,8 +157,15 @@ public class MainActivity extends SDLActivity {
                 shell.applyState(state);
             }
         });
-        nativeBridgeAttach();
-        sEngineAttached = true;
+        try {
+            nativeBridgeAttach();
+            sEngineAttached = true;
+            LogStrip.line("bridge attached; SDL_main starts when the surface is ready");
+        } catch (Throwable t) {
+            // Keep the UI up instead of dying: buttons stay inert (sendCommand is a no-op).
+            LogStrip.line("bridge attach FAILED: " + t);
+            shell.setGoal("Engine bridge failed", String.valueOf(t));
+        }
     }
 
     /** The shell, for a later phase to bind model data into. */

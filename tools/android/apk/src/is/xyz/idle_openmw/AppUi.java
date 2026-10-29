@@ -110,6 +110,9 @@ public final class AppUi {
         // Not final: assigned by portraitColumn() while the view tree is built, not in the constructor.
         private TextView portrait;
         private final TextView footer;
+        private final TextView logView;
+        private final java.util.ArrayDeque<String> logLines = new java.util.ArrayDeque<>();
+        private static final int LOG_LINES = 6;
         private final BarView health;
         private final BarView magic;
         private final BarView fatigue;
@@ -230,6 +233,23 @@ public final class AppUi {
             panel.addView(footer);
 
             frameRoot.addView(panel);
+
+            // --- the log strip: ~6 lines of status under the buttons, so a failed engine start
+            // still leaves something readable on screen (MainActivity / LogStrip feed it) ---
+            logView = text(activity, "", Palette.PARCHMENT, 9f, Typeface.NORMAL, scale);
+            logView.setTypeface(Typeface.MONOSPACE);
+            logView.setLines(LOG_LINES);
+            logView.setMaxLines(LOG_LINES);
+            logView.setGravity(Gravity.BOTTOM | Gravity.START);
+            logView.setEllipsize(null);
+            logView.setHorizontallyScrolling(false);
+            logView.setBackgroundDrawable(Palette.frame(Palette.EBONY, Palette.GOLD, dp(scale, 2)));
+            logView.setPadding(dp(scale, 6), dp(scale, 4), dp(scale, 6), dp(scale, 4));
+            LinearLayout.LayoutParams logParams = new LinearLayout.LayoutParams(
+                    ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT);
+            logParams.setMargins(dp(scale, 8), 0, dp(scale, 8), dp(scale, 6));
+            logView.setLayoutParams(logParams);
+            frameRoot.addView(logView);
 
             // Paint the bars and own the inset, so the chrome reads as one frame rather than as
             // papyrus behind grey.
@@ -374,6 +394,24 @@ public final class AppUi {
         }
 
         /** A dimmed line at the foot of the panel: build identity, engine state, hints. */
+        /** Append one line to the on-screen log strip. Safe from any thread. */
+        public void log(final String line) {
+            if (line == null) return;
+            activity.runOnUiThread(new Runnable() {
+                @Override
+                public void run() {
+                    logLines.addLast(line);
+                    while (logLines.size() > LOG_LINES) logLines.removeFirst();
+                    StringBuilder sb = new StringBuilder();
+                    for (String l : logLines) {
+                        if (sb.length() > 0) sb.append('\n');
+                        sb.append(l);
+                    }
+                    logView.setText(sb.toString());
+                }
+            });
+        }
+
         public void setFooter(String text) {
             footer.setText(text == null ? "" : text);
         }
