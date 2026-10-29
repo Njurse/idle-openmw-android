@@ -106,7 +106,12 @@ public class MainActivity extends SDLActivity {
         if (SDLActivity.mLayout != null) {
             java.io.File ext = getFilesDir();
             if (ext != null) {
-                new java.io.File(ext, "config").mkdirs();
+                java.io.File config = new java.io.File(ext, "config");
+                config.mkdirs();
+                // gl4es can't compile several OpenMW shaders; prefer the fixed-function-ish path
+                // so New Game doesn't SIGSEGV on a null program/uniform. Java-only; no native rebuild.
+                ensureSafeGraphicsSettings(config);
+                android.util.Log.i("idle-openmw", "wrote Android-safe graphics into settings.cfg");
                 ui.activity.GameActivity.getPathToJni(ext.getParent(), ext.getAbsolutePath());
             }
         }
@@ -172,6 +177,72 @@ public class MainActivity extends SDLActivity {
     /** The shell, for a later phase to bind model data into. */
     public AppUi.Shell shell() {
         return shell;
+    }
+
+
+    /**
+     * Rewrite Android-safe graphics keys in settings.cfg every launch.
+     * Keeps unrelated user settings; only replaces the managed section markers.
+     * OpenMW docs: lighting method "legacy" is the closest to fixed-function; shaders/shadows/water/post
+     * and reverse-z all force shader paths that gl4es often fails to compile (see MR !3948 / gl4es #282).
+     */
+    private static void ensureSafeGraphicsSettings(java.io.File configDir) {
+        java.io.File file = new java.io.File(configDir, "settings.cfg");
+        String markerStart = "# idle-openmw-android-graphics-begin";
+        String markerEnd = "# idle-openmw-android-graphics-end";
+        String block =
+                markerStart + "\n"
+                + "[Shaders]\n"
+                + "lighting method = legacy\n"
+                + "force shaders = false\n"
+                + "force per pixel lighting = false\n"
+                + "auto use object normal maps = false\n"
+                + "auto use object specular maps = false\n"
+                + "auto use terrain normal maps = false\n"
+                + "auto use terrain specular maps = false\n"
+                + "[Shadows]\n"
+                + "enable shadows = false\n"
+                + "[Water]\n"
+                + "shader = false\n"
+                + "refraction = false\n"
+                + "[Post Processing]\n"
+                + "enabled = false\n"
+                + "[Fog]\n"
+                + "radial fog = false\n"
+                + "exponential fog = false\n"
+                + "[Camera]\n"
+                + "reverse z = false\n"
+                + markerEnd + "\n";
+        try {
+            StringBuilder keep = new StringBuilder();
+            if (file.isFile()) {
+                boolean skipping = false;
+                try (java.io.BufferedReader r = new java.io.BufferedReader(
+                        new java.io.InputStreamReader(new java.io.FileInputStream(file),
+                                java.nio.charset.StandardCharsets.UTF_8))) {
+                    String line;
+                    while ((line = r.readLine()) != null) {
+                        if (line.trim().equals(markerStart)) {
+                            skipping = true;
+                            continue;
+                        }
+                        if (line.trim().equals(markerEnd)) {
+                            skipping = false;
+                            continue;
+                        }
+                        if (!skipping) keep.append(line).append('\n');
+                    }
+                }
+            }
+            try (java.io.Writer w = new java.io.OutputStreamWriter(
+                    new java.io.FileOutputStream(file), java.nio.charset.StandardCharsets.UTF_8)) {
+                w.write(keep.toString());
+                if (keep.length() > 0 && keep.charAt(keep.length() - 1) != '\n') w.write('\n');
+                w.write(block);
+            }
+        } catch (Throwable t) {
+            android.util.Log.w("idle-openmw", "could not write safe graphics settings", t);
+        }
     }
 
     /**
