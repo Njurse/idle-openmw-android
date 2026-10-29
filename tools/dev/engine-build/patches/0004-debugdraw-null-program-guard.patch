@@ -1,0 +1,17 @@
+diff --git a/components/debug/debugdraw.cpp b/components/debug/debugdraw.cpp
+index 623d781..ff45eed 100644
+--- a/components/debug/debugdraw.cpp
++++ b/components/debug/debugdraw.cpp
+@@ -318,7 +318,11 @@ namespace Debug
+ 
+         const osg::StateSet* stateSet = getStateSet();
+ 
+-        const osg::Program::PerContextProgram& pcp = *state->getLastAppliedProgramObject();
++        const osg::Program::PerContextProgram* pcpPtr = state->getLastAppliedProgramObject();
++        // GLES: a program whose shaders failed to compile/link is never applied; skip instead of crashing.
++        if (pcpPtr == nullptr || stateSet == nullptr)
++            return;
++        const osg::Program::PerContextProgram& pcp = *pcpPtr;
+         auto transLocation = pcp.getUniformLocation(stateSet->getUniform("trans")->getNameID());
+         auto colLocation = pcp.getUniformLocation(stateSet->getUniform("color")->getNameID());
+         auto scaleLocation = pcp.getUniformLocation(stateSet->getUniform("scale")->getNameID());
