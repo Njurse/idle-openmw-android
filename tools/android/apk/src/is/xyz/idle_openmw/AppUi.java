@@ -137,7 +137,8 @@ public final class AppUi {
         private final TextView goldLine;
         private final Activity activity;
         private final CommandSink sink;
-        private View grid;
+        private GridLayout grid;
+        private String gridFor = null;
         private LinearLayout chargenStrip;
         /** Which chargen screen the strip is built for ("" when the grid is showing). */
         private String stripFor = "";
@@ -301,23 +302,64 @@ public final class AppUi {
          * because a Button brings the platform's own theme with it -- holo/material chrome that would
          * be the only thing on this screen not made of papyrus and gold.
          */
-        private View commandGrid(float scale) {
+        private GridLayout commandGrid(float scale) {
             GridLayout grid = new GridLayout(activity);
             grid.setColumnCount(3);
-            grid.setRowCount((COMMANDS.length + 2) / 3);
             grid.setPadding(0, dp(scale, 6), dp(scale, 6), 0);
+            fillGrid(grid, new java.util.ArrayList<String[]>(), scale);
+            return grid;
+        }
 
-            for (String[] command : COMMANDS) {
+        /** Verbs kept next to the nearby-place buttons (the rest live on the full grid). */
+        private final String[][] TOWN_VERBS = {
+                { "wait", "Wait" },
+                { "wander", "Wander" },
+                { "inventory", "Inventory" },
+        };
+
+        /**
+         * Rebuild the grid: with nearby places from the mod, those come first (doors = "go to",
+         * NPCs = "talk to") followed by a few verbs; with none, the full static verb grid.
+         */
+        private void fillGrid(GridLayout grid, java.util.List<String[]> places, float scale) {
+            grid.removeAllViews();
+            java.util.List<String[]> buttons = new java.util.ArrayList<>();
+            if (places.isEmpty()) {
+                for (String[] c : COMMANDS) {
+                    buttons.add(new String[] { c[0], c[1], null });
+                }
+            } else {
+                int n = 0;
+                for (String[] p : places) {
+                    if (n++ >= 6) {
+                        break;
+                    }
+                    String label = "talk".equals(p[2]) ? "Talk: " + p[1] : "\u2192 " + p[1];
+                    buttons.add(new String[] { "go_place", label, p[0] });
+                }
+                for (String[] c : TOWN_VERBS) {
+                    buttons.add(new String[] { c[0], c[1], null });
+                }
+            }
+            grid.setRowCount((buttons.size() + 2) / 3);
+            for (String[] command : buttons) {
                 final String id = command[0];
-                TextView button = text(activity, command[1], Palette.TAN, 12f, Typeface.BOLD, scale);
+                final String place = command[2];
+                TextView button = text(activity, command[1], Palette.TAN, place != null ? 11f : 12f,
+                        Typeface.BOLD, scale);
                 button.setGravity(Gravity.CENTER);
-                button.setBackgroundDrawable(Palette.frame(Palette.withAlpha(Palette.GOLD_BRIGHT, 26),
+                button.setMaxLines(2);
+                button.setBackgroundDrawable(Palette.frame(Palette.withAlpha(Palette.GOLD_BRIGHT, place != null ? 48 : 26),
                         Palette.withAlpha(Palette.GOLD, 190), dp(scale, 1)));
                 button.setClickable(true);
                 button.setOnClickListener(new View.OnClickListener() {
                     @Override
                     public void onClick(View view) {
-                        onCommandTap(id);
+                        if (place != null) {
+                            onPlaceTap(place);
+                        } else {
+                            onCommandTap(id);
+                        }
                     }
                 });
                 GridLayout.LayoutParams params = new GridLayout.LayoutParams(
@@ -328,7 +370,28 @@ public final class AppUi {
                 params.setMargins(dp(scale, 3), dp(scale, 3), dp(scale, 3), dp(scale, 3));
                 grid.addView(button, params);
             }
-            return grid;
+        }
+
+        /** Rebuild the grid only when the mod's place list actually changed. */
+        private void adaptGrid(Bridge.State state) {
+            String key = state.placesKey();
+            if (key.equals(gridFor)) {
+                return;
+            }
+            gridFor = key;
+            fillGrid(grid, state.places, activity.getResources().getDisplayMetrics().density);
+            if (!state.places.isEmpty()) {
+                log("places: " + state.places.size() + " nearby");
+            }
+        }
+
+        private void onPlaceTap(String placeId) {
+            String json = "{\"command\":\"go_place\",\"payload\":{\"id\":"
+                    + org.json.JSONObject.quote(placeId) + "}}";
+            if (sink != null) {
+                sink.send(json);
+            }
+            lastOrder.setText("last order: go " + placeId);
         }
 
         /**
@@ -397,6 +460,7 @@ public final class AppUi {
                 state = text;
             }
             if (!state.inChargen()) {
+                adaptGrid(state);
                 if (!stripFor.isEmpty()) {
                     stripFor = "";
                     chargenStrip.setVisibility(View.GONE);

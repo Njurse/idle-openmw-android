@@ -52,6 +52,17 @@ public final class Bridge {
         /** The engine's top UI mode (e.g. "ChargenName") and its kind ("chargen", "world", ...). */
         public String screen = "";
         public String screenKind = "world";
+        /** Nearby go-to buttons from the mod (appPayload places): each { id, label, kind }. */
+        public java.util.List<String[]> places = new java.util.ArrayList<>();
+
+        /** A stable key for the place list, so the strip is only rebuilt when it changes. */
+        public String placesKey() {
+            StringBuilder b = new StringBuilder();
+            for (String[] p : places) {
+                b.append(p[0]).append('|');
+            }
+            return b.toString();
+        }
 
         /** True while the engine is asking a character-creation question. */
         public boolean inChargen() {
@@ -76,7 +87,10 @@ public final class Bridge {
             + "\"goalReason\":\"a mudcrab is nearer than the shop\","
             + "\"mode\":\"auto\","
             + "\"phase\":\"world\","
-            + "\"cell\":\"Seyda Neen, Arrille's Tradehouse\","
+            + "\"cell\":\"Seyda Neen\","
+            + "\"places\":[{\"id\":\"door:arrille_s_tradehouse\",\"label\":\"Arrille's Tradehouse\",\"kind\":\"door\"},"
+            + "{\"id\":\"door:census_and_excise_office\",\"label\":\"Census and Excise Office\",\"kind\":\"door\"},"
+            + "{\"id\":\"talk:fargoth\",\"label\":\"Fargoth\",\"kind\":\"talk\"}],"
             + "\"player\":{\"gold\":1240,\"level\":5,\"encumbrance\":{\"current\":35,\"max\":90}},"
             + "\"status\":{\"healthFraction\":0.84,\"magickaFraction\":0.61,\"fatigueFraction\":0.72}"
             + "}";
@@ -142,6 +156,18 @@ public final class Bridge {
             state.phaseLabel = root.optString("phaseLabel", "");
             state.screen = root.optString("screen", "");
             state.screenKind = root.optString("screenKind", state.screenKind);
+
+            org.json.JSONArray places = root.optJSONArray("places");
+            if (places != null) {
+                for (int i = 0; i < places.length(); i++) {
+                    JSONObject p = places.optJSONObject(i);
+                    if (p == null || p.optString("id", "").isEmpty()) {
+                        continue;
+                    }
+                    state.places.add(new String[] { p.optString("id"), p.optString("label", p.optString("id")),
+                            p.optString("kind", "") });
+                }
+            }
 
             JSONObject player = root.optJSONObject("player");
             if (player != null) {

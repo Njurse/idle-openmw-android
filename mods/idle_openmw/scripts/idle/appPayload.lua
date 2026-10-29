@@ -45,6 +45,10 @@ M.COMMANDS = {
   journal = 'launch',
   magic = 'launch',
   map = 'launch',
+  -- nearby-place buttons (scripts/idle/places.lua): payload = { id = <place id> }
+  go_place = 'go_place',
+  -- drop any order and go back to the idle town wander
+  wander = 'town_wander',
 }
 
 --- The engine window a launcher button opens. `mode` is what ACTIONS.launch needs and `window` is
@@ -109,6 +113,18 @@ function M.project(panel)
       fatigueFraction = fraction(status.fatigueFraction),
     },
   }
+
+  -- Nearby go-to buttons: { id, label, kind = 'door'|'talk', distance }. Always a list (maybe
+  -- empty) so the app can tell "nothing around" from "old mod".
+  local list = {}
+  if type(panel.places) == 'table' then
+    for _, p in ipairs(panel.places) do
+      if type(p) == 'table' and type(p.id) == 'string' then
+        list[#list + 1] = { id = p.id, label = text(p.label), kind = text(p.kind), distance = number(p.distance) }
+      end
+    end
+  end
+  payload.places = list
 
   local load = type(player.encumbrance) == 'table' and player.encumbrance or nil
   if load then

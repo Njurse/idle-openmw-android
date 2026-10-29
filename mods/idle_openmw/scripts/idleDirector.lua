@@ -1566,6 +1566,110 @@ local function updateExit()
   end
 end
 
+-- ---------------------------------------------------------------------------
+-- TOWN: nearby go-to buttons + idle wander (scripts/idle/places.lua). First slice: Seyda Neen.
+-- ---------------------------------------------------------------------------
+
+local placesMod = require('scripts.idle.places')
+--- Seconds (sim) a wander leg may take before we give up on it, and the pause between legs.
+local WANDER_LEG_MAX = 25
+local WANDER_ARRIVE = 160
+local PLACE_ARRIVE = 220
+
+local function nearbyActors(from)
+  local nearby = engine.nearby()
+  local list = nearby and nearby.actors
+  if not util.isObject(list) then return {} end
+  local env = engine.env()
+  local types = env and env.types or {}
+  local out = {}
+  local me = playerObject()
+  for _, raw in ipairs(list) do
+    if raw ~= me and util.isObject(raw) then
+      -- Light read on purpose (name, position, dead, npc-or-not): entities.read is the full
+      -- schema and far more than a button label needs on every tick.
+      local ok, entity = pcall(function()
+        local kind = raw.type
+        if types.Creature and kind == types.Creature then return nil end
+        local record = kind and kind.record and kind.record(raw)
+        local name = (util.isObject(record) and record.name) or raw.name or raw.recordId
+        local dead = types.Actor and types.Actor.isDead and types.Actor.isDead(raw) or false
+        local pos = raw.position
+        if not pos then return nil end
+        return { kind = 'npc', id = raw.id or raw.recordId, name = name, dead = dead,
+          position = { x = pos.x, y = pos.y, z = pos.z } }
+      end)
+      if ok and entity then out[#out + 1] = { entity = entity, object = raw } end
+    end
+  end
+  return out
+end
+
+--- Rebuild the place list and drive the wander. Called on every snapshot tick.
+local function townTick(snapshot)
+  local player = snapshot and snapshot.player
+  local cell = player and player.cell
+  local from = player and player.position
+  local acting = snapshot and (snapshot.phase == nil or snapshot.phase.acting == true)
+  if not (acting and cell and from) then state.places = {} return end
+
+  local okD, doors = pcall(nearbyDoors, from)
+  local okA, actors = pcall(nearbyActors, from)
+  state.places = placesMod.collect({ cell = cell, from = from,
+    doors = okD and doors or {}, actors = okA and actors or {} })
+
+  local town = placesMod.townOf(cell.name)
+  local director = state.director
+  local now = director.time or 0
+  local current = director:currentDirective()
+  local mine = current and type(current.payload) == 'table' and current.payload.town == true
+
+  -- a town walk we pushed: release it on arrival, timeout, or a cell change
+  if mine then
+    local p = current.payload
+    local arrive = p.wander and WANDER_ARRIVE or PLACE_ARRIVE
+    if placesMod.dist(from, p.dest) < arrive or now - (p.at or now) > (p.wander and WANDER_LEG_MAX or 90)
+      or p.cell ~= cell.name then
+      director:clearDirectives()
+      state.wanderNext = now + 3 + math.random() * 6
+    end
+    return
+  end
+
+  -- idle wander: only in a known town, only outdoors, only when nobody gave an order
+  if not (town and cell.isExterior) then state.wanderAnchor = nil return end
+  if not state.wanderAnchor or placesMod.dist(state.wanderAnchor, from) > placesMod.LEASH * 3 then
+    state.wanderAnchor = { x = from.x, y = from.y, z = from.z }
+  end
+  if current then return end
+  local goal = director.goal
+  if goal ~= nil and goal ~= 'idle' and goal ~= 'explore' and goal ~= 'go_town' then return end
+  if now < (state.wanderNext or 0) then return end
+
+  local dest, near = placesMod.wanderPoint(state.wanderAnchor, state.places, math.random)
+  if not dest then return end
+  director:pushDirective('walk_to', { kind = 'walk', dest = dest, run = false,
+    town = true, wander = true, at = now, cell = cell.name,
+    label = near and ('near ' .. near) or 'around ' .. town })
+end
+
+--- The app's "go to <place>" button.
+local function goPlace(id)
+  local place = placesMod.find(state.places, id)
+  if not (place and state.director) then return false end
+  local snapshot = state.snapshot
+  local cell = snapshot and snapshot.player and snapshot.player.cell
+  local from = snapshot and snapshot.player and snapshot.player.position
+  local dest = tapMove.approach(place.dest, from, 60) or place.dest
+  state.director:clearDirectives()
+  local target = { id = place.ref.entity.id, name = place.label, position = place.dest, object = place.ref.object }
+  local entry = state.director:pushDirective('walk_to', {
+    kind = place.kind == 'door' and 'enter' or 'talk', dest = dest, run = false, target = target,
+    town = true, at = state.director.time or 0, cell = cell and cell.name, label = place.label })
+  if entry then state.director:logLine(('Going to %s'):format(place.label), 'info') end
+  return entry ~= nil
+end
+
 local function update(dt)
   local ok, err = pcall(function()
     ensureInit()
@@ -1621,6 +1725,8 @@ local function update(dt)
       -- back in. Run after the director so a rescue lands in the same frame; it
       -- may override what the brain just asked for (scripts/idle/guardian.lua).
       guardianTick(snapshot)
+      local okTown, errTown = pcall(townTick, snapshot)
+      if not okTown then pcall(print, 'idle-openmw: town tick failed: ' .. tostring(errTown)) end
     end
 
     -- Announce a change of on-screen UI. This is the machine-readable answer to "what is
@@ -1782,6 +1888,9 @@ local function panel()
     dialogue = fromDirector.dialogue,
     topics = fromDirector.topics,
     log = fromDirector.log,
+    cell = state.snapshot and state.snapshot.player and state.snapshot.player.cell
+      and state.snapshot.player.cell.name or nil,
+    places = placesMod.public(state.places),
     player = fromEngine.player,
     inventory = fromEngine.inventory,
     journal = fromEngine.journal,
@@ -1862,6 +1971,14 @@ function ACTIONS.walk_to(payload)
   return true
 end
 
+function ACTIONS.go_place(payload)
+  return goPlace(payload and payload.id)
+end
+function ACTIONS.town_wander()
+  state.director:clearDirectives()
+  state.wanderNext = 0
+  return true
+end
 function ACTIONS.talk_nearest() return state.director:pushDirective('talk') ~= nil end
 --- Walk out of the building: to the door, look at it, use it (the "Go out" action).
 function ACTIONS.go_out() return startExit() end
@@ -1925,6 +2042,14 @@ end
 local function act(action, payload)
   local handler = ACTIONS[action]
   if not handler then return false, ('unknown action %s'):format(tostring(action)) end
+  -- A player order always beats the idle town wander: drop the wander leg first.
+  if state.director and action ~= 'refresh' and action ~= 'select' then
+    local current = state.director:currentDirective()
+    if current and type(current.payload) == 'table' and current.payload.wander then
+      state.director:clearDirectives()
+    end
+    state.wanderNext = (state.director.time or 0) + 20
+  end
   local ok, result, message = pcall(handler, payload)
   if not ok then
     return false, tostring(result)

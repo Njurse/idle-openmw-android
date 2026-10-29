@@ -137,4 +137,29 @@ describe('first run: new game -> chargen -> Seyda Neen', function()
       assert.is_true(moved or turned)
     end)
   end)
+
+  it('wanders Seyda Neen on a leash when idle, and lists nearby places for the app', function()
+    local spec = newGame({
+      charGenFinished = true,
+      cell = { name = 'Seyda Neen', isExterior = true },
+      position = { x = 0, y = 0, z = 0 },
+      actors = {
+        { recordId = 'fargoth', name = 'Fargoth', position = { x = 600, y = 0, z = 0 } },
+      },
+    })
+    withScript(spec, function(_, handlers)
+      tick(handlers, 6, 2.5)
+      local panel = handlers.interface.panel()
+      local found = false
+      for _, p in ipairs(panel.places or {}) do if p.label == 'Fargoth' then found = true end end
+      assert.is_true(found)
+      local d = handlers.interface.directive()
+      if d then
+        assert.equals(d.id, 'walk_to')
+        assert.is_true(d.payload.wander == true)
+      end
+      assert.is_true(handlers.interface.act('go_place', { id = panel.places[1].id }))
+      assert.is_true(handlers.interface.directive().payload.wander ~= true)
+    end)
+  end)
 end)
