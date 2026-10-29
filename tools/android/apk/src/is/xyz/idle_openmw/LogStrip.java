@@ -82,9 +82,39 @@ final class LogStrip {
                     ApplicationExitInfo e = exits.get(0);
                     shell.log("prev exit: " + exitName(e.getReason()) + " sig/status=" + e.getStatus()
                             + (e.getDescription() != null ? " " + e.getDescription() : ""));
+                    if (e.getReason() == ApplicationExitInfo.REASON_CRASH_NATIVE) nativeFrames(e, shell);
                 }
             }
         } catch (Throwable ignored) {
+        }
+    }
+
+    /** Best-effort: tombstone trace (API 31+, protobuf) -> printable strings that look like frames. */
+    private static void nativeFrames(ApplicationExitInfo e, AppUi.Shell shell) {
+        try (java.io.InputStream in = e.getTraceInputStream()) {
+            if (in == null) { shell.log("prev bt: (no tombstone trace)"); return; }
+            byte[] buf = new byte[1 << 20];
+            int n = 0;
+            for (int k; n < buf.length && (k = in.read(buf, n, buf.length - n)) > 0; ) n += k;
+            StringBuilder cur = new StringBuilder();
+            int shown = 0;
+            String last = "";
+            for (int i = 0; i <= n && shown < 12; i++) {
+                int c = i < n ? (buf[i] & 0xff) : 0;
+                if (c >= 0x20 && c < 0x7f) { cur.append((char) c); continue; }
+                String w = cur.toString();
+                cur.setLength(0);
+                if (w.length() < 4 || w.equals(last)) continue;
+                if (w.contains("SIG") || w.contains("signal") || w.contains("fault")
+                        || w.endsWith(".so") || w.contains("::") || w.startsWith("_Z")) {
+                    shell.log("prev bt| " + (w.length() > 120 ? w.substring(0, 120) : w));
+                    last = w;
+                    shown++;
+                }
+            }
+            if (shown == 0) shell.log("prev bt: trace had no readable frames");
+        } catch (Throwable t) {
+            shell.log("prev bt unavailable: " + t);
         }
     }
 
