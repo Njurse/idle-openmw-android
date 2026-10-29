@@ -1,0 +1,166 @@
+diff --git a/components/shader/shadermanager.cpp b/components/shader/shadermanager.cpp
+index 548a122..b42f319 100644
+--- a/components/shader/shadermanager.cpp
++++ b/components/shader/shadermanager.cpp
+@@ -3,6 +3,7 @@
+ #include <algorithm>
+ #include <cassert>
+ #include <chrono>
++#include <cstdlib>
+ #include <filesystem>
+ #include <format>
+ #include <fstream>
+@@ -181,6 +182,101 @@ namespace
+         }
+         return true;
+     }
++
++    // ---- GLES (gl4es on Android) shader fixups ------------------------------------------------
++    //
++    // Desktop GL lets a program carry several shader objects per stage, so OpenMW keeps shared
++    // implementations (lib/core/vertex.glsl, lighting_*_legacy.glsl, ...) in separate objects that
++    // are attached through `@link`. GLSL ES allows exactly one object per stage and each must have
++    // main(), so on a phone every world program fails with "no main() function" / "Call to
++    // undefined function". GLSL ES 1.00 also has no `centroid` and no uniform initializers.
++    //
++    // With fixups on, the linked sources are spliced into a private copy of the stage's main
++    // shader (see ShaderManager::addLinkedShaders), and every uniform declaration is wrapped in an
++    // include guard so a uniform declared both by the main shader and by a linked file (screenRes,
++    // near, sun, ...) is declared only once in the merged translation unit.
++    //
++    // On by default on Android; OPENMW_GLES_SHADER_FIXUPS=0 turns it off, =1 forces it elsewhere.
++    bool useGlesShaderFixups()
++    {
++        static const bool enabled = [] {
++            const char* env = std::getenv("OPENMW_GLES_SHADER_FIXUPS");
++#ifdef __ANDROID__
++            const bool enabledByDefault = true;
++#else
++            const bool enabledByDefault = false;
++#endif
++            if (env == nullptr || env[0] == '\0')
++                return enabledByDefault;
++            return env[0] != '0';
++        }();
++        return enabled;
++    }
++
++    void applyGlesShaderFixups(std::string& source, const std::string& templateName)
++    {
++        static const std::regex uniformDecl(
++            R"(^\s*uniform\s+((?:(?:lowp|mediump|highp)\s+)?[A-Za-z_][A-Za-z0-9_]*)\s+([A-Za-z_][A-Za-z0-9_]*)\s*(\[[^\]]*\])?\s*(=[^;]*)?;\s*(//.*)?$)");
++
++        std::string out;
++        out.reserve(source.size() + source.size() / 4);
++        size_t start = 0;
++        while (start <= source.size())
++        {
++            size_t end = source.find('\n', start);
++            const bool last = end == std::string::npos;
++            std::string line = source.substr(start, last ? std::string::npos : end - start);
++            if (!line.empty() && line.back() == '\r')
++                line.pop_back();
++
++            // `centroid varying` -> `varying`
++            size_t centroid = line.find("centroid varying");
++            if (centroid != std::string::npos)
++                line.erase(centroid, std::string_view("centroid ").size());
++
++            std::smatch match;
++            if (line.find("uniform") != std::string::npos && std::regex_match(line, match, uniformDecl))
++            {
++                const std::string type = match[1].str();
++                const std::string name = match[2].str();
++                const std::string array = match[3].str();
++                if (match[4].matched)
++                    Log(Debug::Warning) << "GLES: dropped initializer of uniform " << name << " in " << templateName;
++                const std::string guard = "OMW_GLES_UNIFORM_" + name;
++                out += "#ifndef " + guard + "\n#define " + guard + "\nuniform " + type + " " + name + array
++                    + ";\n#endif";
++            }
++            else
++                out += line;
++
++            if (last)
++                break;
++            out += '\n';
++            start = end + 1;
++        }
++        source = std::move(out);
++    }
++
++    std::string stripVersionDirective(const std::string& source)
++    {
++        std::string out;
++        out.reserve(source.size());
++        size_t start = 0;
++        while (start < source.size())
++        {
++            size_t end = source.find('\n', start);
++            if (end == std::string::npos)
++                end = source.size();
++            std::string_view line(source.data() + start, end - start);
++            size_t first = line.find_first_not_of(" \t");
++            if (first == std::string_view::npos || line.substr(first, 8) != "#version")
++                out.append(line);
++            out += '\n';
++            start = end + 1;
++        }
++        return out;
++    }
++
+ }
+ 
+ namespace Shader
+@@ -771,6 +867,8 @@ namespace Shader
+             return false;
+         if (!parseDirectives(source, linkedShaderTemplateNames, defines, mGlobalDefines, templateName))
+             return false;
++        if (useGlesShaderFixups())
++            applyGlesShaderFixups(source, templateName);
+         return true;
+     }
+ 
+@@ -792,9 +890,39 @@ namespace Shader
+     void ShaderManager::addLinkedShaders(osg::ref_ptr<osg::Shader> shader, osg::ref_ptr<osg::Program> program)
+     {
+         auto linkedIt = mLinkedShaders.find(shader);
+-        if (linkedIt != mLinkedShaders.end())
+-            for (const auto& linkedShader : linkedIt->second)
+-                program->addShader(linkedShader);
++        if (!useGlesShaderFixups())
++        {
++            if (linkedIt != mLinkedShaders.end())
++                for (const auto& linkedShader : linkedIt->second)
++                    program->addShader(linkedShader);
++            return;
++        }
++
++        // GLES: one object per stage. Splice the linked implementations into a private copy of the
++        // main shader and attach that instead. setGlobalDefines() strips every shader that is not
++        // the program's key pair and calls back in here, so the copy is rebuilt after define changes.
++        if (!shader || linkedIt == mLinkedShaders.end() || linkedIt->second.empty())
++        {
++            if (shader)
++                program->addShader(shader);
++            return;
++        }
++
++        std::string merged = shader->getShaderSource();
++        merged += '\n';
++        std::set<const osg::Shader*> seen;
++        for (const auto& linkedShader : linkedIt->second)
++        {
++            if (!linkedShader || linkedShader == shader || !seen.insert(linkedShader.get()).second)
++                continue;
++            merged += "// ---- linked: " + linkedShader->getName() + "\n";
++            merged += stripVersionDirective(linkedShader->getShaderSource());
++        }
++
++        osg::ref_ptr<osg::Shader> mergedShader = new osg::Shader(shader->getType(), merged);
++        mergedShader->setName(shader->getName() + " +linked");
++        program->removeShader(shader.get());
++        program->addShader(mergedShader);
+     }
+ 
+     int ShaderManager::reserveGlobalTextureUnits(Slot slot, int count)
