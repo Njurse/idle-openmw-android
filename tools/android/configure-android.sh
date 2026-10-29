@@ -215,8 +215,8 @@ if [ -f "$GLWRAP_SRC" ]; then
   "$NDK/toolchains/llvm/prebuilt/windows-x86_64/bin/clang.exe" --target="$TRIPLE$API" -fPIC -O2 \
     -c "$(cygpath -m "$GLWRAP_SRC" 2>/dev/null || echo "$GLWRAP_SRC")" \
     -o "$(cygpath -m "$GLWRAP_OBJ" 2>/dev/null || echo "$GLWRAP_OBJ")" || exit 11
-  GLWRAP_FLAGS="-Wl,--wrap=dlopen $(cygpath -m "$GLWRAP_OBJ" 2>/dev/null || echo "$GLWRAP_OBJ") -llog"
-  echo "glwrap   : dlopen(libGLESv2.so) -> gl4es inside libopenmw.so"
+  GLWRAP_FLAGS="-Wl,--wrap=dlopen -Wl,--wrap=dlsym $(cygpath -m "$GLWRAP_OBJ" 2>/dev/null || echo "$GLWRAP_OBJ") -llog"
+  echo "glwrap   : dlopen(libGLESv2.so) -> gl4es, dlsym(glGetStringi) null-guarded inside libopenmw.so"
 fi
 
 cmake -S "$SRC" -B "$BUILD_DIR" -G Ninja \

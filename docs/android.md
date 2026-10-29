@@ -951,6 +951,20 @@ Fix: `tools/android/compat/gl_dlopen_wrap.c`, linked into `libopenmw.so` with
 is redirected to gl4es's `libGL.so`; SDL2 and gl4es (separate .so files) still load the real
 driver. Logcat tag `idle-openmw` prints `dlopen(libGLESv2.so) -> gl4es libGL.so` when it fires.
 
+Null-guard (same file, `-Wl,--wrap=dlsym`): when OSG asks `dlsym` for `glGetStringi`, it gets a
+guarded wrapper. The wrapper calls the real `glGetStringi`; if that returns NULL for
+`GL_EXTENSIONS` (or there is no real one), it falls back to splitting
+`glGetString(GL_EXTENSIONS)` and returns `""` past the end, so `std::string(NULL)` can no longer
+happen. Logcat tag `idle-openmw`: `dlsym(glGetStringi) -> null-guarded wrapper` when installed,
+and `glGetStringi(GL_EXTENSIONS, N) returned NULL -> falling back ...` the first time the
+fallback fires. NOTE: CI packages the prebuilt `native-libs` release asset, so this only reaches a
+CI APK after `native-libs-arm64-v8a.zip` is rebuilt and republished.
+
+On-screen log strip: `MainActivity` shows a ~6-line log under the command panel. It tails this
+process's logcat (`idle-openmw`, `SDL`, `OpenMW` tags and every warning/error), persists the lines
+to `files/ui-log.txt`, and on the next launch replays the previous run's tail plus its exit reason
+(`ActivityManager.getHistoricalProcessExitReasons`, Android 11+), so a native crash stays readable.
+
 `GraphicsContext::WindowingSystemInterfaces::getWindowingSystemInterface() failed, no interfaces
 available` in openmw.log is **benign**: the prebuilt OSG has no windowing plugin, and OpenMW
 never uses one -- it builds its own `SDLUtil::GraphicsWindowSDL2` and passes it to the viewer.
